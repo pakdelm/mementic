@@ -16,7 +16,7 @@
   "mcp": {
     "mementic": {
       "type": "local",
-      "command": ["uv", "run", "mementic", "server"],
+      "command": [".venv\\Scripts\\python.exe", "-m", "mementic"],
       "enabled": true
     }
   }

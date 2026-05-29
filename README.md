@@ -84,7 +84,7 @@ Register the MCP server in `opencode.json`:
   "mcp": {
     "mementic": {
       "type": "local",
-      "command": ["uv", "run", "mementic", "server"],
+      "command": [".venv\\Scripts\\python.exe", "-m", "mementic"],
       "enabled": true
     }
   }
