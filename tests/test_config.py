@@ -51,8 +51,8 @@ class TestLoadConfig:
         assert config.sources.opencode_instructions == []
         assert config.output.graph_path == "./.mementic/graph.json"
         assert config.llm.provider == "deepseek"
-        assert config.llm.api_key_env == "DEEPSEEK_API_KEY"
         assert config.llm.model == "deepseek-chat"
+        assert config.llm.extraction_model == "deepseek-chat"
 
     def test_invalid_fields_raise_validation_error(self) -> None:
         """load_config raises ValidationError for invalid field types."""
@@ -98,3 +98,4 @@ class TestLoadConfig:
             assert config.llm.provider == "deepseek"
         finally:
             Path(tmp.name).unlink()
+

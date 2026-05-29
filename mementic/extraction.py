@@ -45,9 +45,9 @@ class _ConstraintListResponse(BaseModel):
     constraints: list[Constraint]
 
 
-def get_client(config: LLMConfig) -> OpenAI:
-    """Create OpenAI client pointed at DeepSeek. Uses api_key_env from config."""
-    api_key = os.environ.get(config.api_key_env, "")
+def get_client(config: LLMConfig) -> OpenAI:  # pragma: no cover
+    """Create OpenAI client pointed at DeepSeek. Reads key from DEEPSEEK_API_KEY env var."""
+    api_key = os.environ.get("DEEPSEEK_API_KEY", "")
     return OpenAI(api_key=api_key, base_url="https://api.deepseek.com")
 
 

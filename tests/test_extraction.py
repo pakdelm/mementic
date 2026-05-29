@@ -29,7 +29,7 @@ def _mock_client(result: ExtractionResult) -> MagicMock:
 
 class TestExtractFromFreeform:
     def test_returns_extraction_result(self) -> None:
-        config = LLMConfig(api_key_env="FAKE_KEY")
+        config = LLMConfig()
         result = ExtractionResult(
             decisions=[
                 Decision(
@@ -59,7 +59,7 @@ class TestExtractFromFreeform:
         assert output.affected_entities == ["src/main.py"]
 
     def test_returns_decisions_and_constraints(self) -> None:
-        config = LLMConfig(api_key_env="FAKE_KEY")
+        config = LLMConfig()
         decision = Decision(
             id="d-1",
             title="Adopt pydantic",
@@ -98,7 +98,7 @@ class TestExtractFromFreeform:
         assert output.edges_to_create[0].relation == "enforces"
 
     def test_empty_text_returns_empty_result(self) -> None:
-        config = LLMConfig(api_key_env="FAKE_KEY")
+        config = LLMConfig()
         output = extract_from_freeform("", "empty", config)
         assert isinstance(output, ExtractionResult)
         assert output.decisions == []
@@ -107,16 +107,13 @@ class TestExtractFromFreeform:
         assert output.edges_to_create == []
 
     def test_whitespace_only_text_returns_empty_result(self) -> None:
-        config = LLMConfig(api_key_env="FAKE_KEY")
+        config = LLMConfig()
         output = extract_from_freeform("   \n  \t  ", "ws", config)
         assert isinstance(output, ExtractionResult)
         assert output.decisions == []
 
     def test_passes_temperature_and_model(self) -> None:
-        config = LLMConfig(
-            api_key_env="FAKE_KEY",
-            extraction_model="deepseek-v3",
-        )
+        config = LLMConfig(extraction_model="deepseek-v3")
         result = ExtractionResult()
 
         with patch(
@@ -135,7 +132,7 @@ class TestExtractFromFreeform:
         assert rf["json_schema"]["name"] == "extraction_result"
 
     def test_none_content_returns_empty_result(self) -> None:
-        config = LLMConfig(api_key_env="FAKE_KEY")
+        config = LLMConfig()
         client = MagicMock()
         choice = MagicMock()
         choice.message.content = None
@@ -151,7 +148,7 @@ class TestExtractFromFreeform:
 
 class TestExtractFromSession:
     def test_returns_extraction_result(self) -> None:
-        config = LLMConfig(api_key_env="FAKE_KEY")
+        config = LLMConfig()
         result = ExtractionResult(
             decisions=[
                 Decision(
@@ -183,19 +180,19 @@ class TestExtractFromSession:
         assert output.decisions[0].title == "Switch to httpx"
 
     def test_empty_inputs_return_empty_result(self) -> None:
-        config = LLMConfig(api_key_env="FAKE_KEY")
+        config = LLMConfig()
         output = extract_from_session("", "", "", config)
         assert output == ExtractionResult()
 
     def test_whitespace_only_inputs_return_empty_result(self) -> None:
-        config = LLMConfig(api_key_env="FAKE_KEY")
+        config = LLMConfig()
         output = extract_from_session("  \n", "  ", "\t", config)
         assert output == ExtractionResult()
 
 
 class TestExtractFromAdrConsequences:
     def test_returns_constraints(self) -> None:
-        config = LLMConfig(api_key_env="FAKE_KEY")
+        config = LLMConfig()
         constraints = [
             Constraint(
                 id="c-adr-1",
@@ -228,17 +225,17 @@ class TestExtractFromAdrConsequences:
         assert output[0].description == "Must not use raw SQL"
 
     def test_empty_text_returns_empty_list(self) -> None:
-        config = LLMConfig(api_key_env="FAKE_KEY")
+        config = LLMConfig()
         output = extract_from_adr_consequences("", config)
         assert output == []
 
     def test_whitespace_only_returns_empty_list(self) -> None:
-        config = LLMConfig(api_key_env="FAKE_KEY")
+        config = LLMConfig()
         output = extract_from_adr_consequences("   \n  ", config)
         assert output == []
 
     def test_none_content_returns_empty_list(self) -> None:
-        config = LLMConfig(api_key_env="FAKE_KEY")
+        config = LLMConfig()
         client = MagicMock()
         choice = MagicMock()
         choice.message.content = None
@@ -252,7 +249,7 @@ class TestExtractFromAdrConsequences:
         assert output == []
 
     def test_no_constraints_in_response(self) -> None:
-        config = LLMConfig(api_key_env="FAKE_KEY")
+        config = LLMConfig()
         client = MagicMock()
         choice = MagicMock()
         choice.message.content = json.dumps({"constraints": []})
@@ -264,3 +261,4 @@ class TestExtractFromAdrConsequences:
             output = extract_from_adr_consequences("some text", config)
 
         assert output == []
+
