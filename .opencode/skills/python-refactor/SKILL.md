@@ -18,4 +18,4 @@ description: Use when refactoring Python code — extracting functions, renaming
 
 - Never change public API signatures without updating callers.
 - Keep backward compatibility unless explicitly asked to break it.
-- Run `ruff check .` and `mypy .` after each change.
+- Run `uv run ruff check .` and `uv run mypy .` after each change.

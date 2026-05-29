@@ -6,16 +6,16 @@ This is a Python project.
 
 ```bash
 # Install dependencies
-pip install -e ".[dev]"
+uv sync
 
 # Lint
-ruff check .
+uv run ruff check .
 
 # Type check
-mypy .
+uv run mypy .
 
 # Run tests
-pytest
+uv run pytest
 ```
 
 ## Project Structure

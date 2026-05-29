@@ -8,9 +8,11 @@
 
 ## Dependency Management
 
-- Use `pip` / `pyproject.toml` for dependency declaration.
-- Pin dependencies with exact versions in production.
+- Use `uv` as the package manager and `pyproject.toml` for dependency declaration.
+- Run `uv sync` to install dependencies; `uv add` to add packages; `uv lock` to regenerate the lockfile.
+- Keep `uv.lock` committed for reproducible builds.
 - Use dev-dependencies for tools (linters, test runners, type checkers).
+- Prefer `uv run <tool>` over global tool installations.
 
 ## Configuration
 
