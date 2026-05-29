@@ -125,11 +125,7 @@ class TestExtractFromFreeform:
         call_kwargs = mock_client.chat.completions.create.call_args.kwargs
         assert call_kwargs["temperature"] == 0.1
         assert call_kwargs["model"] == "deepseek-v3"
-        assert "response_format" in call_kwargs
-        rf = call_kwargs["response_format"]
-        assert rf["type"] == "json_schema"
-        assert "schema" in rf["json_schema"]
-        assert rf["json_schema"]["name"] == "extraction_result"
+        assert call_kwargs["response_format"] == {"type": "json_object"}
 
     def test_none_content_returns_empty_result(self) -> None:
         config = LLMConfig()

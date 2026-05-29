@@ -19,8 +19,10 @@ Rules:
 1. DECISION: Only when a design pattern changed, a new library was introduced, or a strategic path was chosen. NOT routine refactors.
 2. CONSTRAINT: A hard rule future developers/agents must not violate.
 3. Include specific file paths as affected entities when possible.
-4. Output must match the provided JSON schema exactly.
-5. If no architectural decisions or constraints are found, return empty lists."""
+4. Output ONLY valid JSON matching this schema — no markdown, no explanation.
+
+{extraction_schema}
+"""
 
 SESSION_SYSTEM_PROMPT = """You are a software architecture analyst. Given an agent session log, git diff, and optional human notes, identify architectural decisions and constraints that were made or changed during this session.
 
@@ -28,8 +30,10 @@ Rules:
 1. DECISION: Only when a design pattern changed, a new library was introduced, or a strategic path was chosen. NOT routine refactors, syntax fixes, or variable renames.
 2. CONSTRAINT: A hard rule future agents must not violate.
 3. Include specific file paths from the diff as affected entities.
-4. Output must match the provided JSON schema exactly.
-5. If no architectural decisions or constraints were found, return empty lists."""
+4. Output ONLY valid JSON matching this schema — no markdown, no explanation.
+
+{extraction_schema}
+"""
 
 ADR_CONSEQUENCES_SYSTEM_PROMPT = """You are a software architecture analyst. Given the "Consequences" section of an Architecture Decision Record (ADR), extract explicit constraints that future developers or agents must respect.
 
@@ -38,7 +42,10 @@ Rules:
 2. Extract only constraints that represent architectural guardrails, not observations or notes.
 3. Include specific file paths or module references as bound entities when mentioned.
 4. If no constraints are found, return an empty list.
-5. Output must match the provided JSON schema exactly."""
+5. Output ONLY valid JSON matching this schema — no markdown, no explanation.
+
+{constraints_schema}
+"""
 
 
 class _ConstraintListResponse(BaseModel):
@@ -69,20 +76,17 @@ def extract_from_freeform(
 
     client = get_client(config)
 
+    extraction_schema = json.dumps(ExtractionResult.model_json_schema(), indent=2)
+    system_prompt = FREE_FORM_SYSTEM_PROMPT.format(extraction_schema=extraction_schema)
+
     response = client.chat.completions.create(
         model=config.extraction_model,
         temperature=0.1,
         messages=[
-            {"role": "system", "content": FREE_FORM_SYSTEM_PROMPT},
+            {"role": "system", "content": system_prompt},
             {"role": "user", "content": f"Source: {source_label}\n\nText:\n{text}"},
         ],
-        response_format={
-            "type": "json_schema",
-            "json_schema": {
-                "name": "extraction_result",
-                "schema": ExtractionResult.model_json_schema(),
-            },
-        },
+        response_format={"type": "json_object"},
     )
 
     content = response.choices[0].message.content
@@ -120,20 +124,17 @@ def extract_from_session(
 
     client = get_client(config)
 
+    extraction_schema = json.dumps(ExtractionResult.model_json_schema(), indent=2)
+    system_prompt = SESSION_SYSTEM_PROMPT.format(extraction_schema=extraction_schema)
+
     response = client.chat.completions.create(
         model=config.extraction_model,
         temperature=0.1,
         messages=[
-            {"role": "system", "content": SESSION_SYSTEM_PROMPT},
+            {"role": "system", "content": system_prompt},
             {"role": "user", "content": combined},
         ],
-        response_format={
-            "type": "json_schema",
-            "json_schema": {
-                "name": "extraction_result",
-                "schema": ExtractionResult.model_json_schema(),
-            },
-        },
+        response_format={"type": "json_object"},
     )
 
     content = response.choices[0].message.content
@@ -158,20 +159,17 @@ def extract_from_adr_consequences(
 
     client = get_client(config)
 
+    constraints_schema = json.dumps(_ConstraintListResponse.model_json_schema(), indent=2)
+    system_prompt = ADR_CONSEQUENCES_SYSTEM_PROMPT.format(constraints_schema=constraints_schema)
+
     response = client.chat.completions.create(
         model=config.extraction_model,
         temperature=0.1,
         messages=[
-            {"role": "system", "content": ADR_CONSEQUENCES_SYSTEM_PROMPT},
+            {"role": "system", "content": system_prompt},
             {"role": "user", "content": consequences_text},
         ],
-        response_format={
-            "type": "json_schema",
-            "json_schema": {
-                "name": "constraint_list",
-                "schema": _ConstraintListResponse.model_json_schema(),
-            },
-        },
+        response_format={"type": "json_object"},
     )
 
     content = response.choices[0].message.content

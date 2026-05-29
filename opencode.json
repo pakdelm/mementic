@@ -5,5 +5,12 @@
     "docs/instructions/testing.md",
     "docs/instructions/project-conventions.md",
     "docs/instructions/libraries.md"
-  ]
+  ],
+  "permission": {
+    "read": {
+      "**/.env": "deny",
+      "**/.env.*": "deny",
+      "*": "allow"
+    }
+  }
 }
