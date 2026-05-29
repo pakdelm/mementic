@@ -65,9 +65,9 @@ def capture(
 
     accept = typer.confirm("Accept all and write to graph?", default=True)
     if accept:
-        try:
+        if Path(cfg.output.graph_path).exists():
             graph = GraphStore.load(cfg.output.graph_path)
-        except (FileNotFoundError, Exception):
+        else:
             graph = GraphStore()
 
         for d in extraction.decisions:

@@ -8,9 +8,9 @@ import re
 from pathlib import Path
 
 DEFAULT_SESSION_PATHS: dict[str, list[str]] = {
-    "linux": ["~/.local/share/opencode/sessions/"],
-    "darwin": ["~/Library/Application Support/opencode/sessions/"],
-    "win32": ["%LOCALAPPDATA%/opencode/sessions/"],
+    "linux": ["~/.local/share/opencode/log/", "~/.local/share/opencode/storage/session_diff/"],
+    "darwin": ["~/.local/share/opencode/log/", "~/.local/share/opencode/storage/session_diff/"],
+    "win32": ["%LOCALAPPDATA%/opencode/log/", "%USERPROFILE%/.local/share/opencode/log/"],
 }
 
 

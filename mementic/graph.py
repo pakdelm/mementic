@@ -136,7 +136,9 @@ class GraphStore:
         payload = GraphPayload(nodes=nodes_payload, edges=edges_payload)
         p = Path(path)
         p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(json.dumps(payload.model_dump(mode="json"), indent=2))
+        tmp = p.with_suffix(p.suffix + ".tmp")
+        tmp.write_text(json.dumps(payload.model_dump(mode="json"), indent=2))
+        tmp.replace(p)
 
     @classmethod
     def load(cls, path: str) -> GraphStore:

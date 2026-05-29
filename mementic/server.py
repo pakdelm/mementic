@@ -26,11 +26,8 @@ def _load_graph() -> tuple[GraphStore, MementicConfig]:
 
     graph_path = cfg.output.graph_path
     if Path(graph_path).exists():
-        graph = GraphStore.load(graph_path)
-    else:
-        graph = GraphStore()
-
-    return graph, cfg
+        return GraphStore.load(graph_path), cfg
+    return GraphStore(), cfg
 
 
 @mcp.tool()
