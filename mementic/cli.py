@@ -144,11 +144,11 @@ def query(
 
 
 @app.command()
-def server(port: int = 8123) -> None:
-    """Start the MCP server for agent integration."""
-    typer.echo(f"Starting Mementic MCP server on port {port}...")
+def server():
+    """Start the MCP server for agent integration (stdio transport)."""
+    import sys
     from mementic.server import mcp
-
+    sys.stderr.write("Mementic MCP server starting (stdio transport)...\n")
     mcp.run(transport="stdio")
 
 

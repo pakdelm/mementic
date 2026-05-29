@@ -12,5 +12,12 @@
       "**/.env.*": "deny",
       "*": "allow"
     }
+  },
+  "mcp": {
+    "mementic": {
+      "type": "local",
+      "command": ["uv", "run", "mementic", "server"],
+      "enabled": true
+    }
   }
 }

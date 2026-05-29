@@ -105,7 +105,7 @@ The agent automatically discovers these MCP tools:
 | `mementic capture --session PATH [--notes TEXT]` | Extract decisions from session |
 | `mementic enforce --task TEXT --files FILE...` | Generate context pack for task |
 | `mementic query [--entity PATH] [--search TERM]` | Search graph |
-| `mementic server [--port PORT]` | Start MCP server |
+| `mementic server` | Start MCP server (stdio) |
 | `mementic status` | Show graph statistics |
 | `mementic review` | Review pending proposals |
 
