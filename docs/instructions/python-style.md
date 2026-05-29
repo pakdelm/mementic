@@ -5,6 +5,10 @@
 - Write clear, readable code over clever code.
 - Follow PEP 8 conventions.
 - Maximum line length: 100 characters.
+- Avoid complex abstractions.
+- Use interfaces where necessary.
+- Use json configs for envs that are no secrets.
+- Use .env for secrets only.
 
 ## Type Hints
 
