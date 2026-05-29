@@ -19,6 +19,5 @@
       "command": ["uv", "run", "python", "-m", "mementic"],
       "enabled": true
     }
-  },
-  "default_agent": "build"
+  }
 }

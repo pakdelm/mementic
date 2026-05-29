@@ -17,6 +17,22 @@ from mementic.pipeline import run_init  # noqa: E402
 
 app = typer.Typer(help="Mementic — semantic memory for engineering teams and AI agents")
 
+CHECKPOINT_FILE = ".mementic/checkpoint"
+
+
+def _load_checkpoint() -> str:
+    p = Path(CHECKPOINT_FILE)
+    return p.read_text().strip() if p.exists() else ""
+
+
+def _save_checkpoint() -> None:
+    result = subprocess.run(
+        ["git", "rev-parse", "HEAD"], capture_output=True, text=True
+    )
+    if result.returncode == 0:
+        Path(CHECKPOINT_FILE).parent.mkdir(parents=True, exist_ok=True)
+        Path(CHECKPOINT_FILE).write_text(result.stdout.strip())
+
 
 @app.command()
 def init(config_path: str = ".mementic.json") -> None:
@@ -33,51 +49,70 @@ def capture(
 ) -> None:
     """Extract architectural decisions from an agent session."""
     if not session:
-        typer.echo("Error: --session PATH is required for capture in MVP", err=True)
-        raise typer.Exit(code=1)
+        from mementic.session import find_latest_session
+
+        session = find_latest_session()
+        if not session:
+            typer.echo("No session found. Provide --session PATH.", err=True)
+            raise typer.Exit(code=1)
+        typer.echo(f"Using session: {session}")
 
     session_text = Path(session).read_text()
 
-    result = subprocess.run(
-        ["git", "diff", "HEAD~1"], capture_output=True, text=True
-    )
+    checkpoint = _load_checkpoint()
+    if checkpoint:
+        result = subprocess.run(
+            ["git", "diff", checkpoint], capture_output=True, text=True
+        )
+    else:
+        result = subprocess.run(
+            ["git", "diff", "HEAD~1"], capture_output=True, text=True
+        )
+        typer.echo("No checkpoint found — using HEAD~1 as baseline.")
     git_diff = result.stdout or ""
 
     cfg = load_config()
     extraction = extract_from_session(session_text, git_diff, notes or "", cfg.llm)
 
-    typer.echo("\nProposed decisions:\n")
-    for d in extraction.decisions:
-        typer.echo(f"  [{d.id}] {d.title}")
-        typer.echo(f"  Rationale: {d.rationale}")
-        if d.rejected_alternatives:
-            typer.echo(f"  Rejected: {', '.join(d.rejected_alternatives)}")
-        typer.echo()
-
-    typer.echo("Proposed constraints:\n")
-    for c in extraction.constraints:
-        typer.echo(f"  [{c.id}] {c.description}")
-        typer.echo()
-
     if not extraction.decisions and not extraction.constraints:
         typer.echo("No architectural decisions or constraints found.")
         raise typer.Exit()
 
-    accept = typer.confirm("Accept all and write to graph?", default=True)
-    if accept:
-        if Path(cfg.output.graph_path).exists():
-            graph = GraphStore.load(cfg.output.graph_path)
-        else:
-            graph = GraphStore()
+    accepted_d = []
+    accepted_c = []
 
-        for d in extraction.decisions:
-            graph.add_decision(d)
-        for c in extraction.constraints:
-            graph.add_constraint(c)
+    for d in extraction.decisions:
+        typer.echo(f"\nDecision: [{d.id}] {d.title}")
+        typer.echo(f"  Rationale: {d.rationale}")
+        if d.rejected_alternatives:
+            typer.echo(f"  Rejected: {', '.join(d.rejected_alternatives)}")
+        if typer.confirm("  Accept?", default=True):
+            accepted_d.append(d)
 
-        Path(cfg.output.graph_path).parent.mkdir(parents=True, exist_ok=True)
-        graph.save(cfg.output.graph_path)
-        typer.echo(f"Written to {cfg.output.graph_path}")
+    for c in extraction.constraints:
+        typer.echo(f"\nConstraint: [{c.id}] {c.description}")
+        if typer.confirm("  Accept?", default=True):
+            accepted_c.append(c)
+
+    if not accepted_d and not accepted_c:
+        typer.echo("Nothing accepted. Graph unchanged.")
+        raise typer.Exit()
+
+    if Path(cfg.output.graph_path).exists():
+        graph = GraphStore.load(cfg.output.graph_path)
+    else:
+        graph = GraphStore()
+
+    for d in accepted_d:
+        graph.add_decision(d)
+    for c in accepted_c:
+        graph.add_constraint(c)
+
+    Path(cfg.output.graph_path).parent.mkdir(parents=True, exist_ok=True)
+    graph.save(cfg.output.graph_path)
+    typer.echo(f"Written to {cfg.output.graph_path}")
+
+    _save_checkpoint()
 
 
 @app.command()

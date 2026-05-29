@@ -40,8 +40,9 @@ def format_context_pack(
         lines.append("")
         lines.append("### Relevant Decisions")
         for d in decisions:
-            lines.append(f"• {d.title} ({d.timestamp})")
+            lines.append(f"* {d.title} ({d.timestamp})")
             lines.append(f"  {d.rationale}")
-            lines.append(f"  Rejected: {d.rejected_alternatives}")
+            if d.rejected_alternatives:
+                lines.append(f"  Rejected: {', '.join(d.rejected_alternatives)}")
 
     return "\n".join(lines)
