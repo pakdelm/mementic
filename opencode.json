@@ -3,6 +3,7 @@
   "instructions": [
     "docs/instructions/python-style.md",
     "docs/instructions/testing.md",
-    "docs/instructions/project-conventions.md"
+    "docs/instructions/project-conventions.md",
+    "docs/instructions/libraries.md"
   ]
 }
