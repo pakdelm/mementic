@@ -1,6 +1,6 @@
 {
   "$schema": "https://opencode.ai/config.json",
-  "instructions": [
+    "instructions": [
     "docs/instructions/python-style.md",
     "docs/instructions/testing.md",
     "docs/instructions/project-conventions.md",
@@ -19,5 +19,6 @@
       "command": ["uv", "run", "python", "-m", "mementic"],
       "enabled": true
     }
-  }
+  },
+  "default_agent": "build"
 }
