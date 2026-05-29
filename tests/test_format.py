@@ -1,9 +1,7 @@
 from __future__ import annotations
 
 import re
-from datetime import datetime, timezone
 
-import pytest
 
 from mementic.format import format_context_pack, slugify, timestamp
 from mementic.models import Constraint, Decision, DecisionStatus

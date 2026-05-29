@@ -31,7 +31,7 @@ def format_context_pack(
         lines.append("")
         lines.append("### Constraints (MUST follow)")
         for c in constraints:
-            lines.append(f"⛓  {c.id}")
+            lines.append(f"[C] {c.id}")
             lines.append(f'   "{c.description}"')
             enforced = c.enforced_by if c.enforced_by else "unknown"
             lines.append(f"   Established by: {enforced}")

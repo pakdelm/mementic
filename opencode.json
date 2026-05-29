@@ -5,5 +5,19 @@
     "docs/instructions/testing.md",
     "docs/instructions/project-conventions.md",
     "docs/instructions/libraries.md"
-  ]
+  ],
+  "permission": {
+    "read": {
+      "**/.env": "deny",
+      "**/.env.*": "deny",
+      "*": "allow"
+    }
+  },
+  "mcp": {
+    "mementic": {
+      "type": "local",
+      "command": ["uv", "run", "python", "-m", "mementic"],
+      "enabled": true
+    }
+  }
 }

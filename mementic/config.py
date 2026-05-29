@@ -45,10 +45,7 @@ class OutputConfig(BaseModel):
 
 
 class LLMConfig(BaseModel):
-    """Configuration for the LLM backend."""
-
     provider: str = "deepseek"
-    api_key_env: str = "DEEPSEEK_API_KEY"
     model: str = "deepseek-chat"
     extraction_model: str = "deepseek-chat"
 
