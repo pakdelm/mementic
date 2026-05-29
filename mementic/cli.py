@@ -4,13 +4,16 @@ import subprocess
 from pathlib import Path
 
 import typer
-from mementic.models import DecisionStatus
+from dotenv import load_dotenv
 
-from mementic.config import load_config
-from mementic.extraction import extract_from_session
-from mementic.format import format_context_pack
-from mementic.graph import GraphStore
-from mementic.pipeline import run_init
+load_dotenv()
+
+from mementic.config import load_config  # noqa: E402
+from mementic.extraction import extract_from_session  # noqa: E402
+from mementic.format import format_context_pack  # noqa: E402
+from mementic.graph import GraphStore  # noqa: E402
+from mementic.models import DecisionStatus  # noqa: E402
+from mementic.pipeline import run_init  # noqa: E402
 
 app = typer.Typer(help="Mementic — semantic memory for engineering teams and AI agents")
 

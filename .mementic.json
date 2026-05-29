@@ -1,0 +1,19 @@
+{
+  "sources": {
+    "adr_dirs": [
+      {"path": "./docs/adr"}
+    ],
+    "opencode_instructions": [
+      {"path": "./docs/instructions"}
+    ]
+  },
+  "output": {
+    "graph_path": "./.mementic/graph.json"
+  },
+  "llm": {
+    "provider": "deepseek",
+    "api_key_env": "DEEPSEEK_API_KEY",
+    "model": "deepseek-chat",
+    "extraction_model": "deepseek-chat"
+  }
+}

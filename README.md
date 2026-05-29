@@ -12,11 +12,11 @@ cd mementic
 uv sync
 ```
 
-Set your DeepSeek API key (OpenAI-compatible):
+Set your DeepSeek API key by copying the example env file and editing it:
 
 ```bash
-$env:DEEPSEEK_API_KEY = "sk-..."   # Windows
-export DEEPSEEK_API_KEY="sk-..."   # Linux/macOS
+cp .env.example .env
+# Edit .env with your actual key
 ```
 
 ## Quick start
@@ -85,10 +85,7 @@ Register the MCP server in `opencode.json`:
     "mementic": {
       "type": "local",
       "command": ["uv", "run", "mementic", "server"],
-      "enabled": true,
-      "environment": {
-        "MEMENTIC_CONFIG": "./.mementic.json"
-      }
+      "enabled": true
     }
   }
 }

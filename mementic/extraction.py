@@ -3,11 +3,14 @@ from __future__ import annotations
 import json
 import os
 
+from dotenv import load_dotenv
 from openai import OpenAI
 from pydantic import BaseModel
 
-from mementic.config import LLMConfig
-from mementic.models import Constraint, ExtractionResult
+load_dotenv()
+
+from mementic.config import LLMConfig  # noqa: E402
+from mementic.models import Constraint, ExtractionResult  # noqa: E402
 
 
 FREE_FORM_SYSTEM_PROMPT = """You are a software architecture analyst. Given text from an engineering document, identify architectural decisions and constraints.
