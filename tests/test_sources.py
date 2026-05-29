@@ -4,10 +4,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
 
-from mementic.sources.adr import ADRDocument, scan_adr_dir
-from mementic.sources.opencode import InstructionDocument, scan_opencode_instructions
+from mementic.sources.adr import scan_adr_dir
+from mementic.sources.opencode import scan_opencode_instructions
 
 
 # ---------------------------------------------------------------------------
