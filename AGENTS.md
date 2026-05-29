@@ -21,7 +21,7 @@ uv run pytest
 ## Project Structure
 
 ```
-.opencode/          # OpenCode configuration (agents, skills, prompts)
+.opencode/          # OpenCode configuration (agents, skills, prompts, specs)
 docs/instructions/  # Project-specific coding guidelines
 src/                # Source code
 tests/              # Tests
