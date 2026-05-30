@@ -121,6 +121,8 @@ def run_init(config_path: str = ".mementic.json") -> GraphStore:
             result = extract_from_freeform(instr.content, instr.path, cfg.llm)
             _ingest_result(graph, result, instr.path)
 
-    Path(cfg.output.graph_path).parent.mkdir(parents=True, exist_ok=True)
-    graph.save(cfg.output.graph_path)
+    has_sources = bool(cfg.sources.adr_dirs or cfg.sources.opencode_instructions)
+    if has_sources:
+        Path(cfg.output.graph_path).parent.mkdir(parents=True, exist_ok=True)
+        graph.save(cfg.output.graph_path)
     return graph

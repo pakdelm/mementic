@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import subprocess
 from pathlib import Path
 
@@ -139,6 +140,7 @@ def query(
     decision: str | None = None,
     constraint: str | None = None,
     search: str | None = None,
+    depth: int = 1,
 ) -> None:
     """Search decisions, constraints, and entities in the graph."""
     cfg = load_config()
@@ -151,10 +153,29 @@ def query(
 
     if entity:
         decisions = graph.get_evolution(entity)
-        typer.echo(f"Evolution for {entity}:\n")
+        constraints = graph.get_constraints_for_entities([entity])
+
+        if depth >= 2:
+            related_entities: set[str] = set()
+            for c in constraints:
+                if c.bound_entities:
+                    related_entities.update(c.bound_entities)
+            extra_constraints = graph.get_constraints_for_entities(list(related_entities))
+            seen = {c.id for c in constraints}
+            for c in extra_constraints:
+                if c.id not in seen:
+                    constraints.append(c)
+                    seen.add(c.id)
+
+        typer.echo(f"Evolution for {entity} (depth {depth}):\n")
         for d in decisions:
             typer.echo(f"  [{d.id}] {d.title} ({d.timestamp})")
             typer.echo(f"  {d.rationale}\n")
+
+        if constraints:
+            typer.echo("Related constraints:\n")
+            for c in constraints:
+                typer.echo(f"  [{c.id}] {c.description}")
     elif search:
         all_d = graph.get_all_decisions()
         all_c = graph.get_all_constraints()
@@ -176,6 +197,20 @@ def query(
     else:
         stats = graph.stats()
         typer.echo(f"Graph stats: {stats}")
+
+
+@app.command()
+def log(n: int = 20) -> None:
+    """Show recent graph mutations."""
+    audit_path = Path(".mementic/audit.jsonl")
+    if not audit_path.exists():
+        typer.echo("No audit log found. Run init or capture first.")
+        raise typer.Exit()
+
+    lines = audit_path.read_text().strip().split("\n")
+    for line in lines[-n:]:
+        entry = json.loads(line)
+        typer.echo(f"[{entry['timestamp']}] {entry['action']}: {entry.get('id', '-')}")
 
 
 @app.command()

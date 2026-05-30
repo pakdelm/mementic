@@ -302,8 +302,12 @@ class TestRunInitEmptyConfig:
         assert stats["edges"] == 0
 
     def test_missing_config_file_returns_empty_graph(self, tmp_path: Path) -> None:
-        config_path = str(tmp_path / "nonexistent.json")
-        gs = run_init(config_path)
+        # Use a temp config with temp output to avoid writing to production graph.json
+        config_path = tmp_path / ".mementic.json"
+        config_path.write_text(json.dumps({
+            "output": {"graph_path": str(tmp_path / ".mementic" / "graph.json")},
+        }))
+        gs = run_init(str(config_path))
 
         stats = gs.stats()
         assert stats == {"decisions": 0, "constraints": 0, "entities": 0, "edges": 0}
