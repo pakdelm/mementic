@@ -13,7 +13,7 @@ from mementic.config import load_config  # noqa: E402
 from mementic.extraction import extract_from_session  # noqa: E402
 from mementic.format import format_context_pack  # noqa: E402
 from mementic.graph import GraphStore  # noqa: E402
-from mementic.models import DecisionStatus  # noqa: E402
+from mementic.models import CodeEntity, DecisionStatus, EntityType  # noqa: E402
 from mementic.pipeline import run_init  # noqa: E402
 
 app = typer.Typer(help="Mementic — semantic memory for engineering teams and AI agents")
@@ -106,8 +106,17 @@ def capture(
 
     for d in accepted_d:
         graph.add_decision(d)
+        for entity_path in extraction.affected_entities:
+            graph.add_code_entity(
+                CodeEntity(id=entity_path, type=EntityType.FILE)
+            )
+            graph.link(d.id, entity_path, "affects")
     for c in accepted_c:
         graph.add_constraint(c)
+        for entity_path in c.bound_entities:
+            graph.link(c.id, entity_path, "binds_to")
+    for edge in extraction.edges_to_create:
+        graph.link(edge.source, edge.target, edge.relation)
 
     Path(cfg.output.graph_path).parent.mkdir(parents=True, exist_ok=True)
     graph.save(cfg.output.graph_path)

@@ -58,6 +58,9 @@ def _ingest_result(graph: GraphStore, result: ExtractionResult, source_path: str
     """Add extracted decisions, constraints, and entities to the graph."""
     for d in result.decisions:
         _add_decision_dedup(graph, d)
+        for entity_path in result.affected_entities:
+            graph.add_code_entity(CodeEntity(id=entity_path, type=EntityType.FILE))
+            graph.link(d.id, entity_path, "affects")
     for c in result.constraints:
         if _add_constraint_dedup(graph, c):
             _ensure_code_entities(graph, c, source_path, result)
@@ -101,6 +104,32 @@ def _backfill_edges(graph: GraphStore) -> int:
     return count
 
 
+def _backfill_decision_edges(graph: GraphStore) -> int:
+    """Ensure all decisions have entity links. Returns number of decisions fixed."""
+    count = 0
+    for node_id, attrs in list(graph._g.nodes(data=True)):
+        if attrs.get("node_type") != "Decision":
+            continue
+        if any(True for _ in graph._g.successors(node_id)):
+            continue
+        payload = attrs.get("payload", {})
+        text_to_scan = (
+            payload.get("rationale", "")
+            + " "
+            + payload.get("source", "")
+            + " "
+            + payload.get("title", "")
+        )
+        paths = find_file_paths(text_to_scan)
+        if not paths:
+            paths = ["src/"]
+        for entity_path in paths:
+            graph.add_code_entity(CodeEntity(id=entity_path, type=EntityType.FILE))
+            graph.link(node_id, entity_path, "affects")
+        count += 1
+    return count
+
+
 def run_init(config_path: str = ".mementic.json") -> GraphStore:
     """Initialize the knowledge graph from all configured sources."""
     cfg = load_config(config_path)
@@ -132,6 +161,7 @@ def run_init(config_path: str = ".mementic.json") -> GraphStore:
 
             for path_ in find_file_paths(adr.decision + " " + adr.consequences):
                 graph.add_code_entity(CodeEntity(id=path_, type=EntityType.FILE))
+                graph.link(decision.id, path_, "affects")
 
     for oc_source in cfg.sources.opencode_instructions:
         instructions = scan_opencode_instructions(oc_source.path)
@@ -142,6 +172,7 @@ def run_init(config_path: str = ".mementic.json") -> GraphStore:
     has_sources = bool(cfg.sources.adr_dirs or cfg.sources.opencode_instructions)
     if has_sources:
         _backfill_edges(graph)
+        _backfill_decision_edges(graph)
         Path(cfg.output.graph_path).parent.mkdir(parents=True, exist_ok=True)
         graph.save(cfg.output.graph_path)
     return graph
