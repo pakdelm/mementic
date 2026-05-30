@@ -12,6 +12,8 @@ build/
 
 # Mementic runtime
 .mementic/graph.json
+.mementic/audit.jsonl
+.mementic/checkpoint
 
 # IDE
 .vscode/
