@@ -64,16 +64,28 @@ Outputs a context pack with all relevant constraints and decisions.
 ### 5. Capture decisions after tasks
 
 ```bash
+# Auto-discovers latest opencode session
+uv run mementic capture
+
+# With manual session path and notes
 uv run mementic capture --session /path/to/session.log --notes "Migrated Redis to Valkey"
 ```
 
-Extracts architectural decisions from an agent session log + git diff, with human review before writing to the graph.
+Extracts architectural decisions from the agent session log + git diff. Shows each decision and constraint individually for per-item review (`[Y]es / [n]o`). Tracks the last captured commit so subsequent captures only diff new changes.
 
-### 6. Review pending proposals
+### 6. Review and accept proposals
 
 ```bash
 uv run mementic review
 ```
+
+### 7. View audit log
+
+```bash
+uv run mementic log
+```
+
+Shows recent graph mutations with timestamps.
 
 ## Agent integration (opencode)
 
@@ -84,7 +96,7 @@ Register the MCP server in `opencode.json`:
   "mcp": {
     "mementic": {
       "type": "local",
-      "command": [".venv\\Scripts\\python.exe", "-m", "mementic"],
+      "command": ["uv", "run", "python", "-m", "mementic"],
       "enabled": true
     }
   }
@@ -97,17 +109,22 @@ The agent automatically discovers these MCP tools:
 - `propose_constraint` — record new constraints
 - `get_system_evolution` — trace decision history of a code entity
 
+OpenCode custom commands are also available in the TUI:
+- `/mementic-enforce <task>` — load constraints before working
+- `/mementic-capture` — record session decisions for review
+
 ## CLI reference
 
 | Command | Description |
 |---|---|
 | `mementic init [--config-path PATH]` | Initialize graph from sources |
-| `mementic capture --session PATH [--notes TEXT]` | Extract decisions from session |
+| `mementic capture [--session PATH] [--notes TEXT]` | Extract decisions from session (auto-discovers if no `--session`) |
 | `mementic enforce --task TEXT --files FILE...` | Generate context pack for task |
-| `mementic query [--entity PATH] [--search TERM]` | Search graph |
+| `mementic query [--entity PATH] [--search TERM] [--depth N]` | Search graph with optional depth traversal |
 | `mementic server` | Start MCP server (stdio) |
 | `mementic status` | Show graph statistics |
-| `mementic review` | Review pending proposals |
+| `mementic review` | Review and accept/reject pending proposals |
+| `mementic log` | Show recent graph mutations |
 
 ## Development
 
