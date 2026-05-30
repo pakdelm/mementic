@@ -5,9 +5,17 @@ from pathlib import Path
 from typing import Any
 
 from mementic.config import load_config
-from mementic.extraction import extract_from_freeform
+from mementic.extraction import extract_from_adr_consequences, extract_from_freeform
+from mementic.format import slugify
 from mementic.graph import GraphStore
-from mementic.models import CodeEntity, EntityType, ExtractionResult
+from mementic.models import (
+    CodeEntity,
+    Constraint,
+    Decision,
+    DecisionStatus,
+    EntityType,
+    ExtractionResult,
+)
 from mementic.sources.adr import scan_adr_dir
 from mementic.sources.opencode import scan_opencode_instructions
 
@@ -18,13 +26,41 @@ def find_file_paths(text: str) -> list[str]:
     return list(set(re.findall(pattern, text)))
 
 
+def _status_from_adr(status: str) -> DecisionStatus:
+    s = status.strip().lower()
+    if s == "proposed":
+        return DecisionStatus.PROPOSED
+    if s in ("deprecated", "superseded"):
+        return DecisionStatus.SUPERSEDED
+    return DecisionStatus.ACCEPTED
+
+
+def _add_decision_dedup(graph: GraphStore, decision: Decision) -> bool:
+    """Add decision if not duplicate. Merge sources on duplicate. Returns True if added."""
+    if decision.id in graph._g:
+        node = graph._g.nodes[decision.id]
+        existing_source = node.get("payload", {}).get("source", "")
+        if decision.source not in existing_source:
+            node["payload"]["source"] = f"{existing_source}, {decision.source}"
+        return False
+    graph.add_decision(decision)
+    return True
+
+
+def _add_constraint_dedup(graph: GraphStore, constraint: Constraint) -> bool:
+    if constraint.id in graph._g:
+        return False
+    graph.add_constraint(constraint)
+    return True
+
+
 def _ingest_result(graph: GraphStore, result: ExtractionResult, source_path: str) -> None:
     """Add extracted decisions, constraints, and entities to the graph."""
     for d in result.decisions:
-        graph.add_decision(d)
+        _add_decision_dedup(graph, d)
     for c in result.constraints:
-        graph.add_constraint(c)
-        _ensure_code_entities(graph, c, source_path, result)
+        if _add_constraint_dedup(graph, c):
+            _ensure_code_entities(graph, c, source_path, result)
     for entity_path in result.affected_entities:
         graph.add_code_entity(CodeEntity(id=entity_path, type=EntityType.FILE))
     for edge in result.edges_to_create:
@@ -55,14 +91,29 @@ def run_init(config_path: str = ".mementic.json") -> GraphStore:
     for adr_source in cfg.sources.adr_dirs:
         adrs = scan_adr_dir(adr_source.path)
         for adr in adrs:
-            text = (
-                f"Title: {adr.title}\n\n"
-                f"Context: {adr.context}\n\n"
-                f"Decision: {adr.decision}\n\n"
-                f"Consequences: {adr.consequences}"
+            decision_id = slugify(adr.title)
+
+            decision = Decision(
+                id=decision_id,
+                title=adr.title,
+                rationale=f"Context: {adr.context}\n\nDecision: {adr.decision}",
+                rejected_alternatives=[],
+                source=f"adr:{adr.path}",
+                status=_status_from_adr(adr.status),
+                author="adr",
+                timestamp=adr.timestamp,
             )
-            result = extract_from_freeform(text, adr.path, cfg.llm)
-            _ingest_result(graph, result, adr.path)
+            _add_decision_dedup(graph, decision)
+
+            if adr.consequences.strip():
+                constraints = extract_from_adr_consequences(adr.consequences, cfg.llm)
+                for c in constraints:
+                    c.enforced_by = decision_id
+                    if _add_constraint_dedup(graph, c):
+                        _ensure_code_entities(graph, c, adr.path, ExtractionResult())
+
+            for path_ in find_file_paths(adr.decision + " " + adr.consequences):
+                graph.add_code_entity(CodeEntity(id=path_, type=EntityType.FILE))
 
     for oc_source in cfg.sources.opencode_instructions:
         instructions = scan_opencode_instructions(oc_source.path)
