@@ -83,6 +83,24 @@ def _ensure_code_entities(
         graph.add_code_entity(CodeEntity(id=entity_path, type=EntityType.FILE))
 
 
+def _backfill_edges(graph: GraphStore) -> int:
+    """Ensure all constraints have entity links. Returns number of constraints fixed."""
+    count = 0
+    for node_id, attrs in list(graph._g.nodes(data=True)):
+        if attrs.get("node_type") != "Constraint":
+            continue
+        if any(True for _ in graph._g.successors(node_id)):
+            continue
+        constraint = Constraint(**attrs["payload"])
+        _ensure_code_entities(
+            graph, constraint,
+            attrs["payload"].get("source", "unknown"),
+            ExtractionResult(),
+        )
+        count += 1
+    return count
+
+
 def run_init(config_path: str = ".mementic.json") -> GraphStore:
     """Initialize the knowledge graph from all configured sources."""
     cfg = load_config(config_path)
@@ -123,6 +141,7 @@ def run_init(config_path: str = ".mementic.json") -> GraphStore:
 
     has_sources = bool(cfg.sources.adr_dirs or cfg.sources.opencode_instructions)
     if has_sources:
+        _backfill_edges(graph)
         Path(cfg.output.graph_path).parent.mkdir(parents=True, exist_ok=True)
         graph.save(cfg.output.graph_path)
     return graph
