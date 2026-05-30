@@ -2,9 +2,17 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 
 from dotenv import load_dotenv
-from openai import OpenAI
+from openai import (
+    APIConnectionError,
+    APIError,
+    APITimeoutError,
+    AuthenticationError,
+    OpenAI,
+    RateLimitError,
+)
 from pydantic import BaseModel
 
 load_dotenv()
@@ -79,15 +87,28 @@ def extract_from_freeform(
     extraction_schema = json.dumps(ExtractionResult.model_json_schema(), indent=2)
     system_prompt = FREE_FORM_SYSTEM_PROMPT.format(extraction_schema=extraction_schema)
 
-    response = client.chat.completions.create(
-        model=config.extraction_model,
-        temperature=0.1,
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": f"Source: {source_label}\n\nText:\n{text}"},
-        ],
-        response_format={"type": "json_object"},
-    )
+    try:
+        response = client.chat.completions.create(
+            model=config.extraction_model,
+            temperature=0.1,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": f"Source: {source_label}\n\nText:\n{text}"},
+            ],
+            response_format={"type": "json_object"},
+        )
+    except AuthenticationError:
+        sys.stderr.write("ERROR: DeepSeek API key is invalid. Check DEEPSEEK_API_KEY.\n")
+        raise
+    except RateLimitError:
+        sys.stderr.write("WARNING: DeepSeek rate limit hit. Skipping this source.\n")
+        return ExtractionResult()
+    except (APITimeoutError, APIConnectionError):
+        sys.stderr.write("WARNING: DeepSeek API unreachable. Skipping this source.\n")
+        return ExtractionResult()
+    except APIError as e:
+        sys.stderr.write(f"WARNING: DeepSeek API error: {e}. Skipping this source.\n")
+        return ExtractionResult()
 
     content = response.choices[0].message.content
     if content is None:
@@ -127,15 +148,28 @@ def extract_from_session(
     extraction_schema = json.dumps(ExtractionResult.model_json_schema(), indent=2)
     system_prompt = SESSION_SYSTEM_PROMPT.format(extraction_schema=extraction_schema)
 
-    response = client.chat.completions.create(
-        model=config.extraction_model,
-        temperature=0.1,
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": combined},
-        ],
-        response_format={"type": "json_object"},
-    )
+    try:
+        response = client.chat.completions.create(
+            model=config.extraction_model,
+            temperature=0.1,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": combined},
+            ],
+            response_format={"type": "json_object"},
+        )
+    except AuthenticationError:
+        sys.stderr.write("ERROR: DeepSeek API key is invalid. Check DEEPSEEK_API_KEY.\n")
+        raise
+    except RateLimitError:
+        sys.stderr.write("WARNING: DeepSeek rate limit hit. Skipping this source.\n")
+        return ExtractionResult()
+    except (APITimeoutError, APIConnectionError):
+        sys.stderr.write("WARNING: DeepSeek API unreachable. Skipping this source.\n")
+        return ExtractionResult()
+    except APIError as e:
+        sys.stderr.write(f"WARNING: DeepSeek API error: {e}. Skipping this source.\n")
+        return ExtractionResult()
 
     content = response.choices[0].message.content
     if content is None:
@@ -162,15 +196,28 @@ def extract_from_adr_consequences(
     constraints_schema = json.dumps(_ConstraintListResponse.model_json_schema(), indent=2)
     system_prompt = ADR_CONSEQUENCES_SYSTEM_PROMPT.format(constraints_schema=constraints_schema)
 
-    response = client.chat.completions.create(
-        model=config.extraction_model,
-        temperature=0.1,
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": consequences_text},
-        ],
-        response_format={"type": "json_object"},
-    )
+    try:
+        response = client.chat.completions.create(
+            model=config.extraction_model,
+            temperature=0.1,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": consequences_text},
+            ],
+            response_format={"type": "json_object"},
+        )
+    except AuthenticationError:
+        sys.stderr.write("ERROR: DeepSeek API key is invalid. Check DEEPSEEK_API_KEY.\n")
+        raise
+    except RateLimitError:
+        sys.stderr.write("WARNING: DeepSeek rate limit hit. Skipping this source.\n")
+        return []
+    except (APITimeoutError, APIConnectionError):
+        sys.stderr.write("WARNING: DeepSeek API unreachable. Skipping this source.\n")
+        return []
+    except APIError as e:
+        sys.stderr.write(f"WARNING: DeepSeek API error: {e}. Skipping this source.\n")
+        return []
 
     content = response.choices[0].message.content
     if content is None:

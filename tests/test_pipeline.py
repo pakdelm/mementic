@@ -204,8 +204,8 @@ class TestRunInitWithAdr:
         config_path.write_text(json.dumps(config_data))
 
         with patch(
-            "mementic.pipeline.extract_from_freeform",
-            return_value=_mock_adr_result(),
+            "mementic.pipeline.extract_from_adr_consequences",
+            return_value=[],
         ):
             gs = run_init(str(config_path))
 
@@ -230,14 +230,9 @@ class TestRunInitWithAdr:
         }
         config_path.write_text(json.dumps(config_data))
 
-        def _side_effect(text, source_label, config):
-            if "Redis" in text:
-                return _mock_adr_proposed_result()
-            return _mock_adr_deprecated_result()
-
         with patch(
-            "mementic.pipeline.extract_from_freeform",
-            side_effect=_side_effect,
+            "mementic.pipeline.extract_from_adr_consequences",
+            return_value=[],
         ):
             gs = run_init(str(config_path))
 
@@ -260,8 +255,8 @@ class TestRunInitWithAdr:
         config_path.write_text(json.dumps(config_data))
 
         with patch(
-            "mementic.pipeline.extract_from_freeform",
-            return_value=_mock_adr_result(),
+            "mementic.pipeline.extract_from_adr_consequences",
+            return_value=[],
         ):
             gs = run_init(str(config_path))
 
@@ -281,8 +276,8 @@ class TestRunInitWithAdr:
         config_path.write_text(json.dumps(config_data))
 
         with patch(
-            "mementic.pipeline.extract_from_freeform",
-            return_value=_mock_adr_result(),
+            "mementic.pipeline.extract_from_adr_consequences",
+            return_value=_mock_adr_result().constraints,
         ):
             gs = run_init(str(config_path))
 
@@ -307,8 +302,12 @@ class TestRunInitEmptyConfig:
         assert stats["edges"] == 0
 
     def test_missing_config_file_returns_empty_graph(self, tmp_path: Path) -> None:
-        config_path = str(tmp_path / "nonexistent.json")
-        gs = run_init(config_path)
+        # Use a temp config with temp output to avoid writing to production graph.json
+        config_path = tmp_path / ".mementic.json"
+        config_path.write_text(json.dumps({
+            "output": {"graph_path": str(tmp_path / ".mementic" / "graph.json")},
+        }))
+        gs = run_init(str(config_path))
 
         stats = gs.stats()
         assert stats == {"decisions": 0, "constraints": 0, "entities": 0, "edges": 0}
@@ -395,7 +394,10 @@ class TestRunInitCombined:
 
         with patch(
             "mementic.pipeline.extract_from_freeform",
-            side_effect=[_mock_adr_result(), _mock_freeform_result()],
+            return_value=_mock_freeform_result(),
+        ), patch(
+            "mementic.pipeline.extract_from_adr_consequences",
+            return_value=[],
         ):
             gs = run_init(str(config_path))
 
@@ -422,8 +424,8 @@ class TestSaveAndLoad:
         config_path.write_text(json.dumps(config_data))
 
         with patch(
-            "mementic.pipeline.extract_from_freeform",
-            return_value=_mock_adr_result(),
+            "mementic.pipeline.extract_from_adr_consequences",
+            return_value=[],
         ):
             gs1 = run_init(str(config_path))
 

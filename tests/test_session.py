@@ -62,9 +62,10 @@ class TestFindLatestSession:
         older.write_text("old")
         newer.write_text("new")
 
-        # Ensure newer has a later mtime
-        newer.touch()
-        older.touch()
+        # Set explicit mtimes so newer is always later
+        import os
+        os.utime(str(older), (1000, 1000))
+        os.utime(str(newer), (2000, 2000))
 
         fake_paths = {"linux": [str(tmp_path)]}
         with patch.dict("mementic.session.DEFAULT_SESSION_PATHS", fake_paths, clear=True):

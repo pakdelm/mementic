@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -139,6 +140,24 @@ class GraphStore:
         tmp = p.with_suffix(p.suffix + ".tmp")
         tmp.write_text(json.dumps(payload.model_dump(mode="json"), indent=2))
         tmp.replace(p)
+
+        audit_path = p.parent / "audit.jsonl"
+        entry = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "action": "save",
+            "decisions": sum(
+                1 for _, a in self._g.nodes(data=True) if a.get("node_type") == "Decision"
+            ),
+            "constraints": sum(
+                1 for _, a in self._g.nodes(data=True) if a.get("node_type") == "Constraint"
+            ),
+            "entities": sum(
+                1 for _, a in self._g.nodes(data=True) if a.get("node_type") == "CodeEntity"
+            ),
+            "edges": self._g.number_of_edges(),
+        }
+        with audit_path.open("a") as f:
+            f.write(json.dumps(entry) + "\n")
 
     @classmethod
     def load(cls, path: str) -> GraphStore:
