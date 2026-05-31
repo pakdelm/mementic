@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from mementic.config import MementicConfig, load_config
+from mementic.config import LLMConfig, MementicConfig, load_config
 
 
 class TestLoadConfig:
@@ -113,4 +113,90 @@ class TestLoadConfig:
             assert config.sources.opencode_instructions == []
         finally:
             Path(tmp.name).unlink()
+
+
+class TestMultiProvider:
+    """Tests for multi-provider LLM configuration (Spec 06a D3)."""
+
+    def test_provider_default_deepseek(self) -> None:
+        """Default provider is deepseek with correct base_url and env var."""
+        config = MementicConfig()
+        assert config.llm.provider == "deepseek"
+        assert config.llm.base_url == "https://api.deepseek.com"
+        assert config.llm.key_env_var == "DEEPSEEK_API_KEY"
+
+    def test_provider_openai_config(self) -> None:
+        """OpenAI provider has correct base_url and env var."""
+        config = MementicConfig(
+            llm=LLMConfig(provider="openai", model="gpt-4o")
+        )
+        assert config.llm.provider == "openai"
+        assert config.llm.base_url == "https://api.openai.com/v1"
+        assert config.llm.key_env_var == "OPENAI_API_KEY"
+
+    def test_provider_openrouter_config(self) -> None:
+        """OpenRouter provider has correct base_url and env var."""
+        config = MementicConfig(
+            llm=LLMConfig(provider="openrouter", model="anthropic/claude-3-sonnet")
+        )
+        assert config.llm.provider == "openrouter"
+        assert config.llm.base_url == "https://openrouter.ai/api/v1"
+        assert config.llm.key_env_var == "OPENROUTER_API_KEY"
+
+    def test_provider_ollama_config(self) -> None:
+        """Ollama provider has local base_url and no API key required."""
+        config = MementicConfig(
+            llm=LLMConfig(provider="ollama", model="llama3")
+        )
+        assert config.llm.provider == "ollama"
+        assert config.llm.base_url == "http://localhost:11434/v1"
+        assert config.llm.key_env_var is None
+
+    def test_unknown_provider_raises_validation_error(self) -> None:
+        """Unknown provider raises ValidationError during model validation."""
+        with pytest.raises(ValidationError, match="Unknown LLM provider"):
+            MementicConfig(
+                llm=LLMConfig(provider="nonexistent", model="x")
+            )
+
+    def test_ensure_api_key_raises_when_missing(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """ensure_api_key raises RuntimeError with env var name when key missing."""
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        config = MementicConfig(
+            llm=LLMConfig(provider="openai", model="gpt-4o")
+        )
+        with pytest.raises(RuntimeError, match="OPENAI_API_KEY"):
+            config.llm.ensure_api_key()
+
+    def test_ensure_api_key_returns_key_when_set(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """ensure_api_key returns the key when the env var is set."""
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-test-123")
+        config = MementicConfig(
+            llm=LLMConfig(provider="openai", model="gpt-4o")
+        )
+        assert config.llm.ensure_api_key() == "sk-test-123"
+
+    def test_ensure_api_key_ollama_returns_dummy(self) -> None:
+        """ensure_api_key for ollama returns a dummy value (no key needed)."""
+        config = MementicConfig(
+            llm=LLMConfig(provider="ollama", model="llama3")
+        )
+        assert config.llm.ensure_api_key() == "ollama"
+
+    def test_missing_key_error_message_includes_provider(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Error message names the provider and its required env var."""
+        monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+        config = MementicConfig(
+            llm=LLMConfig(provider="openrouter", model="openai/gpt-4o")
+        )
+        with pytest.raises(RuntimeError) as exc_info:
+            config.llm.ensure_api_key()
+        assert "openrouter" in str(exc_info.value)
+        assert "OPENROUTER_API_KEY" in str(exc_info.value)
 

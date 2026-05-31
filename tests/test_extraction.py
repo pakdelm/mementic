@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from unittest.mock import MagicMock, patch
 
+import pytest
 
 from mementic.config import LLMConfig
 from mementic.extraction import (
@@ -286,8 +287,8 @@ class TestErrorHandling:
         config = LLMConfig()
         with patch("mementic.extraction.get_client",
                    return_value=self._make_raising_client(self._make_auth_error())):
-            output = extract_from_freeform("text", "src", config)
-        assert output == ExtractionResult()
+            with pytest.raises(RuntimeError, match="Authentication failed"):
+                extract_from_freeform("text", "src", config)
 
     def test_freeform_rate_limit_returns_empty(self) -> None:
         config = LLMConfig()
@@ -346,8 +347,8 @@ class TestErrorHandling:
         config = LLMConfig()
         with patch("mementic.extraction.get_client",
                    return_value=self._make_raising_client(self._make_auth_error())):
-            output = extract_from_session("log", "diff", "notes", config)
-        assert output == ExtractionResult()
+            with pytest.raises(RuntimeError, match="Authentication failed"):
+                extract_from_session("log", "diff", "notes", config)
 
     def test_session_rate_limit_returns_empty(self) -> None:
         config = LLMConfig()
@@ -406,8 +407,8 @@ class TestErrorHandling:
         config = LLMConfig()
         with patch("mementic.extraction.get_client",
                    return_value=self._make_raising_client(self._make_auth_error())):
-            output = extract_from_adr_consequences("consequences", config)
-        assert output == []
+            with pytest.raises(RuntimeError, match="Authentication failed"):
+                extract_from_adr_consequences("consequences", config)
 
     def test_adr_consequences_rate_limit_returns_empty(self) -> None:
         config = LLMConfig()
@@ -461,4 +462,29 @@ class TestErrorHandling:
         with patch("mementic.extraction.get_client", return_value=client):
             output = extract_from_adr_consequences("text", config)
         assert output == []
+
+
+class TestMissingApiKey:
+    """Tests for D4: missing API key produces clear error (Spec 06a)."""
+
+    def test_extraction_missing_key_raises_runtime_error(self) -> None:
+        """When get_client raises RuntimeError (missing key), extraction propagates it."""
+        config = LLMConfig(provider="openai", model="gpt-4o")
+        with patch(
+            "mementic.extraction.get_client",
+            side_effect=RuntimeError("Mementic requires an API key for provider 'openai'.\n"
+                                     "  Set the environment variable: OPENAI_API_KEY"),
+        ):
+            with pytest.raises(RuntimeError, match="OPENAI_API_KEY"):
+                extract_from_freeform("some text", "test", config)
+
+    def test_session_extraction_missing_key_raises(self) -> None:
+        """Session extraction also propagates missing-key error."""
+        config = LLMConfig(provider="openai", model="gpt-4o")
+        with patch(
+            "mementic.extraction.get_client",
+            side_effect=RuntimeError("Mementic requires an API key for provider 'openai'."),
+        ):
+            with pytest.raises(RuntimeError, match="openai"):
+                extract_from_session("log", "diff", "notes", config)
 

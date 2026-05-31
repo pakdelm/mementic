@@ -3,9 +3,11 @@ from __future__ import annotations
 import json
 import subprocess
 from pathlib import Path
+from typing import Any
 
 import typer
 from dotenv import load_dotenv
+from pydantic import ValidationError
 
 load_dotenv()
 
@@ -19,6 +21,34 @@ from mementic.pipeline import run_init  # noqa: E402
 app = typer.Typer(help="Mementic — semantic memory for engineering teams and AI agents")
 
 CHECKPOINT_FILE = ".mementic/checkpoint"
+
+
+def _load_graph_safe(graph_path: str) -> GraphStore:
+    """Load graph with distinct error messages for missing vs corrupt files.
+
+    Args:
+        graph_path: Path to the graph JSON file.
+
+    Returns:
+        A loaded GraphStore instance.
+
+    Raises:
+        typer.Exit: With code 1 and a clear message for missing or corrupt graph.
+    """
+    try:
+        return GraphStore.load(graph_path)
+    except FileNotFoundError:
+        typer.echo(
+            "No graph found. Run 'mementic init' first.", err=True
+        )
+        raise typer.Exit(code=1)
+    except (json.JSONDecodeError, TypeError, ValueError, KeyError, ValidationError):
+        typer.echo(
+            f"Graph file at {graph_path} is corrupt. "
+            f"Run 'mementic init' to rebuild.",
+            err=True,
+        )
+        raise typer.Exit(code=1)
 
 
 def _load_checkpoint() -> str:
@@ -51,9 +81,84 @@ def _run_git_diff(reference: str) -> tuple[str, int]:
 
 
 @app.command()
-def init(config_path: str = ".mementic.json") -> None:
-    """Initialize the knowledge graph from configured sources."""
-    graph = run_init(config_path)
+def init(
+    config_path: str = ".mementic.json",
+    interactive: bool = typer.Option(
+        False, "--interactive", help="Walk through setup interactively"
+    ),
+    force: bool = typer.Option(
+        False, "--force",
+        help="Skip auto-bootstrap; fail if .mementic.json is missing"
+    ),
+) -> None:
+    """Initialize the knowledge graph from configured sources.
+
+    If .mementic.json doesn't exist, auto-discovers ./docs/adr/ and
+    ./docs/instructions/ directories and creates a default config.
+    """
+    config_file = Path(config_path)
+
+    if not config_file.exists():
+        if force:
+            typer.echo(
+                f"No config found at {config_path} and --force is set. "
+                f"Cannot proceed.",
+                err=True,
+            )
+            raise typer.Exit(code=1)
+
+        typer.echo("No config found — auto-discovering sources...")
+        discovered: dict[str, list[dict[str, str]]] = {
+            "adr_dirs": [],
+            "opencode_instructions": [],
+        }
+
+        if Path("./docs/adr").is_dir():
+            discovered["adr_dirs"].append({"path": "./docs/adr"})
+            typer.echo("  Found: ./docs/adr/")
+        if Path("./docs/instructions").is_dir():
+            discovered["opencode_instructions"].append({"path": "./docs/instructions"})
+            typer.echo("  Found: ./docs/instructions/")
+
+        if not any(discovered.values()):
+            typer.echo(
+                "No sources discovered. Create .mementic.json manually or "
+                "add docs/adr/ and docs/instructions/ directories.",
+                err=True,
+            )
+            raise typer.Exit(code=1)
+
+        auto_config: dict[str, Any] = {
+            "sources": {k: v for k, v in discovered.items() if v},
+            "output": {"graph_path": "./.mementic/graph.json"},
+            "llm": {"provider": "deepseek", "model": "deepseek-chat"},
+        }
+        config_file.write_text(json.dumps(auto_config, indent=2))
+        typer.echo(f"Created {config_path}")
+
+    if interactive:
+        typer.echo("Interactive setup is available. Edit .mementic.json directly:")
+        typer.echo(f"  {config_file.absolute()}")
+        typer.echo("Supported LLM providers: deepseek, openai, openrouter, ollama")
+        provider = typer.prompt(
+            "LLM provider", default="deepseek"
+        )
+        model = typer.prompt(
+            f"Model for '{provider}'", default="deepseek-chat"
+        )
+        # Reload and update config
+        cfg_data = json.loads(config_file.read_text())
+        cfg_data.setdefault("llm", {})["provider"] = provider
+        cfg_data.setdefault("llm", {})["model"] = model
+        cfg_data.setdefault("llm", {})["extraction_model"] = model
+        config_file.write_text(json.dumps(cfg_data, indent=2))
+        typer.echo(f"Updated {config_path}")
+
+    try:
+        graph = run_init(config_path)
+    except RuntimeError as e:
+        typer.echo(str(e), err=True)
+        raise typer.Exit(code=1)
     stats = graph.stats()
     typer.echo(f"Mementic graph initialized: {stats}")
 
@@ -76,72 +181,78 @@ def capture(
     session_text = Path(session).read_text()
 
     checkpoint = _load_checkpoint()
+    got_diff = False
     if checkpoint:
         git_diff, rc = _run_git_diff(checkpoint)
+        got_diff = rc == 0
         if rc != 0:
-            typer.echo(f"Warning: git diff against checkpoint failed (rc={rc}).", err=True)
+            typer.echo(
+                "Warning: Capture requires a git repository. "
+                "Run 'git init' or use --notes to capture without git diff.",
+                err=True,
+            )
+            git_diff = ""
     else:
         git_diff, rc = _run_git_diff("HEAD~1")
+        got_diff = rc == 0
         if rc != 0:
-            typer.echo(f"Warning: git diff against HEAD~1 failed (rc={rc}).", err=True)
+            typer.echo(
+                "Warning: Capture requires a git repository. "
+                "Run 'git init' or use --notes to capture without git diff.",
+                err=True,
+            )
+            git_diff = ""
         else:
             typer.echo("No checkpoint found — using HEAD~1 as baseline.")
 
-    cfg = load_config()
-    extraction = extract_from_session(session_text, git_diff, notes or "", cfg.llm)
+    try:
+        cfg = load_config()
+        extraction = extract_from_session(session_text, git_diff, notes or "", cfg.llm)
+    except RuntimeError as e:
+        typer.echo(str(e), err=True)
+        raise typer.Exit(code=1)
 
     if not extraction.decisions and not extraction.constraints:
         typer.echo("No architectural decisions or constraints found.")
         raise typer.Exit()
 
-    accepted_d = []
-    accepted_c = []
-
     for d in extraction.decisions:
-        typer.echo(f"\nDecision: [{d.id}] {d.title}")
-        typer.echo(f"  Rationale: {d.rationale}")
+        typer.echo(f"Decision: [{d.id}] {d.title}")
         if d.rejected_alternatives:
             typer.echo(f"  Rejected: {', '.join(d.rejected_alternatives)}")
-        if typer.confirm("  Accept?", default=True):
-            accepted_d.append(d)
-
     for c in extraction.constraints:
-        typer.echo(f"\nConstraint: [{c.id}] {c.description}")
-        if typer.confirm("  Accept?", default=True):
-            accepted_c.append(c)
+        typer.echo(f"Constraint: [{c.id}] {c.description}")
 
-    if not accepted_d and not accepted_c:
-        typer.echo("Nothing accepted. Graph unchanged.")
-        raise typer.Exit()
-
-    if Path(cfg.output.graph_path).exists():
+    graph_path = cfg.output.graph_path
+    if Path(graph_path).exists():
         try:
-            graph = GraphStore.load(cfg.output.graph_path)
-        except Exception:
-            typer.echo("Graph file corrupted. Starting with empty graph.", err=True)
+            graph = _load_graph_safe(graph_path)
+        except typer.Exit:
+            typer.echo("Starting with empty graph.", err=True)
             graph = GraphStore()
     else:
         graph = GraphStore()
 
-    for d in accepted_d:
+    for d in extraction.decisions:
         graph.add_decision(d)
         for entity_path in extraction.affected_entities:
             graph.add_code_entity(
                 CodeEntity(id=entity_path, type=EntityType.FILE)
             )
             graph.link(d.id, entity_path, "affects")
-    for c in accepted_c:
+    for c in extraction.constraints:
         graph.add_constraint(c)
         for entity_path in c.bound_entities:
             graph.link(c.id, entity_path, "binds_to")
     for edge in extraction.edges_to_create:
         graph.link(edge.source, edge.target, edge.relation)
 
-    Path(cfg.output.graph_path).parent.mkdir(parents=True, exist_ok=True)
-    graph.save(cfg.output.graph_path)
-    typer.echo(f"Written to {cfg.output.graph_path}")
+    Path(graph_path).parent.mkdir(parents=True, exist_ok=True)
+    graph.save(graph_path)
+    typer.echo(f"Written to {graph_path}")
 
-    _save_checkpoint()
+    if got_diff:
+        _save_checkpoint()
 
 
 @app.command()
@@ -149,11 +260,7 @@ def enforce(task: str, files: list[str]) -> None:
     """Load constraints and format a context pack for a given task."""
     cfg = load_config()
 
-    try:
-        graph = GraphStore.load(cfg.output.graph_path)
-    except (FileNotFoundError, Exception):
-        typer.echo("No graph found. Run 'mementic init' first.", err=True)
-        raise typer.Exit(code=1)
+    graph = _load_graph_safe(cfg.output.graph_path)
 
     constraints = graph.get_constraints_for_entities(files)
     decisions = graph.get_decisions_for_entities(files)
@@ -173,11 +280,7 @@ def query(
     """Search decisions, constraints, and entities in the graph."""
     cfg = load_config()
 
-    try:
-        graph = GraphStore.load(cfg.output.graph_path)
-    except (FileNotFoundError, Exception):
-        typer.echo("No graph found. Run 'mementic init' first.", err=True)
-        raise typer.Exit(code=1)
+    graph = _load_graph_safe(cfg.output.graph_path)
 
     if entity:
         decisions = graph.get_evolution(entity)
@@ -265,15 +368,12 @@ def status() -> None:
     """Show graph statistics."""
     cfg = load_config()
 
-    try:
-        graph = GraphStore.load(cfg.output.graph_path)
-        stats = graph.stats()
-        typer.echo(f"Decisions: {stats.get('decisions', 0)}")
-        typer.echo(f"Constraints: {stats.get('constraints', 0)}")
-        typer.echo(f"Code Entities: {stats.get('entities', 0)}")
-        typer.echo(f"Edges: {stats.get('edges', 0)}")
-    except (FileNotFoundError, Exception):
-        typer.echo("No graph found. Run 'mementic init' first.")
+    graph = _load_graph_safe(cfg.output.graph_path)
+    stats = graph.stats()
+    typer.echo(f"Decisions: {stats.get('decisions', 0)}")
+    typer.echo(f"Constraints: {stats.get('constraints', 0)}")
+    typer.echo(f"Code Entities: {stats.get('entities', 0)}")
+    typer.echo(f"Edges: {stats.get('edges', 0)}")
 
 
 @app.command()
@@ -281,11 +381,7 @@ def review() -> None:
     """Review pending proposed decisions."""
     cfg = load_config()
 
-    try:
-        graph = GraphStore.load(cfg.output.graph_path)
-    except (FileNotFoundError, Exception):
-        typer.echo("No graph found.", err=True)
-        raise typer.Exit(code=1)
+    graph = _load_graph_safe(cfg.output.graph_path)
 
     pending_d = graph.get_pending_decisions()
     pending_c = graph.get_pending_constraints()

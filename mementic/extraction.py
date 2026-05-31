@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import os
 import sys
 
 from dotenv import load_dotenv
@@ -60,12 +59,33 @@ class _ConstraintListResponse(BaseModel):
     constraints: list[Constraint]
 
 
-def get_client(config: LLMConfig) -> OpenAI:  # pragma: no cover
-    """Create OpenAI client pointed at DeepSeek. Reads key from DEEPSEEK_API_KEY env var."""
-    api_key = os.environ.get("DEEPSEEK_API_KEY", "")
-    if not api_key:
-        sys.stderr.write("WARNING: DEEPSEEK_API_KEY is not set. LLM calls will fail.\n")
-    return OpenAI(api_key=api_key, base_url="https://api.deepseek.com")
+def get_client(config: LLMConfig) -> OpenAI:
+    """Create an OpenAI-compatible client for the configured LLM provider.
+
+    Uses config-driven base_url and API key. Raises RuntimeError with a
+    provider-specific message when the required API key is missing.
+
+    Args:
+        config: LLM configuration from MementicConfig.
+
+    Returns:
+        An OpenAI client pointed at the configured provider.
+
+    Raises:
+        RuntimeError: If the provider requires an API key and it's not set.
+    """
+    base_url = config.base_url
+    api_key = config.ensure_api_key()
+    return OpenAI(api_key=api_key, base_url=base_url)
+
+
+def _provider_prefix(config: LLMConfig) -> str:
+    """Return a human-readable provider label for error messages."""
+    provider = config.provider.capitalize()
+    env_var = config.key_env_var
+    if env_var:
+        return f"{provider} ({env_var})"
+    return provider
 
 
 def extract_from_freeform(
@@ -88,6 +108,7 @@ def extract_from_freeform(
 
     extraction_schema = json.dumps(ExtractionResult.model_json_schema(), indent=2)
     system_prompt = FREE_FORM_SYSTEM_PROMPT.format(extraction_schema=extraction_schema)
+    prefix = _provider_prefix(config)
 
     try:
         response = client.chat.completions.create(
@@ -100,16 +121,20 @@ def extract_from_freeform(
             response_format={"type": "json_object"},
         )
     except AuthenticationError:
-        sys.stderr.write("WARNING: DeepSeek API key is invalid. Check DEEPSEEK_API_KEY.\n")
-        return ExtractionResult()
+        msg = (
+            f"Authentication failed for {prefix}. "
+            f"The API key is set but appears to be invalid. "
+            f"Check {config.key_env_var}."
+        )
+        raise RuntimeError(msg) from None
     except RateLimitError:
-        sys.stderr.write("WARNING: DeepSeek rate limit hit. Skipping this source.\n")
+        sys.stderr.write(f"WARNING: {prefix} rate limit hit. Skipping this source.\n")
         return ExtractionResult()
     except (APITimeoutError, APIConnectionError):
-        sys.stderr.write("WARNING: DeepSeek API unreachable. Skipping this source.\n")
+        sys.stderr.write(f"WARNING: {prefix} API unreachable. Skipping this source.\n")
         return ExtractionResult()
     except APIError as e:
-        sys.stderr.write(f"WARNING: DeepSeek API error: {e}. Skipping this source.\n")
+        sys.stderr.write(f"WARNING: {prefix} API error: {e}. Skipping this source.\n")
         return ExtractionResult()
 
     content = response.choices[0].message.content
@@ -152,6 +177,7 @@ def extract_from_session(
 
     extraction_schema = json.dumps(ExtractionResult.model_json_schema(), indent=2)
     system_prompt = SESSION_SYSTEM_PROMPT.format(extraction_schema=extraction_schema)
+    prefix = _provider_prefix(config)
 
     try:
         response = client.chat.completions.create(
@@ -164,16 +190,20 @@ def extract_from_session(
             response_format={"type": "json_object"},
         )
     except AuthenticationError:
-        sys.stderr.write("WARNING: DeepSeek API key is invalid. Check DEEPSEEK_API_KEY.\n")
-        return ExtractionResult()
+        msg = (
+            f"Authentication failed for {prefix}. "
+            f"The API key is set but appears to be invalid. "
+            f"Check {config.key_env_var}."
+        )
+        raise RuntimeError(msg) from None
     except RateLimitError:
-        sys.stderr.write("WARNING: DeepSeek rate limit hit. Skipping this source.\n")
+        sys.stderr.write(f"WARNING: {prefix} rate limit hit. Skipping this source.\n")
         return ExtractionResult()
     except (APITimeoutError, APIConnectionError):
-        sys.stderr.write("WARNING: DeepSeek API unreachable. Skipping this source.\n")
+        sys.stderr.write(f"WARNING: {prefix} API unreachable. Skipping this source.\n")
         return ExtractionResult()
     except APIError as e:
-        sys.stderr.write(f"WARNING: DeepSeek API error: {e}. Skipping this source.\n")
+        sys.stderr.write(f"WARNING: {prefix} API error: {e}. Skipping this source.\n")
         return ExtractionResult()
 
     content = response.choices[0].message.content
@@ -203,6 +233,7 @@ def extract_from_adr_consequences(
 
     constraints_schema = json.dumps(_ConstraintListResponse.model_json_schema(), indent=2)
     system_prompt = ADR_CONSEQUENCES_SYSTEM_PROMPT.format(constraints_schema=constraints_schema)
+    prefix = _provider_prefix(config)
 
     try:
         response = client.chat.completions.create(
@@ -215,16 +246,20 @@ def extract_from_adr_consequences(
             response_format={"type": "json_object"},
         )
     except AuthenticationError:
-        sys.stderr.write("WARNING: DeepSeek API key is invalid. Check DEEPSEEK_API_KEY.\n")
-        return []
+        msg = (
+            f"Authentication failed for {prefix}. "
+            f"The API key is set but appears to be invalid. "
+            f"Check {config.key_env_var}."
+        )
+        raise RuntimeError(msg) from None
     except RateLimitError:
-        sys.stderr.write("WARNING: DeepSeek rate limit hit. Skipping this source.\n")
+        sys.stderr.write(f"WARNING: {prefix} rate limit hit. Skipping this source.\n")
         return []
     except (APITimeoutError, APIConnectionError):
-        sys.stderr.write("WARNING: DeepSeek API unreachable. Skipping this source.\n")
+        sys.stderr.write(f"WARNING: {prefix} API unreachable. Skipping this source.\n")
         return []
     except APIError as e:
-        sys.stderr.write(f"WARNING: DeepSeek API error: {e}. Skipping this source.\n")
+        sys.stderr.write(f"WARNING: {prefix} API error: {e}. Skipping this source.\n")
         return []
 
     content = response.choices[0].message.content

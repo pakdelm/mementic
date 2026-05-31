@@ -6,83 +6,104 @@ Mementic ingests architectural decisions (ADRs), constraints, and project conven
 
 ## Install
 
+### One-command install (recommended)
+
+```bash
+uv tool install git+https://github.com/pakdelm/mementic.git
+```
+
+This gives you a system-wide `mementic` binary. Update with:
+
+```bash
+uv tool upgrade mementic
+```
+
+### From source
+
 ```bash
 git clone https://github.com/pakdelm/mementic.git
 cd mementic
 uv sync
 ```
 
-Set your DeepSeek API key by copying the example env file and editing it:
+### Configure your LLM provider
+
+Mementic requires an LLM. Supported providers:
+
+| Provider | Set env var | Model example |
+|---|---|---|
+| DeepSeek (default) | `DEEPSEEK_API_KEY` | `deepseek-chat` |
+| OpenAI | `OPENAI_API_KEY` | `gpt-4o` |
+| OpenRouter | `OPENROUTER_API_KEY` | `openai/gpt-4o` |
+| Ollama (local) | none | `llama3` |
 
 ```bash
-cp .env.example .env
-# Edit .env with your actual key
+# Example: use OpenAI
+export OPENAI_API_KEY="sk-..."
+# Then set provider in .mementic.json (or use mementic init --interactive)
 ```
+
+If the API key is missing or invalid, mementic exits immediately with a clear error
+naming the required environment variable. No silent fallback.
 
 ## Quick start
 
-### 1. Configure sources
-
-Create `.mementic.json`:
-
-```json
-{
-  "sources": {
-    "adr_dirs": [{"path": "./docs/adr"}],
-    "opencode_instructions": [{"path": "./docs/instructions"}]
-  },
-  "output": {
-    "graph_path": "./.mementic/graph.json"
-  }
-}
-```
-
-### 2. Initialize the graph
+### 1. Initialize the graph
 
 ```bash
-uv run mementic init
+mementic init
 ```
 
-Scans all configured sources, extracts decisions and constraints via LLM, and populates the knowledge graph.
+If no `.mementic.json` exists, `init` auto-discovers `./docs/adr/` and
+`./docs/instructions/` directories and creates a default config. Use
+`--interactive` for a setup walkthrough, or `--force` to require an existing
+config.
 
-### 3. Query the graph
+Scans all configured sources, extracts decisions and constraints via LLM, and
+populates the knowledge graph.
+
+### 2. Query the graph
 
 ```bash
-uv run mementic status
-uv run mementic query --search "auth"
-uv run mementic query --entity src/auth/handler.py
+mementic status
+mementic query --search "auth"
+mementic query --entity src/auth/handler.py
 ```
 
-### 4. Enforce constraints before tasks
+### 3. Enforce constraints before tasks
 
 ```bash
-uv run mementic enforce --task "Add rate limiting to auth" --files src/auth/handler.py
+mementic enforce --task "Add rate limiting to auth" --files src/auth/handler.py
 ```
 
 Outputs a context pack with all relevant constraints and decisions.
 
-### 5. Capture decisions after tasks
+### 4. Capture decisions after tasks
 
 ```bash
 # Auto-discovers latest opencode session
-uv run mementic capture
+mementic capture
 
 # With manual session path and notes
-uv run mementic capture --session /path/to/session.log --notes "Migrated Redis to Valkey"
+mementic capture --session /path/to/session.log --notes "Migrated Redis to Valkey"
 ```
 
-Extracts architectural decisions from the agent session log + git diff. Shows each decision and constraint individually for per-item review (`[Y]es / [n]o`). Tracks the last captured commit so subsequent captures only diff new changes.
+Extracts architectural decisions from the agent session log + git diff.
+All decisions and constraints are auto-accepted and written to the graph.
+Use `mementic review` to inspect or deprecate entries. Tracks the last
+captured commit so subsequent captures only diff new changes. Runs without
+git (warns and uses notes only).
 
-### 6. Review and accept proposals
+### 5. Review and accept proposals
 
 ```bash
-uv run mementic review
+mementic review
 ```
 
-### 7. View audit log
+### 6. View audit log
 
 ```bash
-uv run mementic log
+mementic log
 ```
 
 Shows recent graph mutations with timestamps.
@@ -96,7 +117,7 @@ Register the MCP server in `opencode.json`:
   "mcp": {
     "mementic": {
       "type": "local",
-      "command": ["uv", "run", "python", "-m", "mementic"],
+      "command": ["mementic", "server"],
       "enabled": true
     }
   }
@@ -144,22 +165,22 @@ Run `mementic capture` then `mementic review` in the terminal.
 
 | Command | Description |
 |---|---|
-| `mementic init [--config-path PATH]` | Initialize graph from sources |
-| `mementic capture [--session PATH] [--notes TEXT]` | Extract decisions from session (auto-discovers if no `--session`) |
+| `mementic init [--config PATH] [--interactive] [--force]` | Auto-bootstrap config and initialize graph |
+| `mementic capture [--session PATH] [--notes TEXT]` | Extract decisions from session |
 | `mementic enforce --task TEXT --files FILE...` | Generate context pack for task |
-| `mementic query [--entity PATH] [--search TERM] [--depth N]` | Search graph with optional depth traversal |
-| `mementic server` | Start MCP server (stdio) |
+| `mementic query [--entity PATH] [--search TERM] [--depth N]` | Search graph |
 | `mementic status` | Show graph statistics |
-| `mementic review` | Review and accept/reject pending proposals |
+| `mementic review` | Review pending proposals |
 | `mementic log` | Show recent graph mutations |
+| `mementic server` | Start MCP server (stdio) |
 
 ## Development
 
 ```bash
-uv sync           # install dependencies
-uv run pytest     # run tests (91 tests)
-uv run ruff check .  # lint
-uv run mypy .     # type check
+uv sync                           # install dependencies
+uv run pytest                     # run tests (165 tests)
+uv run ruff check .               # lint
+uv run mypy .                     # type check
 ```
 
 ## License
