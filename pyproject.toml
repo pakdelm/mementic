@@ -22,13 +22,16 @@ packages = ["mementic"]
 
 [dependency-groups]
 dev = [
-    "types-networkx>=3.6.1.20260518",
-]
-
-[project.optional-dependencies]
-dev = [
+    "mypy>=1.10",
+    "pre-commit>=4.0",
     "pytest>=8.0",
     "pytest-cov>=5.0",
     "ruff>=0.4",
-    "mypy>=1.10",
+    "types-networkx>=3.6.1.20260518",
 ]
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.format]
+quote-style = "double"
