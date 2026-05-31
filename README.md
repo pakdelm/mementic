@@ -191,16 +191,95 @@ conflicts, run `mementic review` to resolve them.
 |---|---|
 | `mementic init [--config PATH] [--interactive] [--force]` | Auto-bootstrap config and initialize graph |
 | `mementic capture [--session PATH] [--notes TEXT]` | Extract decisions from session (auto-accepts, flags conflicts) |
-| `mementic enforce --task TEXT --files FILE...` | Generate context pack for task |
+| `mementic enforce --task TEXT --files FILE... [--benchmark]` | Generate context pack; `--benchmark` measures token savings vs. raw source docs |
 | `mementic query [--entity PATH] [--search TERM] [--depth N]` | Search graph |
 | `mementic list [decisions\|constraints\|entities] [--status] [-n N]` | Browse graph in scannable format |
 | `mementic deprecate <id> [--reason TEXT]` | Retire a decision (don't edit history) |
 | `mementic lint [--fix]` | Check graph health (5 deterministic rules, zero LLM cost) |
 | `mementic review` | Resolve conflict-flagged proposals |
 | `mementic graph [-o PATH] [-O] [--filter TYPE]` | Generate interactive HTML visualization |
-| `mementic status` | Show graph statistics |
+| `mementic metrics [--json] [--reset]` | Show token usage, activity breakdown, and breakeven analysis |
+| `mementic status [--verbose/-v]` | Show graph stats; `--verbose` adds token usage totals |
 | `mementic log` | Show recent graph mutations |
 | `mementic server` | Start MCP server (stdio) |
+
+## Measuring token efficiency
+
+Mementic tracks its own costs so you can answer: *does the LLM spend on mementic pay for itself through agent context savings?*
+
+### Check your token spend
+
+```bash
+mementic metrics
+```
+
+Shows lifetime usage across all operations:
+
+```
+Token Usage Since Inception
+───────────────────────────────────────────────────
+  LLM calls made:      42
+  Input tokens sent:   128,450
+  Output tokens:        18,320
+  Total tokens:        146,770
+
+Breakdown by Activity
+───────────────────────────────────────────────────
+  mementic init         18 calls    101,300 tokens    (one-time setup cost)
+  mementic capture      24 calls     45,470 tokens    (per-session extraction)
+```
+
+Use `--json` for machine-readable output and `--reset` to clear the log and
+start fresh.
+
+### Benchmark context savings
+
+Run `enforce` with `--benchmark` to measure how many tokens the agent avoids
+reading thanks to the context pack:
+
+```bash
+mementic enforce --benchmark --task "Refactor auth module" --files src/auth/handler.py
+```
+
+Compares every raw source file the agent *would* have read against what the
+context pack actually returns:
+
+```
+Benchmark
+  Raw source size:   12,000 tokens     ← tokens in all ADRs + instructions
+  Context pack:         400 tokens     ← what the agent actually reads
+  Savings:           11,600 tokens (97%)
+```
+
+Benchmark results are stored in `.mementic/metrics.jsonl` and fed into the
+breakeven calculation in `mementic metrics`. Run it across a few different
+tasks to get a realistic picture.
+
+### How it works
+
+| Concept | What it means |
+|---|---|
+| **Extraction cost** | LLM tokens spent running `init` and `capture` |
+| **Naive baseline** | Total tokens in all ADR and instruction files — what an agent would read *without* mementic |
+| **Context pack** | The subset mementic returns for a specific task — typically <5% of baseline |
+| **Savings** | Baseline minus context pack — tokens the agent *didn't* read |
+| **Breakeven** | How many tasks until cumulative savings exceed cumulative extraction cost |
+
+Data is stored as JSONL in `.mementic/metrics.jsonl` (created automatically,
+add to `.gitignore` if desired). No LLM cost for reading or summarizing
+metrics — it's just filesystem I/O.
+
+### Quick token count
+
+The `count_tokens()` utility is available programmatically:
+
+```python
+from mementic.format import count_tokens
+print(count_tokens("how many tokens is this?"))
+```
+
+Uses `tiktoken` (accurate) if installed, falls back to `len(text) // 4`
+(~95% accurate for English).
 
 ## Development
 
