@@ -10,6 +10,22 @@
       {"path": ".claude/instructions"}
     ]
   },
+  "sessions": {
+    "opencode": {
+      "log_dirs": [
+        "~/.local/share/opencode/log/",
+        "~/.local/share/opencode/storage/session_diff/"
+      ]
+    },
+    "claude-code": {
+      "log_dirs": [
+        "~/.claude/projects/"
+      ]
+    },
+    "generic": {
+      "log_dirs": []
+    }
+  },
   "output": {
     "graph_path": "./.mementic/graph.json"
   },
