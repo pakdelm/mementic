@@ -1,5 +1,5 @@
 ---
-description: Capture architectural decisions made during this session for review
+description: Propose architectural decisions made during this session (auto-accepted by capture)
 ---
 
 Review the architectural changes made in this session. For each significant decision:
@@ -14,4 +14,4 @@ Review the architectural changes made in this session. For each significant deci
 
 Only propose decisions that are architecturally significant (design pattern changes, new libraries, strategic choices). Skip routine refactors, syntax fixes, and variable renames.
 
-After proposing, remind the user to run `mementic review` in the terminal to accept the proposals.
+After proposing, remind the user to run `mementic capture` in the terminal. Capture auto-accepts non-conflicting decisions — only proposals flagged by the conflict detector (slug collision, entity overlap) need manual review via `mementic review`.
