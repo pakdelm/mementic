@@ -152,7 +152,7 @@ def run_init(config_path: str = ".mementic.json") -> GraphStore:
             _add_decision_dedup(graph, decision)
 
             if adr.consequences.strip():
-                constraints = extract_from_adr_consequences(adr.consequences, cfg.llm)
+                constraints, _usage = extract_from_adr_consequences(adr.consequences, cfg.llm)
                 for c in constraints:
                     c.enforced_by = decision_id
                     if _add_constraint_dedup(graph, c):
@@ -165,13 +165,13 @@ def run_init(config_path: str = ".mementic.json") -> GraphStore:
     for oc_source in cfg.sources.opencode_instructions:
         instructions = scan_opencode_instructions(oc_source.path)
         for instr in instructions:
-            result = extract_from_freeform(instr.content, instr.path, cfg.llm)
+            result, _usage = extract_from_freeform(instr.content, instr.path, cfg.llm)
             _ingest_result(graph, result, instr.path)
 
     for claude_source in cfg.sources.claude_instructions:
         instructions = scan_opencode_instructions(claude_source.path)
         for instr in instructions:
-            result = extract_from_freeform(instr.content, instr.path, cfg.llm)
+            result, _usage = extract_from_freeform(instr.content, instr.path, cfg.llm)
             _ingest_result(graph, result, instr.path)
 
     has_sources = bool(

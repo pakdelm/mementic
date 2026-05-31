@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import re
+from unittest.mock import patch
 
+import pytest
 
-from mementic.format import format_context_pack, slugify, timestamp
+from mementic.format import count_tokens, format_context_pack, slugify, timestamp
 from mementic.models import Constraint, Decision, DecisionStatus
 
 
@@ -187,3 +189,42 @@ class TestTimestamp:
         assert len(ts1) == len(ts2)
         assert self.ISO_8601_RE.match(ts1)
         assert self.ISO_8601_RE.match(ts2)
+
+
+class TestCountTokens:
+    """Tests for count_tokens()."""
+
+    def test_returns_integer(self) -> None:
+        """count_tokens returns an int."""
+        result = count_tokens("hello world")
+        assert isinstance(result, int)
+
+    def test_short_text(self) -> None:
+        """A short text returns a positive token count."""
+        result = count_tokens("hello")
+        assert result > 0
+
+    def test_empty_string(self) -> None:
+        """An empty string returns 0 tokens."""
+        result = count_tokens("")
+        assert result == 0
+
+    def test_longer_text(self) -> None:
+        """A 100-character string returns a reasonable estimate."""
+        result = count_tokens("a" * 100)
+        # With fallback: len//4 == 25. With tiktoken: ~100 (1 token/char).
+        # Both are > 0 and <= 100.
+        assert 0 < result <= 100
+
+    def test_fallback_on_tiktoken_error(self) -> None:
+        """Falls back to len//4 when tiktoken raises an exception."""
+        pytest.importorskip("tiktoken")
+        text = "hello " * 20  # 120 chars → 30 tokens
+        with patch("tiktoken.get_encoding", side_effect=Exception("fail")):
+            result = count_tokens(text)
+        assert result == len(text) // 4
+
+    def test_with_tiktoken_accurate(self) -> None:
+        """With tiktoken available, returns a positive count for real text."""
+        result = count_tokens("the quick brown fox jumps over the lazy dog")
+        assert result > 0

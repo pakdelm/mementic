@@ -9,13 +9,15 @@ from pathlib import Path
 from mcp.server.fastmcp import FastMCP
 
 from mementic.config import MementicConfig, load_config
-from mementic.format import format_context_pack, slugify, timestamp
+from mementic.format import count_tokens, format_context_pack, slugify, timestamp
 from mementic.graph import GraphStore
-from mementic.models import CodeEntity, Constraint, Decision, DecisionStatus, EntityType
+from mementic.metrics import UsageStore
+from mementic.models import CodeEntity, Constraint, Decision, DecisionStatus, EntityType, MetricsEntry
 
 mcp = FastMCP("Mementic")
 
 _graph_lock = threading.Lock()
+_metrics_store = UsageStore()
 
 
 def _load_graph() -> tuple[GraphStore, MementicConfig]:
@@ -54,7 +56,20 @@ async def get_context_pack(task_description: str, affected_files: list[str]) -> 
     graph, cfg = _load_graph()
     constraints = graph.get_constraints_for_entities(affected_files)
     decisions = graph.get_decisions_for_entities(affected_files)
-    return format_context_pack(task_description, decisions, constraints)
+    pack_text = format_context_pack(task_description, decisions, constraints)
+    pack_tokens = count_tokens(pack_text)
+    entry = MetricsEntry(
+        timestamp=timestamp(),
+        operation="mcp_context_pack",
+        source_label=task_description[:80],
+        input_tokens=0,
+        output_tokens=0,
+        total_tokens=pack_tokens,
+        model="",
+        status="success",
+    )
+    _metrics_store.append(entry)
+    return pack_text
 
 
 @mcp.tool()

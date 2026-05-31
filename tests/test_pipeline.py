@@ -4,7 +4,14 @@ import json
 from pathlib import Path
 from unittest.mock import patch
 
-from mementic.models import Constraint, Decision, DecisionStatus, ExtractionResult, GraphEdge
+from mementic.models import (
+    Constraint,
+    Decision,
+    DecisionStatus,
+    ExtractionResult,
+    GraphEdge,
+    UsageStats,
+)
 from mementic.pipeline import (
     _add_constraint_dedup,
     _add_decision_dedup,
@@ -240,7 +247,7 @@ class TestRunInitWithAdr:
 
         with patch(
             "mementic.pipeline.extract_from_adr_consequences",
-            return_value=[],
+            return_value=([], UsageStats(model="test-model", status="success")),
         ):
             gs = run_init(str(config_path))
 
@@ -267,7 +274,7 @@ class TestRunInitWithAdr:
 
         with patch(
             "mementic.pipeline.extract_from_adr_consequences",
-            return_value=[],
+            return_value=([], UsageStats(model="test-model", status="success")),
         ):
             gs = run_init(str(config_path))
 
@@ -291,7 +298,7 @@ class TestRunInitWithAdr:
 
         with patch(
             "mementic.pipeline.extract_from_adr_consequences",
-            return_value=[],
+            return_value=([], UsageStats(model="test-model", status="success")),
         ):
             gs = run_init(str(config_path))
 
@@ -312,7 +319,7 @@ class TestRunInitWithAdr:
 
         with patch(
             "mementic.pipeline.extract_from_adr_consequences",
-            return_value=_mock_adr_result().constraints,
+            return_value=(_mock_adr_result().constraints, UsageStats(model="test-model", status="success")),
         ):
             gs = run_init(str(config_path))
 
@@ -363,7 +370,7 @@ class TestRunInitWithOpenCode:
 
         with patch(
             "mementic.pipeline.extract_from_freeform",
-            return_value=_mock_freeform_result(),
+            return_value=(_mock_freeform_result(), UsageStats(model="test-model", status="success")),
         ):
             gs = run_init(str(config_path))
 
@@ -399,7 +406,7 @@ class TestRunInitWithOpenCode:
         ]
 
         with patch(
-            "mementic.pipeline.extract_from_freeform", return_value=result
+            "mementic.pipeline.extract_from_freeform", return_value=(result, UsageStats(model="test-model", status="success"))
         ):
             gs = run_init(str(config_path))
 
@@ -422,7 +429,7 @@ class TestRunInitWithClaude:
 
         with patch(
             "mementic.pipeline.extract_from_freeform",
-            return_value=_mock_claude_freeform_result(),
+            return_value=(_mock_claude_freeform_result(), UsageStats(model="test-model", status="success")),
         ):
             gs = run_init(str(config_path))
 
@@ -460,10 +467,10 @@ class TestRunInitCombined:
 
         with patch(
             "mementic.pipeline.extract_from_freeform",
-            return_value=_mock_freeform_result(),
+            return_value=(_mock_freeform_result(), UsageStats(model="test-model", status="success")),
         ), patch(
             "mementic.pipeline.extract_from_adr_consequences",
-            return_value=[],
+            return_value=([], UsageStats(model="test-model", status="success")),
         ):
             gs = run_init(str(config_path))
 
@@ -499,10 +506,13 @@ class TestRunInitCombined:
 
         with patch(
             "mementic.pipeline.extract_from_freeform",
-            side_effect=[_mock_freeform_result(), _mock_claude_freeform_result()],
+            side_effect=[
+                (_mock_freeform_result(), UsageStats(model="test-model", status="success")),
+                (_mock_claude_freeform_result(), UsageStats(model="test-model", status="success")),
+            ],
         ), patch(
             "mementic.pipeline.extract_from_adr_consequences",
-            return_value=[],
+            return_value=([], UsageStats(model="test-model", status="success")),
         ):
             gs = run_init(str(config_path))
 
@@ -531,7 +541,7 @@ class TestSaveAndLoad:
 
         with patch(
             "mementic.pipeline.extract_from_adr_consequences",
-            return_value=[],
+            return_value=([], UsageStats(model="test-model", status="success")),
         ):
             gs1 = run_init(str(config_path))
 

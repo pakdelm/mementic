@@ -6,6 +6,27 @@ from datetime import datetime, timezone
 from mementic.models import Constraint, Decision
 
 
+def count_tokens(text: str) -> int:
+    """Count the number of tokens in a text string.
+
+    Uses tiktoken if installed for accurate counting; falls back to
+    ``len(text) // 4`` (reasonable estimate for English text).
+
+    Args:
+        text: The text to count tokens for.
+
+    Returns:
+        Estimated token count as an integer.
+    """
+    try:
+        import tiktoken
+
+        enc = tiktoken.get_encoding("cl100k_base")
+        return len(enc.encode(text))
+    except (ImportError, Exception):
+        return len(text) // 4
+
+
 def slugify(text: str, max_length: int | None = None) -> str:
     """Convert text to URL-friendly ID. Lowercase, hyphens, strip special chars.
 
