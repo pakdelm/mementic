@@ -189,20 +189,53 @@ def init(
 def capture(
     session: str | None = None,
     notes: str | None = None,
+    agent: str | None = None,
 ) -> None:
     """Extract architectural decisions from an agent session.
 
     Decisions are auto-accepted unless flagged by the conflict detector.
     Flagged decisions are set to 'proposed' for review via `mementic review`.
     """
-    if not session:
-        from mementic.session import find_latest_session
+    from mementic.session import get_registry
 
-        session = find_latest_session()
-        if not session:
+    registry = get_registry()
+    cfg = load_config()
+    detected_agent: str | None = None
+
+    if not session and not agent:
+        # Auto-detect: find most recent session across all providers
+        log_dir_overrides: dict[str, list[str]] = {}
+        for name in ("opencode", "claude-code", "generic"):
+            agent_cfg = getattr(cfg.sessions, name.replace("-", "_"))
+            if agent_cfg.log_dirs:
+                log_dir_overrides[name] = agent_cfg.log_dirs
+        provider, detected = registry.detect(log_dirs=log_dir_overrides or None)
+        if not detected:
             typer.echo("No session found. Provide --session PATH.", err=True)
             raise typer.Exit(code=1)
-        typer.echo(f"Using session: {session}")
+        session = detected
+        detected_agent = provider.agent_name
+        typer.echo(f"[{detected_agent}] Using session: {session}")
+    elif agent:
+        # Explicit agent, possibly with explicit session path
+        provider, resolved = registry.detect(agent=agent, session_path=session)
+        if not resolved:
+            typer.echo(
+                f"No session found for agent '{agent}'. Provide --session PATH.",
+                err=True,
+            )
+            raise typer.Exit(code=1)
+        session = resolved
+        detected_agent = agent
+        typer.echo(f"[{detected_agent}] Using session: {session}")
+    elif session:
+        # Explicit session path, detect which provider can read it
+        provider, _ = registry.detect(session_path=session)
+        detected_agent = provider.agent_name
+        typer.echo(f"[{detected_agent}] Using session: {session}")
+    else:
+        typer.echo("No session found. Provide --session PATH.", err=True)
+        raise typer.Exit(code=1)
 
     session_text = Path(session).read_text()
 
@@ -232,7 +265,6 @@ def capture(
             typer.echo("No checkpoint found — using HEAD~1 as baseline.")
 
     try:
-        cfg = load_config()
         extraction, _usage = extract_from_session(session_text, git_diff, notes or "", cfg.llm)
     except RuntimeError as e:
         typer.echo(str(e), err=True)
@@ -317,7 +349,7 @@ def capture(
     entry = MetricsEntry(
         timestamp=timestamp(),
         operation="capture",
-        source_label=session or "auto-detected",
+        source_label=f"{detected_agent}:{session}" if detected_agent else (session or "auto-detected"),
         input_tokens=_usage.input_tokens,
         output_tokens=_usage.output_tokens,
         total_tokens=_usage.total_tokens,
