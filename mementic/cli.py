@@ -15,7 +15,7 @@ from mementic.config import load_config  # noqa: E402
 from mementic.extraction import extract_from_session  # noqa: E402
 from mementic.format import format_context_pack  # noqa: E402
 from mementic.graph import GraphStore  # noqa: E402
-from mementic.models import CodeEntity, DecisionStatus, EntityType  # noqa: E402
+from mementic.models import CodeEntity, Decision, DecisionStatus, EntityType  # noqa: E402
 from mementic.pipeline import run_init  # noqa: E402
 
 app = typer.Typer(help="Mementic — semantic memory for engineering teams and AI agents")
@@ -168,7 +168,11 @@ def capture(
     session: str | None = None,
     notes: str | None = None,
 ) -> None:
-    """Extract architectural decisions from an agent session."""
+    """Extract architectural decisions from an agent session.
+
+    Decisions are auto-accepted unless flagged by the conflict detector.
+    Flagged decisions are set to 'proposed' for review via `mementic review`.
+    """
     if not session:
         from mementic.session import find_latest_session
 
@@ -216,13 +220,6 @@ def capture(
         typer.echo("No architectural decisions or constraints found.")
         raise typer.Exit()
 
-    for d in extraction.decisions:
-        typer.echo(f"Decision: [{d.id}] {d.title}")
-        if d.rejected_alternatives:
-            typer.echo(f"  Rejected: {', '.join(d.rejected_alternatives)}")
-    for c in extraction.constraints:
-        typer.echo(f"Constraint: [{c.id}] {c.description}")
-
     graph_path = cfg.output.graph_path
     if Path(graph_path).exists():
         try:
@@ -233,13 +230,31 @@ def capture(
     else:
         graph = GraphStore()
 
+    # ── Conflict detection ──
+    from mementic.conflict import detect_conflicts
+    from mementic.format import slugify
+
+    conflicts = detect_conflicts(graph, extraction.decisions, extraction.affected_entities)
+    conflicting_existing_slugs = {c.id for c in conflicts}
+
+    auto_accepted = 0
+    flagged = 0
+
     for d in extraction.decisions:
+        if slugify(d.title) in conflicting_existing_slugs:
+            d.status = DecisionStatus.PROPOSED
+            flagged += 1
+        else:
+            d.status = DecisionStatus.ACCEPTED
+            auto_accepted += 1
+
         graph.add_decision(d)
         for entity_path in extraction.affected_entities:
             graph.add_code_entity(
                 CodeEntity(id=entity_path, type=EntityType.FILE)
             )
             graph.link(d.id, entity_path, "affects")
+
     for c in extraction.constraints:
         graph.add_constraint(c)
         for entity_path in c.bound_entities:
@@ -249,7 +264,27 @@ def capture(
 
     Path(graph_path).parent.mkdir(parents=True, exist_ok=True)
     graph.save(graph_path)
-    typer.echo(f"Written to {graph_path}")
+
+    # ── Summary output (F6) ──
+    typer.echo()
+    typer.echo("=" * 50)
+    typer.echo("Capture complete")
+    typer.echo("=" * 50)
+    typer.echo(f"  Extracted: {len(extraction.decisions)} decisions, "
+               f"{len(extraction.constraints)} constraints")
+    typer.echo(f"  Auto-accepted: {auto_accepted}")
+    if auto_accepted:
+        for d in extraction.decisions:
+            if d.status == DecisionStatus.ACCEPTED:
+                typer.echo(f"    - [{d.id}] {d.title}")
+    if flagged:
+        typer.echo(f"  Flagged for review: {flagged}")
+        for d in extraction.decisions:
+            if slugify(d.title) in conflicting_existing_slugs:
+                typer.echo(f"    - [{d.id}] {d.title}")
+        typer.echo()
+        typer.echo("  Run 'mementic review' to resolve flagged conflicts.")
+    typer.echo(f"  Written to {graph_path}")
 
     if got_diff:
         _save_checkpoint()
@@ -429,7 +464,11 @@ def graph(
 
 @app.command()
 def review() -> None:
-    """Review pending proposed decisions."""
+    """Review flagged (proposed) decisions and constraints.
+
+    Shows decisions that the conflict detector flagged as potentially
+    conflicting with existing ones. Accept or reject each.
+    """
     cfg = load_config()
 
     graph = _load_graph_safe(cfg.output.graph_path)
@@ -438,12 +477,32 @@ def review() -> None:
     pending_c = graph.get_pending_constraints()
 
     if not pending_d and not pending_c:
-        typer.echo("No pending proposals.")
+        typer.echo("No pending proposals. Graph is clean!")
         return
 
+    typer.echo(f"Pending decisions: {len(pending_d)}")
+    typer.echo(f"Pending constraints: {len(pending_c)}")
+    typer.echo()
+
     for d in pending_d:
-        typer.echo(f"\n[{d.id}] {d.title}")
+        typer.echo(f"[{d.id}] {d.title}")
         typer.echo(f"  Rationale: {d.rationale}")
+        if d.rejected_alternatives:
+            typer.echo(f"  Rejected: {', '.join(d.rejected_alternatives)}")
+
+        # Show potential conflicts
+        from mementic.conflict import detect_conflicts
+        conflicts = detect_conflicts(
+            graph,
+            [d],
+            # Try to find bound entities via constraints linked to this decision
+            _get_entities_for_decision(graph, d.id),
+        )
+        if conflicts:
+            typer.echo("  Conflicts with:")
+            for conflict_d in conflicts:
+                typer.echo(f"    - [{conflict_d.id}] {conflict_d.title}")
+
         choice = typer.confirm("Accept?", default=True)
         if choice:
             d.status = DecisionStatus.ACCEPTED
@@ -464,3 +523,227 @@ def review() -> None:
 
     graph.save(cfg.output.graph_path)
     typer.echo("Review complete.")
+
+
+def _get_entities_for_decision(graph: GraphStore, decision_id: str) -> list[str]:
+    """Get affected entity paths for a decision node by following its edges."""
+    entities: list[str] = []
+    for _nid, ntype, _payload in graph.iter_nodes():
+        if ntype != "CodeEntity":
+            continue
+        for pred in graph._g.predecessors(_nid):
+            if pred == decision_id:
+                entities.append(_nid)
+    return entities
+
+
+@app.command(name="list")
+def list_cmd(
+    entity_type: str = typer.Argument(
+        "decisions",
+        help="Type to list: decisions, constraints, or entities",
+    ),
+    status: str | None = typer.Option(
+        None, "--status",
+        help="Filter by status: proposed, accepted, deprecated, active, superseded",
+    ),
+    n: int = typer.Option(
+        0, "-n",
+        help="Show only the last N entries",
+    ),
+    stale: bool = typer.Option(
+        False, "--stale",
+        help="Show only entities referencing files that no longer exist",
+    ),
+) -> None:
+    """Browse decisions, constraints, and entities in a scannable table.
+
+    Examples:
+        mementic list decisions
+        mementic list decisions --status proposed
+        mementic list decisions -n 10
+        mementic list constraints
+        mementic list entities --stale
+    """
+    cfg = load_config()
+
+    graph = _load_graph_safe(cfg.output.graph_path)
+
+    entity_type = entity_type.lower()
+    if entity_type not in ("decisions", "constraints", "entities"):
+        typer.echo(
+            f"Invalid type '{entity_type}'. Use: decisions, constraints, entities.",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+    valid_statuses = {"proposed", "accepted", "deprecated", "active", "superseded"}
+    if status and status not in valid_statuses:
+        typer.echo(
+            f"Invalid status '{status}'. Valid: {', '.join(sorted(valid_statuses))}",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+    if entity_type == "decisions":
+        decisions = graph.get_all_decisions()
+        if status:
+            decisions = [d for d in decisions if d.status == status]
+        if n > 0:
+            decisions = decisions[-n:]
+
+        if not decisions:
+            typer.echo("No decisions found.")
+            raise typer.Exit()
+
+        # Table header
+        typer.echo(f"{'ID':<26} {'Status':<12} {'Date':<12} Title")
+        typer.echo("-" * 80)
+        for d in decisions:
+            date = d.timestamp[:10] if d.timestamp else ""
+            typer.echo(f"{d.id:<26} {d.status:<12} {date:<12} {d.title}")
+
+    elif entity_type == "constraints":
+        constraints = graph.get_all_constraints()
+        if status:
+            constraints = [c for c in constraints if c.status == status]
+        if n > 0:
+            constraints = constraints[-n:]
+
+        if not constraints:
+            typer.echo("No constraints found.")
+            raise typer.Exit()
+
+        typer.echo(f"{'ID':<26} {'Status':<12} {'Enforced by':<14} Description")
+        typer.echo("-" * 80)
+        for c in constraints:
+            enforced = c.enforced_by if c.enforced_by else "-"
+            typer.echo(f"{c.id:<26} {c.status:<12} {enforced:<14} {c.description}")
+
+    elif entity_type == "entities":
+        entities: list[tuple[str, dict]] = []
+        for nid, ntype, payload in graph.iter_nodes():
+            if ntype == "CodeEntity":
+                entities.append((nid, payload))
+
+        if stale:
+            entities = [
+                (nid, p) for nid, p in entities
+                if p.get("type") == "file" and not Path(nid).exists()
+            ]
+        elif status:
+            typer.echo("Note: entities don't have statuses. Ignoring --status filter.")
+
+        if n > 0:
+            entities = entities[-n:]
+
+        if not entities:
+            typer.echo("No entities found.")
+            raise typer.Exit()
+
+        typer.echo(f"{'ID':<40} {'Type':<10} Repo")
+        typer.echo("-" * 60)
+        for eid, p in entities:
+            etype = p.get("type", "file")
+            repo = p.get("repo", "-")
+            typer.echo(f"{eid:<40} {etype:<10} {repo}")
+
+
+@app.command()
+def deprecate(
+    id: str = typer.Argument(..., help="Decision ID to deprecate"),
+    reason: str = typer.Option(
+        "", "--reason", "-r",
+        help="Reason for deprecation",
+    ),
+) -> None:
+    """Mark a decision as deprecated.
+
+    Appends a deprecation note to the rationale and writes an audit entry.
+    The next capture will create a better decision — don't edit history.
+    """
+    cfg = load_config()
+
+    graph = _load_graph_safe(cfg.output.graph_path)
+
+    if not graph.has_node(id):
+        typer.echo(
+            f"Decision '{id}' not found. Run 'mementic list decisions' to see IDs.",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+    # Determine actual node type by checking iter_nodes
+    actual_type = ""
+    for nid, ntype, _p in graph.iter_nodes():
+        if nid == id:
+            actual_type = ntype
+            break
+
+    if actual_type != "Decision":
+        typer.echo(f"'{id}' is a {actual_type}, not a Decision.", err=True)
+        raise typer.Exit(code=1)
+
+    # Read decision from graph
+    decisions = graph.get_all_decisions()
+    target: Decision | None = None
+    for d in decisions:
+        if d.id == id:
+            target = d
+            break
+
+    if target is None:
+        typer.echo(f"Decision '{id}' could not be loaded.", err=True)
+        raise typer.Exit(code=1)
+
+    if target.status == DecisionStatus.DEPRECATED:
+        typer.echo(f"Decision '{id}' is already deprecated.")
+        raise typer.Exit()
+
+    deprecation_note = f" [DEPRECATED: {reason}]" if reason else " [DEPRECATED]"
+    target.rationale += deprecation_note
+    target.status = DecisionStatus.DEPRECATED
+    graph.add_decision(target)
+
+    graph.save(cfg.output.graph_path)
+    typer.echo(f"Deprecated decision '{id}': {target.title}")
+
+
+@app.command(name="lint")
+def lint_cmd(
+    fix: bool = typer.Option(
+        False, "--fix",
+        help="Auto-resolve fixable issues (stale entities, constraint cascading)",
+    ),
+) -> None:
+    """Run rules-based graph health checks.
+
+    Checks 7 deterministic rules for graph integrity. No LLM cost.
+    Use --fix to auto-resolve stale entities and cascade deprecated constraints.
+    """
+    from mementic.lint import lint, lint_fix
+
+    cfg = load_config()
+
+    graph = _load_graph_safe(cfg.output.graph_path)
+
+    result = lint(graph)
+
+    if not result.findings:
+        typer.echo("Graph is clean — no issues found.")
+        return
+
+    typer.echo(f"Lint results: {result.error_count} errors, "
+               f"{result.warning_count} warnings, "
+               f"{result.info_count} info")
+    typer.echo()
+
+    for finding in result.findings:
+        icon = {"error": "✗", "warning": "⚠", "info": "ℹ"}.get(finding.severity, "?")
+        typer.echo(f"  {icon} [{finding.rule}] {finding.message}")
+
+    if fix and result.findings:
+        typer.echo()
+        resolved = lint_fix(graph, result)
+        graph.save(cfg.output.graph_path)
+        typer.echo(f"Fixed {resolved} issue(s). Graph saved.")
