@@ -8,12 +8,11 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
 from mementic.session import (
-    SessionProviderRegistry,
     get_registry,
 )
 from mementic.session.claude_code import (
@@ -25,35 +24,6 @@ from mementic.session.opencode import (
     DEFAULT_SESSION_PATHS,
     OpenCodeSessionProvider,
 )
-
-
-# ── Helpers ───────────────────────────────────────────────────────────
-
-
-def _make_session_registry_with_mock_providers() -> tuple[
-    SessionProviderRegistry,
-    MagicMock,
-    MagicMock,
-    MagicMock,
-]:
-    """Create a fresh registry with three mock providers.
-
-    Returns:
-        (registry, mock_opencode, mock_claude, mock_generic) tuple.
-    """
-    registry = SessionProviderRegistry()
-    mock_open = MagicMock(spec=OpenCodeSessionProvider)
-    mock_open.agent_name = "opencode"
-    mock_claude = MagicMock(spec=ClaudeCodeSessionProvider)
-    mock_claude.agent_name = "claude-code"
-    mock_generic = MagicMock(spec=GenericSessionProvider)
-    mock_generic.agent_name = "generic"
-
-    registry.register(mock_open)
-    registry.register(mock_claude)
-    registry.register(mock_generic)
-
-    return registry, mock_open, mock_claude, mock_generic
 
 
 # ── Registry Tests ────────────────────────────────────────────────────

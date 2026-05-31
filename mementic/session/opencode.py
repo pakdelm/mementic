@@ -56,9 +56,14 @@ class OpenCodeSessionProvider(SessionProvider):
             expanded_path = Path(expanded)
             if expanded_path.is_dir():
                 for f in expanded_path.iterdir():
-                    if f.is_file() and f.stat().st_mtime > latest_mtime:
-                        latest_mtime = f.stat().st_mtime
-                        latest_file = str(f)
+                    if f.is_file():
+                        try:
+                            st = f.stat()
+                            if st.st_mtime > latest_mtime:
+                                latest_mtime = st.st_mtime
+                                latest_file = str(f)
+                        except OSError:
+                            continue
 
         return latest_file
 

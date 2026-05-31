@@ -265,7 +265,6 @@ def capture(
             typer.echo("No checkpoint found — using HEAD~1 as baseline.")
 
     try:
-        cfg = load_config()
         extraction, _usage = extract_from_session(session_text, git_diff, notes or "", cfg.llm)
     except RuntimeError as e:
         typer.echo(str(e), err=True)
