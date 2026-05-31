@@ -20,10 +20,20 @@ class GraphStore:
         self._g: nx.DiGraph = nx.DiGraph()
 
     def add_decision(self, d: Decision) -> None:
-        self._g.add_node(d.id, node_type="Decision", payload=d.model_dump())
+        if d.id in self._g:
+            existing = self._g.nodes[d.id].get("payload", {})
+            existing.update(d.model_dump())
+            self._g.nodes[d.id]["payload"] = existing
+        else:
+            self._g.add_node(d.id, node_type="Decision", payload=d.model_dump())
 
     def add_constraint(self, c: Constraint) -> None:
-        self._g.add_node(c.id, node_type="Constraint", payload=c.model_dump())
+        if c.id in self._g:
+            existing = self._g.nodes[c.id].get("payload", {})
+            existing.update(c.model_dump())
+            self._g.nodes[c.id]["payload"] = existing
+        else:
+            self._g.add_node(c.id, node_type="Constraint", payload=c.model_dump())
 
     def add_code_entity(self, e: CodeEntity) -> None:
         self._g.add_node(e.id, node_type="CodeEntity", payload=e.model_dump())
