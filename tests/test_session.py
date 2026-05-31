@@ -39,6 +39,14 @@ class TestExpandPath:
             result = expand_path("%NONEXISTENT%/file.txt")
         assert result == "/file.txt"
 
+    def test_expands_bare_tilde(self) -> None:
+        result = expand_path("~")
+        assert result == str(Path.home())
+
+    def test_tilde_with_text_no_slash_is_literal(self) -> None:
+        result = expand_path("~something")
+        assert result == "~something"
+
 
 class TestFindLatestSession:
     def test_returns_none_when_no_dirs_exist(self) -> None:

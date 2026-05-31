@@ -23,8 +23,10 @@ def expand_path(path: str) -> str:
     Returns:
         The expanded path string with home directory and env vars resolved.
     """
-    if path.startswith("~"):
+    if path.startswith("~/"):
         path = str(Path.home() / path[2:])
+    elif path == "~":
+        path = str(Path.home())
     if "%" in path:
         while match := re.search(r"%(\w+)%", path):
             var_name = match.group(1)

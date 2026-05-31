@@ -5,7 +5,14 @@ from pathlib import Path
 from unittest.mock import patch
 
 from mementic.models import Constraint, Decision, DecisionStatus, ExtractionResult, GraphEdge
-from mementic.pipeline import find_file_paths, run_init
+from mementic.pipeline import (
+    _add_constraint_dedup,
+    _add_decision_dedup,
+    _backfill_decision_edges,
+    _backfill_edges,
+    find_file_paths,
+    run_init,
+)
 
 
 ADR_CONTENT = """\
@@ -437,3 +444,171 @@ class TestSaveAndLoad:
         assert gs2.get_all_decisions() == gs1.get_all_decisions()
         assert gs2.get_all_constraints() == gs1.get_all_constraints()
         assert gs2.stats() == gs1.stats()
+
+
+class TestDedup:
+    def test_add_decision_dedup_new(self) -> None:
+        from mementic.graph import GraphStore
+        gs = GraphStore()
+        d = Decision(
+            id="test-id", title="Test", rationale="...",
+            source="adr:test", status=DecisionStatus.ACCEPTED,
+            timestamp="2024-01-01T00:00:00Z",
+        )
+        added = _add_decision_dedup(gs, d)
+        assert added is True
+        assert gs.has_node("test-id")
+
+    def test_add_decision_dedup_duplicate_merges_source(self) -> None:
+        from mementic.graph import GraphStore
+        gs = GraphStore()
+        d1 = Decision(
+            id="test-id", title="Test", rationale="...",
+            source="adr:test", status=DecisionStatus.ACCEPTED,
+            timestamp="2024-01-01T00:00:00Z",
+        )
+        d2 = Decision(
+            id="test-id", title="Test", rationale="...",
+            source="opencode:style.md", status=DecisionStatus.ACCEPTED,
+            timestamp="2024-01-01T00:00:00Z",
+        )
+        _add_decision_dedup(gs, d1)
+        added = _add_decision_dedup(gs, d2)
+        assert added is False
+        payload = gs.get_node_payload("test-id")
+        assert "adr:test" in payload["source"]
+        assert "opencode:style.md" in payload["source"]
+
+    def test_add_constraint_dedup_new(self) -> None:
+        from mementic.graph import GraphStore
+        gs = GraphStore()
+        c = Constraint(
+            id="c-test", description="A constraint",
+            source="test", status="active",
+            timestamp="2024-01-01T00:00:00Z",
+        )
+        added = _add_constraint_dedup(gs, c)
+        assert added is True
+        assert gs.has_node("c-test")
+
+    def test_add_constraint_dedup_duplicate(self) -> None:
+        from mementic.graph import GraphStore
+        gs = GraphStore()
+        c = Constraint(
+            id="c-test", description="A constraint",
+            source="test", status="active",
+            timestamp="2024-01-01T00:00:00Z",
+        )
+        _add_constraint_dedup(gs, c)
+        added = _add_constraint_dedup(gs, c)
+        assert added is False
+
+
+class TestBackfill:
+    def test_backfill_edges_adds_entity_links(self) -> None:
+        from mementic.graph import GraphStore
+        gs = GraphStore()
+        c = Constraint(
+            id="c-lonely",
+            description="Must use async for I/O in src/services/io.py",
+            bound_entities=[],
+            source="test",
+            status="active",
+            timestamp="2024-01-01T00:00:00Z",
+        )
+        d = Decision(
+            id="d-parent", title="Parent", rationale="...",
+            source="test", status=DecisionStatus.ACCEPTED,
+            timestamp="2024-01-01T00:00:00Z",
+        )
+        gs.add_constraint(c)
+        gs.add_decision(d)
+        gs.link("d-parent", "c-lonely", "enforces")
+
+        count = _backfill_edges(gs)
+        assert count == 1
+        assert gs.has_outgoing_edges("c-lonely")
+
+    def test_backfill_edges_skips_already_linked(self) -> None:
+        from mementic.graph import GraphStore
+        from mementic.models import CodeEntity, EntityType
+        gs = GraphStore()
+        c = Constraint(
+            id="c-linked",
+            description="A constraint",
+            bound_entities=["src/foo.py"],
+            source="test",
+            status="active",
+            timestamp="2024-01-01T00:00:00Z",
+        )
+        gs.add_constraint(c)
+        gs.add_code_entity(CodeEntity(id="src/foo.py", type=EntityType.FILE))
+        gs.link("c-linked", "src/foo.py", "binds_to")
+
+        count = _backfill_edges(gs)
+        assert count == 0
+
+    def test_backfill_decision_edges(self) -> None:
+        from mementic.graph import GraphStore
+        gs = GraphStore()
+        d = Decision(
+            id="d-orphan", title="Use Redis in src/cache/redis_client.py",
+            rationale="Need caching in src/cache/redis_client.py",
+            source="test", status=DecisionStatus.ACCEPTED,
+            timestamp="2024-01-01T00:00:00Z",
+        )
+        gs.add_decision(d)
+
+        count = _backfill_decision_edges(gs)
+        assert count == 1
+        assert gs.has_outgoing_edges("d-orphan")
+
+    def test_backfill_decision_edges_skips_linked(self) -> None:
+        from mementic.graph import GraphStore
+        from mementic.models import CodeEntity, EntityType
+        gs = GraphStore()
+        d = Decision(
+            id="d-linked", title="Linked", rationale="...",
+            source="test", status=DecisionStatus.ACCEPTED,
+            timestamp="2024-01-01T00:00:00Z",
+        )
+        gs.add_decision(d)
+        gs.add_code_entity(CodeEntity(id="src/main.py", type=EntityType.FILE))
+        gs.link("d-linked", "src/main.py", "affects")
+
+        count = _backfill_decision_edges(gs)
+        assert count == 0
+
+    def test_backfill_edges_fallback_when_no_file_paths(self) -> None:
+        """When constraint description has no file paths, uses source_path as entity."""
+        from mementic.graph import GraphStore
+        gs = GraphStore()
+        c = Constraint(
+            id="c-nopath",
+            description="A constraint with no file references at all.",
+            bound_entities=[],
+            source="docs/some-adr.md",
+            status="active",
+            timestamp="2024-01-01T00:00:00Z",
+        )
+        gs.add_constraint(c)
+        count = _backfill_edges(gs)
+        assert count == 1
+        assert gs.has_outgoing_edges("c-nopath")
+
+    def test_backfill_decision_edges_fallback_when_no_paths(self) -> None:
+        """When decision text has no file paths, uses src/ as fallback entity."""
+        from mementic.graph import GraphStore
+        gs = GraphStore()
+        d = Decision(
+            id="d-nopath",
+            title="A generic decision",
+            rationale="No file paths mentioned here whatsoever.",
+            source="adr:no-paths",
+            status=DecisionStatus.ACCEPTED,
+            timestamp="2024-01-01T00:00:00Z",
+        )
+        gs.add_decision(d)
+        count = _backfill_decision_edges(gs)
+        assert count == 1
+        assert gs.has_outgoing_edges("d-nopath")

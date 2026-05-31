@@ -180,6 +180,29 @@ class GraphStore:
             )
         return gs
 
+    def has_node(self, node_id: str) -> bool:
+        return node_id in self._g
+
+    def get_node_payload(self, node_id: str) -> dict[str, Any]:
+        return dict(self._g.nodes[node_id].get("payload", {}))
+
+    def set_node_payload(self, node_id: str, payload: dict[str, Any]) -> None:
+        self._g.nodes[node_id]["payload"] = payload
+
+    def iter_nodes(self) -> list[tuple[str, str, dict[str, Any]]]:
+        """Return list of (node_id, node_type, payload) for all nodes."""
+        return [
+            (nid, attrs.get("node_type", ""), attrs.get("payload", {}))
+            for nid, attrs in self._g.nodes(data=True)
+        ]
+
+    def has_outgoing_edges(self, node_id: str) -> bool:
+        try:
+            next(self._g.successors(node_id))
+            return True
+        except StopIteration:
+            return False
+
     def stats(self) -> dict[str, int]:
         decisions = 0
         constraints = 0

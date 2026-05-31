@@ -156,8 +156,9 @@ class TestTimestamp:
         ts = timestamp()
         assert ts.endswith("+00:00") or ts.endswith("Z")
 
-    def test_two_calls_produce_different_values(self) -> None:
+    def test_two_calls_structure_identical(self) -> None:
         ts1 = timestamp()
         ts2 = timestamp()
-        # May be same if called fast enough, but format should be identical structure
         assert len(ts1) == len(ts2)
+        assert self.ISO_8601_RE.match(ts1)
+        assert self.ISO_8601_RE.match(ts2)

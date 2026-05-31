@@ -13,7 +13,7 @@ from openai import (
     OpenAI,
     RateLimitError,
 )
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 load_dotenv()
 
@@ -63,6 +63,8 @@ class _ConstraintListResponse(BaseModel):
 def get_client(config: LLMConfig) -> OpenAI:  # pragma: no cover
     """Create OpenAI client pointed at DeepSeek. Reads key from DEEPSEEK_API_KEY env var."""
     api_key = os.environ.get("DEEPSEEK_API_KEY", "")
+    if not api_key:
+        sys.stderr.write("WARNING: DEEPSEEK_API_KEY is not set. LLM calls will fail.\n")
     return OpenAI(api_key=api_key, base_url="https://api.deepseek.com")
 
 
@@ -98,8 +100,8 @@ def extract_from_freeform(
             response_format={"type": "json_object"},
         )
     except AuthenticationError:
-        sys.stderr.write("ERROR: DeepSeek API key is invalid. Check DEEPSEEK_API_KEY.\n")
-        raise
+        sys.stderr.write("WARNING: DeepSeek API key is invalid. Check DEEPSEEK_API_KEY.\n")
+        return ExtractionResult()
     except RateLimitError:
         sys.stderr.write("WARNING: DeepSeek rate limit hit. Skipping this source.\n")
         return ExtractionResult()
@@ -114,9 +116,12 @@ def extract_from_freeform(
     if content is None:
         return ExtractionResult()
 
-    data = json.loads(content)
-    result = ExtractionResult.model_validate(data)
-    return result
+    try:
+        data = json.loads(content)
+        return ExtractionResult.model_validate(data)
+    except (json.JSONDecodeError, ValidationError):
+        sys.stderr.write("WARNING: LLM returned invalid JSON. Skipping.\n")
+        return ExtractionResult()
 
 
 def extract_from_session(
@@ -159,8 +164,8 @@ def extract_from_session(
             response_format={"type": "json_object"},
         )
     except AuthenticationError:
-        sys.stderr.write("ERROR: DeepSeek API key is invalid. Check DEEPSEEK_API_KEY.\n")
-        raise
+        sys.stderr.write("WARNING: DeepSeek API key is invalid. Check DEEPSEEK_API_KEY.\n")
+        return ExtractionResult()
     except RateLimitError:
         sys.stderr.write("WARNING: DeepSeek rate limit hit. Skipping this source.\n")
         return ExtractionResult()
@@ -175,9 +180,12 @@ def extract_from_session(
     if content is None:
         return ExtractionResult()
 
-    data = json.loads(content)
-    result = ExtractionResult.model_validate(data)
-    return result
+    try:
+        data = json.loads(content)
+        return ExtractionResult.model_validate(data)
+    except (json.JSONDecodeError, ValidationError):
+        sys.stderr.write("WARNING: LLM returned invalid JSON. Skipping.\n")
+        return ExtractionResult()
 
 
 def extract_from_adr_consequences(
@@ -207,8 +215,8 @@ def extract_from_adr_consequences(
             response_format={"type": "json_object"},
         )
     except AuthenticationError:
-        sys.stderr.write("ERROR: DeepSeek API key is invalid. Check DEEPSEEK_API_KEY.\n")
-        raise
+        sys.stderr.write("WARNING: DeepSeek API key is invalid. Check DEEPSEEK_API_KEY.\n")
+        return []
     except RateLimitError:
         sys.stderr.write("WARNING: DeepSeek rate limit hit. Skipping this source.\n")
         return []
@@ -223,6 +231,10 @@ def extract_from_adr_consequences(
     if content is None:
         return []
 
-    data = json.loads(content)
-    parsed = _ConstraintListResponse.model_validate(data)
-    return parsed.constraints
+    try:
+        data = json.loads(content)
+        parsed = _ConstraintListResponse.model_validate(data)
+        return parsed.constraints
+    except (json.JSONDecodeError, ValidationError):
+        sys.stderr.write("WARNING: LLM returned invalid JSON. Skipping.\n")
+        return []

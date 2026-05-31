@@ -82,6 +82,11 @@ def populated_graph() -> GraphStore:
         type=EntityType.CLASS,
         repo="my-repo",
     )
+    e4 = CodeEntity(
+        id="src/models/types.py",
+        type=EntityType.FILE,
+        repo="my-repo",
+    )
 
     gs.add_decision(d1)
     gs.add_decision(d2)
@@ -91,6 +96,7 @@ def populated_graph() -> GraphStore:
     gs.add_code_entity(e1)
     gs.add_code_entity(e2)
     gs.add_code_entity(e3)
+    gs.add_code_entity(e4)
 
     gs.link("d1", "c1", "enforces")
     gs.link("d2", "c2", "enforces")
@@ -226,5 +232,59 @@ class TestStats:
         stats = populated_graph.stats()
         assert stats["decisions"] == 3
         assert stats["constraints"] == 2
-        assert stats["entities"] == 3
+        assert stats["entities"] == 4
         assert stats["edges"] == 6
+
+
+class TestNodeAccessors:
+    def test_has_node_true(self, populated_graph: GraphStore) -> None:
+        assert populated_graph.has_node("d1") is True
+
+    def test_has_node_false(self, populated_graph: GraphStore) -> None:
+        assert populated_graph.has_node("nonexistent") is False
+
+    def test_get_node_payload(self, populated_graph: GraphStore) -> None:
+        payload = populated_graph.get_node_payload("d1")
+        assert payload["title"] == "Use async"
+
+    def test_set_node_payload(self, populated_graph: GraphStore) -> None:
+        populated_graph.set_node_payload("d1", {"title": "Updated"})
+        payload = populated_graph.get_node_payload("d1")
+        assert payload["title"] == "Updated"
+
+    def test_iter_nodes(self, populated_graph: GraphStore) -> None:
+        nodes = populated_graph.iter_nodes()
+        assert len(nodes) == 9
+        types = {t for _, t, _ in nodes}
+        assert types == {"Decision", "Constraint", "CodeEntity"}
+
+    def test_has_outgoing_edges_true(self, populated_graph: GraphStore) -> None:
+        assert populated_graph.has_outgoing_edges("d1") is True
+
+    def test_has_outgoing_edges_false(self, populated_graph: GraphStore) -> None:
+        gs = GraphStore()
+        gs.add_decision(Decision(
+            id="lonely", title="No edges", rationale="...",
+            source="test", status=DecisionStatus.ACCEPTED,
+            timestamp="2024-01-01T00:00:00Z",
+        ))
+        assert gs.has_outgoing_edges("lonely") is False
+
+
+class TestAuditLog:
+    def test_save_writes_audit_log(self, populated_graph: GraphStore) -> None:
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmpdir:
+            graph_path = str(Path(tmpdir) / "graph.json")
+            populated_graph.save(graph_path)
+            audit_path = Path(tmpdir) / "audit.jsonl"
+            assert audit_path.exists()
+            lines = audit_path.read_text().strip().split("\n")
+            assert len(lines) == 1
+            entry = json.loads(lines[0])
+            assert "timestamp" in entry
+            assert entry["action"] == "save"
+            assert entry["decisions"] == 3
+            assert entry["constraints"] == 2
+            assert entry["entities"] == 4
+            assert entry["edges"] == 6

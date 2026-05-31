@@ -99,3 +99,18 @@ class TestLoadConfig:
         finally:
             Path(tmp.name).unlink()
 
+    def test_invalid_json_returns_defaults(self) -> None:
+        """load_config returns default config when JSON is malformed."""
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".json", delete=False
+        ) as tmp:
+            tmp.write("{not valid json")
+
+        try:
+            config = load_config(tmp.name)
+            assert isinstance(config, MementicConfig)
+            assert config.sources.adr_dirs == []
+            assert config.sources.opencode_instructions == []
+        finally:
+            Path(tmp.name).unlink()
+

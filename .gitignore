@@ -22,3 +22,6 @@ audit.jsonl
 # OS
 .DS_Store
 Thumbs.db
+
+# Tests
+.coverage

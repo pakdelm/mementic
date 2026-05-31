@@ -27,12 +27,27 @@ def _load_checkpoint() -> str:
 
 
 def _save_checkpoint() -> None:
-    result = subprocess.run(
-        ["git", "rev-parse", "HEAD"], capture_output=True, text=True
-    )
-    if result.returncode == 0:
-        Path(CHECKPOINT_FILE).parent.mkdir(parents=True, exist_ok=True)
-        Path(CHECKPOINT_FILE).write_text(result.stdout.strip())
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"], capture_output=True, text=True
+        )
+        if result.returncode == 0:
+            Path(CHECKPOINT_FILE).parent.mkdir(parents=True, exist_ok=True)
+            Path(CHECKPOINT_FILE).write_text(result.stdout.strip())
+    except FileNotFoundError:
+        typer.echo("git not found. Checkpoint not saved.", err=True)
+
+
+def _run_git_diff(reference: str) -> tuple[str, int]:
+    """Run git diff against a reference. Returns (diff_text, returncode)."""
+    try:
+        result = subprocess.run(
+            ["git", "diff", reference], capture_output=True, text=True
+        )
+        return result.stdout or "", result.returncode
+    except FileNotFoundError:
+        typer.echo("git not found. Cannot compute diff.", err=True)
+        return "", 1
 
 
 @app.command()
@@ -62,15 +77,15 @@ def capture(
 
     checkpoint = _load_checkpoint()
     if checkpoint:
-        result = subprocess.run(
-            ["git", "diff", checkpoint], capture_output=True, text=True
-        )
+        git_diff, rc = _run_git_diff(checkpoint)
+        if rc != 0:
+            typer.echo(f"Warning: git diff against checkpoint failed (rc={rc}).", err=True)
     else:
-        result = subprocess.run(
-            ["git", "diff", "HEAD~1"], capture_output=True, text=True
-        )
-        typer.echo("No checkpoint found — using HEAD~1 as baseline.")
-    git_diff = result.stdout or ""
+        git_diff, rc = _run_git_diff("HEAD~1")
+        if rc != 0:
+            typer.echo(f"Warning: git diff against HEAD~1 failed (rc={rc}).", err=True)
+        else:
+            typer.echo("No checkpoint found — using HEAD~1 as baseline.")
 
     cfg = load_config()
     extraction = extract_from_session(session_text, git_diff, notes or "", cfg.llm)
@@ -100,7 +115,11 @@ def capture(
         raise typer.Exit()
 
     if Path(cfg.output.graph_path).exists():
-        graph = GraphStore.load(cfg.output.graph_path)
+        try:
+            graph = GraphStore.load(cfg.output.graph_path)
+        except Exception:
+            typer.echo("Graph file corrupted. Starting with empty graph.", err=True)
+            graph = GraphStore()
     else:
         graph = GraphStore()
 
@@ -165,16 +184,23 @@ def query(
         constraints = graph.get_constraints_for_entities([entity])
 
         if depth >= 2:
-            related_entities: set[str] = set()
-            for c in constraints:
-                if c.bound_entities:
-                    related_entities.update(c.bound_entities)
-            extra_constraints = graph.get_constraints_for_entities(list(related_entities))
-            seen = {c.id for c in constraints}
-            for c in extra_constraints:
-                if c.id not in seen:
-                    constraints.append(c)
-                    seen.add(c.id)
+            seen_entities: set[str] = {entity}
+            seen_ids = {c.id for c in constraints}
+            for _level in range(depth - 1):
+                next_entities: set[str] = set()
+                for c in constraints:
+                    if c.bound_entities:
+                        next_entities.update(
+                            be for be in c.bound_entities if be not in seen_entities
+                        )
+                if not next_entities:
+                    break
+                seen_entities.update(next_entities)
+                extra = graph.get_constraints_for_entities(list(next_entities))
+                for c in extra:
+                    if c.id not in seen_ids:
+                        constraints.append(c)
+                        seen_ids.add(c.id)
 
         typer.echo(f"Evolution for {entity} (depth {depth}):\n")
         for d in decisions:
@@ -216,7 +242,10 @@ def log(n: int = 20) -> None:
         typer.echo("No audit log found. Run init or capture first.")
         raise typer.Exit()
 
-    lines = audit_path.read_text().strip().split("\n")
+    lines = [line for line in audit_path.read_text().strip().split("\n") if line.strip()]
+    if not lines:
+        typer.echo("Audit log is empty.")
+        raise typer.Exit()
     for line in lines[-n:]:
         entry = json.loads(line)
         typer.echo(f"[{entry['timestamp']}] {entry['action']}: {entry.get('id', '-')}")
@@ -268,9 +297,23 @@ def review() -> None:
     for d in pending_d:
         typer.echo(f"\n[{d.id}] {d.title}")
         typer.echo(f"  Rationale: {d.rationale}")
-        if typer.confirm("Accept?", default=True):
+        choice = typer.confirm("Accept?", default=True)
+        if choice:
             d.status = DecisionStatus.ACCEPTED
             graph.add_decision(d)
+        else:
+            d.status = DecisionStatus.SUPERSEDED
+            graph.add_decision(d)
+
+    for c in pending_c:
+        typer.echo(f"\n[{c.id}] {c.description}")
+        choice = typer.confirm("Accept?", default=True)
+        if choice:
+            c.status = "active"
+            graph.add_constraint(c)
+        else:
+            c.status = "superseded"
+            graph.add_constraint(c)
 
     graph.save(cfg.output.graph_path)
     typer.echo("Review complete.")
