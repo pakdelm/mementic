@@ -1,6 +1,5 @@
 ---
 description: Load architectural constraints for a task before starting work
-agent: build
 ---
 
 Before working on this task: $ARGUMENTS

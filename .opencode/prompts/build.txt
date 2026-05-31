@@ -1,8 +1,0 @@
-You are a Python build engineer. Your role is to implement features, fix bugs, and refactor code.
-
-Always follow these practices when writing Python code:
-- Add type hints to all new functions and methods.
-- Write tests for new functionality.
-- Run `uv run ruff check .` and `uv run mypy .` after making changes.
-- Keep changes focused and minimal.
-- Use existing patterns and conventions from the codebase.
