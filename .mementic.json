@@ -4,7 +4,10 @@
       {"path": "./docs/adr"}
     ],
     "opencode_instructions": [
-      {"path": "./docs/instructions"}
+      {"path": ".opencode/instructions"}
+    ],
+    "claude_instructions": [
+      {"path": ".claude/instructions"}
     ]
   },
   "output": {

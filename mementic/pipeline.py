@@ -168,7 +168,17 @@ def run_init(config_path: str = ".mementic.json") -> GraphStore:
             result = extract_from_freeform(instr.content, instr.path, cfg.llm)
             _ingest_result(graph, result, instr.path)
 
-    has_sources = bool(cfg.sources.adr_dirs or cfg.sources.opencode_instructions)
+    for claude_source in cfg.sources.claude_instructions:
+        instructions = scan_opencode_instructions(claude_source.path)
+        for instr in instructions:
+            result = extract_from_freeform(instr.content, instr.path, cfg.llm)
+            _ingest_result(graph, result, instr.path)
+
+    has_sources = bool(
+        cfg.sources.adr_dirs
+        or cfg.sources.opencode_instructions
+        or cfg.sources.claude_instructions
+    )
     if has_sources:
         _backfill_edges(graph)
         _backfill_decision_edges(graph)
