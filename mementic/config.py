@@ -11,12 +11,14 @@ from pydantic import BaseModel, Field, model_validator
 
 __all__ = [
     "AdrDirSource",
+    "AgentSessionConfig",
     "ClaudeSource",
     "LLMConfig",
     "MementicConfig",
     "OpenCodeSource",
     "OutputConfig",
     "PROVIDER_CONFIGS",
+    "SessionsConfig",
     "Sources",
     "get_provider_config",
     "load_config",
@@ -98,6 +100,28 @@ class Sources(BaseModel):
     claude_instructions: list[ClaudeSource] = Field(default_factory=list)
 
 
+class AgentSessionConfig(BaseModel):
+    """Per-agent session discovery configuration."""
+
+    log_dirs: list[str] = Field(default_factory=list)
+
+
+class SessionsConfig(BaseModel):
+    """Session discovery configuration for all supported agents.
+
+    Each key maps to an agent name (e.g. 'opencode', 'claude-code', 'generic').
+    The JSON file may use hyphenated names (e.g. ``claude-code``) which are
+    aliased to the snake_case field names.
+    """
+
+    opencode: AgentSessionConfig = Field(default_factory=AgentSessionConfig)
+    claude_code: AgentSessionConfig = Field(
+        default_factory=AgentSessionConfig,
+        validation_alias="claude-code",
+    )
+    generic: AgentSessionConfig = Field(default_factory=AgentSessionConfig)
+
+
 class OutputConfig(BaseModel):
     """Configuration for output artifacts."""
 
@@ -173,6 +197,7 @@ class MementicConfig(BaseModel):
     """Root configuration for the Mementic project."""
 
     sources: Sources = Field(default_factory=Sources)
+    sessions: SessionsConfig = Field(default_factory=SessionsConfig)
     output: OutputConfig = Field(default_factory=OutputConfig)
     llm: LLMConfig = Field(default_factory=LLMConfig)
 

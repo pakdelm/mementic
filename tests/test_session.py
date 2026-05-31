@@ -51,13 +51,13 @@ class TestExpandPath:
 class TestFindLatestSession:
     def test_returns_none_when_no_dirs_exist(self) -> None:
         fake_paths = {"linux": ["/nonexistent/sessions/"]}
-        with patch.dict("mementic.session.DEFAULT_SESSION_PATHS", fake_paths, clear=True):
+        with patch.dict("mementic.session.opencode.DEFAULT_SESSION_PATHS", fake_paths, clear=True):
             result = find_latest_session()
         assert result is None
 
     def test_returns_none_when_dir_empty(self, tmp_path: Path) -> None:
         fake_paths = {"linux": [str(tmp_path)]}
-        with patch.dict("mementic.session.DEFAULT_SESSION_PATHS", fake_paths, clear=True):
+        with patch.dict("mementic.session.opencode.DEFAULT_SESSION_PATHS", fake_paths, clear=True):
             result = find_latest_session()
         assert result is None
 
@@ -76,7 +76,7 @@ class TestFindLatestSession:
         os.utime(str(newer), (2000, 2000))
 
         fake_paths = {"linux": [str(tmp_path)]}
-        with patch.dict("mementic.session.DEFAULT_SESSION_PATHS", fake_paths, clear=True):
+        with patch.dict("mementic.session.opencode.DEFAULT_SESSION_PATHS", fake_paths, clear=True):
             result = find_latest_session()
         assert result is not None
         assert Path(result).name == "newer.txt"
