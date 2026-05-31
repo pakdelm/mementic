@@ -113,6 +113,33 @@ OpenCode custom commands are also available in the TUI:
 - `/mementic-enforce <task>` — load constraints before working
 - `/mementic-capture` — record session decisions for review
 
+## Agent enforcement
+
+For mementic to work, your agent must be instructed to use it. Add this to your
+project's `AGENTS.md` or equivalent instruction file (Claude Code, Cursor, etc.):
+
+```markdown
+## Mementic Memory (HARD CONSTRAINT)
+
+This project uses Mementic as its architectural memory layer. These rules apply
+to every task, every session.
+
+**Before ANY task:**
+1. Call `mementic_get_context_pack` with the task description and ALL files
+   you intend to touch.
+2. Call `mementic_get_system_evolution` for each file being modified.
+3. Validate your plan against every returned constraint. Do NOT write code
+   that violates an active constraint.
+
+**After architecturally significant changes:**
+1. Call `mementic_propose_decision` with title, rationale, rejected
+   alternatives, and affected entities.
+2. Call `mementic_propose_constraint` for any new rules.
+
+**After the task:**
+Run `mementic capture` then `mementic review` in the terminal.
+```
+
 ## CLI reference
 
 | Command | Description |
