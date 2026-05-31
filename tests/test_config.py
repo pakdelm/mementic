@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from mementic.config import MementicConfig, load_config
+from mementic.config import LLMConfig, MementicConfig, load_config
 
 
 class TestLoadConfig:
@@ -128,7 +128,7 @@ class TestMultiProvider:
     def test_provider_openai_config(self) -> None:
         """OpenAI provider has correct base_url and env var."""
         config = MementicConfig(
-            llm={"provider": "openai", "model": "gpt-4o"}
+            llm=LLMConfig(provider="openai", model="gpt-4o")
         )
         assert config.llm.provider == "openai"
         assert config.llm.base_url == "https://api.openai.com/v1"
@@ -137,7 +137,7 @@ class TestMultiProvider:
     def test_provider_openrouter_config(self) -> None:
         """OpenRouter provider has correct base_url and env var."""
         config = MementicConfig(
-            llm={"provider": "openrouter", "model": "anthropic/claude-3-sonnet"}
+            llm=LLMConfig(provider="openrouter", model="anthropic/claude-3-sonnet")
         )
         assert config.llm.provider == "openrouter"
         assert config.llm.base_url == "https://openrouter.ai/api/v1"
@@ -146,7 +146,7 @@ class TestMultiProvider:
     def test_provider_ollama_config(self) -> None:
         """Ollama provider has local base_url and no API key required."""
         config = MementicConfig(
-            llm={"provider": "ollama", "model": "llama3"}
+            llm=LLMConfig(provider="ollama", model="llama3")
         )
         assert config.llm.provider == "ollama"
         assert config.llm.base_url == "http://localhost:11434/v1"
@@ -156,38 +156,44 @@ class TestMultiProvider:
         """Unknown provider raises ValidationError during model validation."""
         with pytest.raises(ValidationError, match="Unknown LLM provider"):
             MementicConfig(
-                llm={"provider": "nonexistent", "model": "x"}
+                llm=LLMConfig(provider="nonexistent", model="x")
             )
 
-    def test_ensure_api_key_raises_when_missing(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """ensure_api_key raises RuntimeError with env var name when key is missing."""
+    def test_ensure_api_key_raises_when_missing(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """ensure_api_key raises RuntimeError with env var name when key missing."""
         monkeypatch.delenv("OPENAI_API_KEY", raising=False)
         config = MementicConfig(
-            llm={"provider": "openai", "model": "gpt-4o"}
+            llm=LLMConfig(provider="openai", model="gpt-4o")
         )
         with pytest.raises(RuntimeError, match="OPENAI_API_KEY"):
             config.llm.ensure_api_key()
 
-    def test_ensure_api_key_returns_key_when_set(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_ensure_api_key_returns_key_when_set(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """ensure_api_key returns the key when the env var is set."""
         monkeypatch.setenv("OPENAI_API_KEY", "sk-test-123")
         config = MementicConfig(
-            llm={"provider": "openai", "model": "gpt-4o"}
+            llm=LLMConfig(provider="openai", model="gpt-4o")
         )
         assert config.llm.ensure_api_key() == "sk-test-123"
 
     def test_ensure_api_key_ollama_returns_dummy(self) -> None:
         """ensure_api_key for ollama returns a dummy value (no key needed)."""
         config = MementicConfig(
-            llm={"provider": "ollama", "model": "llama3"}
+            llm=LLMConfig(provider="ollama", model="llama3")
         )
         assert config.llm.ensure_api_key() == "ollama"
 
-    def test_missing_key_error_message_includes_provider_name(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_missing_key_error_message_includes_provider(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """Error message names the provider and its required env var."""
         monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
         config = MementicConfig(
-            llm={"provider": "openrouter", "model": "openai/gpt-4o"}
+            llm=LLMConfig(provider="openrouter", model="openai/gpt-4o")
         )
         with pytest.raises(RuntimeError) as exc_info:
             config.llm.ensure_api_key()
