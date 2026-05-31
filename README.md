@@ -38,9 +38,19 @@ Mementic requires an LLM. Supported providers:
 | Ollama (local) | none | `llama3` |
 
 ```bash
-# Example: use OpenAI
-export OPENAI_API_KEY="sk-..."
-# Then set provider in .mementic.json (or use mementic init --interactive)
+# DeepSeek (default) — pass inline to avoid persisting in your shell
+DEEPSEEK_API_KEY="sk-..." opencode
+
+# Or export for the current session
+export DEEPSEEK_API_KEY="sk-..."
+```
+```pwsh
+# PowerShell
+$env:DEEPSEEK_API_KEY="sk-..."; opencode
+```
+```bat
+:: cmd.exe
+cmd /c "set DEEPSEEK_API_KEY=sk-... && opencode"
 ```
 
 If the API key is missing or invalid, mementic exits immediately with a clear error
@@ -133,6 +143,7 @@ The agent automatically discovers these MCP tools:
 OpenCode custom commands are also available in the TUI:
 - `/mementic-enforce <task>` — load constraints before working
 - `/mementic-capture` — record session decisions for review
+
 
 ## Agent enforcement
 
