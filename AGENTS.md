@@ -2,58 +2,37 @@
 
 This is a Python project.
 
-## Build, Lint, and Test Commands
+## Mementic Memory (HARD CONSTRAINT — ALWAYS ACTIVE)
 
-```bash
-# Install dependencies
-uv sync
+This project dogfoods Mementic as its own architectural memory layer. These rules
+are not optional. They apply to **every task, every session, no exceptions.**
 
-# Lint
-uv run ruff check .
+**Why:** The instruction files, ADRs, and specs are the *source* of architectural
+knowledge. The graph is the *compressed index*. Reading all source files before
+every task wastes tokens. Instead, the graph returns only the constraints and
+decisions relevant to the files you are about to touch.
 
-# Type check
-uv run mypy .
+**Before ANY task** (planning, implementation, refactoring, or review):
+1. Call `mementic_get_context_pack` with the task description and ALL files
+   you intend to touch — even new files, even speculative changes.
+2. Call `mementic_get_system_evolution` for each file being modified to
+   understand what decisions shaped it.
+3. Validate your plan against every returned constraint. If a constraint
+   seems inapplicable, explain why before proceeding. Do NOT write code
+   that violates an active constraint.
 
-# Run tests
-uv run pytest
-```
+**Immediately after making an architecturally significant change:**
+1. Call `mementic_propose_decision` with title, rationale, rejected
+   alternatives, and affected entities.
+2. Call `mementic_propose_constraint` for any new rules future agents
+   must enforce.
+3. Do not defer this — propose while the context is fresh.
 
-## Project Structure
+**After completing a task:**
+Run `mementic capture` in the terminal to extract decisions from the
+session log + git diff. Then `mementic review` to inspect any
+conflict-flagged items.
 
-```
-.opencode/          # OpenCode configuration (agents, skills, prompts, specs)
-docs/instructions/  # Project-specific coding guidelines
-src/                # Source code
-tests/              # Tests
-```
-
-## Code Standards
-
-- Follow the conventions in docs/instructions/
-- Use type hints throughout
-- Write tests for all new functionality
-
-## External References
-
-For detailed guidelines, read the instruction files configured in opencode.json:
-- @docs/instructions/python-style.md
-- @docs/instructions/testing.md
-- @docs/instructions/project-conventions.md
-
-## Mementic Memory
-
-This project uses Mementic as its own architectural memory layer.
-**You MUST use the following MCP tools as part of your workflow:**
-
-- **Before any implementation task** that touches existing modules:
-  call `mementic_get_context_pack` with the task description and affected
-  file paths. Load the returned constraints and validate your plan against
-  them. Do not write code that violates an active constraint.
-
-- **During a task**, when you make an architecturally significant decision:
-  call `mementic_propose_decision` with the title, rationale, rejected
-  alternatives, and affected entities. Call `mementic_propose_constraint`
-  for any new rules that future agents must enforce.
-
-- **After completing a task**, remind the user to run `mementic review`
-  to accept the proposed decisions into permanent memory.
+**If you skip these steps, you are violating project constraints.**
+A graph with no new decisions after a sprint of development is evidence
+of a broken enforcement loop. Fix the instructions, not the agent.
