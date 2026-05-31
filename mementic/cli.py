@@ -215,25 +215,12 @@ def capture(
         typer.echo("No architectural decisions or constraints found.")
         raise typer.Exit()
 
-    accepted_d = []
-    accepted_c = []
-
     for d in extraction.decisions:
-        typer.echo(f"\nDecision: [{d.id}] {d.title}")
-        typer.echo(f"  Rationale: {d.rationale}")
+        typer.echo(f"Decision: [{d.id}] {d.title}")
         if d.rejected_alternatives:
             typer.echo(f"  Rejected: {', '.join(d.rejected_alternatives)}")
-        if typer.confirm("  Accept?", default=True):
-            accepted_d.append(d)
-
     for c in extraction.constraints:
-        typer.echo(f"\nConstraint: [{c.id}] {c.description}")
-        if typer.confirm("  Accept?", default=True):
-            accepted_c.append(c)
-
-    if not accepted_d and not accepted_c:
-        typer.echo("Nothing accepted. Graph unchanged.")
-        raise typer.Exit()
+        typer.echo(f"Constraint: [{c.id}] {c.description}")
 
     graph_path = cfg.output.graph_path
     if Path(graph_path).exists():
@@ -245,14 +232,14 @@ def capture(
     else:
         graph = GraphStore()
 
-    for d in accepted_d:
+    for d in extraction.decisions:
         graph.add_decision(d)
         for entity_path in extraction.affected_entities:
             graph.add_code_entity(
                 CodeEntity(id=entity_path, type=EntityType.FILE)
             )
             graph.link(d.id, entity_path, "affects")
-    for c in accepted_c:
+    for c in extraction.constraints:
         graph.add_constraint(c)
         for entity_path in c.bound_entities:
             graph.link(c.id, entity_path, "binds_to")
