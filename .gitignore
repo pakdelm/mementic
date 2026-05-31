@@ -11,9 +11,8 @@ build/
 .env
 
 # Mementic runtime
-.mementic/graph.json
-.mementic/audit.jsonl
-.mementic/checkpoint
+.mementic/
+__pycache__/
 
 # IDE
 .vscode/
