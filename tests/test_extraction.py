@@ -57,7 +57,7 @@ class TestExtractFromFreeform:
         with patch(
             "mementic.extraction.get_client", return_value=_mock_client(result)
         ):
-            output = extract_from_freeform(
+            output, _usage = extract_from_freeform(
                 "We should use async for I/O.", "test-source", config
             )
 
@@ -95,7 +95,7 @@ class TestExtractFromFreeform:
         with patch(
             "mementic.extraction.get_client", return_value=_mock_client(result)
         ):
-            output = extract_from_freeform(
+            output, _usage = extract_from_freeform(
                 "We use pydantic for all models.", "adr-002", config
             )
 
@@ -107,7 +107,7 @@ class TestExtractFromFreeform:
 
     def test_empty_text_returns_empty_result(self) -> None:
         config = LLMConfig()
-        output = extract_from_freeform("", "empty", config)
+        output, _usage = extract_from_freeform("", "empty", config)
         assert isinstance(output, ExtractionResult)
         assert output.decisions == []
         assert output.constraints == []
@@ -116,7 +116,7 @@ class TestExtractFromFreeform:
 
     def test_whitespace_only_text_returns_empty_result(self) -> None:
         config = LLMConfig()
-        output = extract_from_freeform("   \n  \t  ", "ws", config)
+        output, _usage = extract_from_freeform("   \n  \t  ", "ws", config)
         assert isinstance(output, ExtractionResult)
         assert output.decisions == []
 
@@ -145,7 +145,7 @@ class TestExtractFromFreeform:
         client.chat.completions.create.return_value = response
 
         with patch("mementic.extraction.get_client", return_value=client):
-            output = extract_from_freeform("text", "src", config)
+            output, _usage = extract_from_freeform("text", "src", config)
 
         assert output == ExtractionResult()
 
@@ -172,7 +172,7 @@ class TestExtractFromSession:
         with patch(
             "mementic.extraction.get_client", return_value=_mock_client(result)
         ):
-            output = extract_from_session(
+            output, _usage = extract_from_session(
                 session_log="Agent started...",
                 git_diff="+httpx==1.0",
                 user_notes="Switch to httpx",
@@ -185,12 +185,12 @@ class TestExtractFromSession:
 
     def test_empty_inputs_return_empty_result(self) -> None:
         config = LLMConfig()
-        output = extract_from_session("", "", "", config)
+        output, _usage = extract_from_session("", "", "", config)
         assert output == ExtractionResult()
 
     def test_whitespace_only_inputs_return_empty_result(self) -> None:
         config = LLMConfig()
-        output = extract_from_session("  \n", "  ", "\t", config)
+        output, _usage = extract_from_session("  \n", "  ", "\t", config)
         assert output == ExtractionResult()
 
 
@@ -219,7 +219,7 @@ class TestExtractFromAdrConsequences:
         client.chat.completions.create.return_value = response_obj
 
         with patch("mementic.extraction.get_client", return_value=client):
-            output = extract_from_adr_consequences(
+            output, _usage = extract_from_adr_consequences(
                 "Therefore, all DB access must go through the ORM.",
                 config,
             )
@@ -230,12 +230,12 @@ class TestExtractFromAdrConsequences:
 
     def test_empty_text_returns_empty_list(self) -> None:
         config = LLMConfig()
-        output = extract_from_adr_consequences("", config)
+        output, _usage = extract_from_adr_consequences("", config)
         assert output == []
 
     def test_whitespace_only_returns_empty_list(self) -> None:
         config = LLMConfig()
-        output = extract_from_adr_consequences("   \n  ", config)
+        output, _usage = extract_from_adr_consequences("   \n  ", config)
         assert output == []
 
     def test_none_content_returns_empty_list(self) -> None:
@@ -248,7 +248,7 @@ class TestExtractFromAdrConsequences:
         client.chat.completions.create.return_value = response_obj
 
         with patch("mementic.extraction.get_client", return_value=client):
-            output = extract_from_adr_consequences("some text", config)
+            output, _usage = extract_from_adr_consequences("some text", config)
 
         assert output == []
 
@@ -262,7 +262,7 @@ class TestExtractFromAdrConsequences:
         client.chat.completions.create.return_value = response_obj
 
         with patch("mementic.extraction.get_client", return_value=client):
-            output = extract_from_adr_consequences("some text", config)
+            output, _usage = extract_from_adr_consequences("some text", config)
 
         assert output == []
 
@@ -294,21 +294,21 @@ class TestErrorHandling:
         config = LLMConfig()
         with patch("mementic.extraction.get_client",
                    return_value=self._make_raising_client(self._make_rate_limit_error())):
-            output = extract_from_freeform("text", "src", config)
+            output, _usage = extract_from_freeform("text", "src", config)
         assert output == ExtractionResult()
 
     def test_freeform_timeout_returns_empty(self) -> None:
         config = LLMConfig()
         with patch("mementic.extraction.get_client",
                    return_value=self._make_raising_client(APITimeoutError(request=MagicMock()))):
-            output = extract_from_freeform("text", "src", config)
+            output, _usage = extract_from_freeform("text", "src", config)
         assert output == ExtractionResult()
 
     def test_freeform_connection_error_returns_empty(self) -> None:
         config = LLMConfig()
         with patch("mementic.extraction.get_client",
                    return_value=self._make_raising_client(APIConnectionError(request=MagicMock()))):
-            output = extract_from_freeform("text", "src", config)
+            output, _usage = extract_from_freeform("text", "src", config)
         assert output == ExtractionResult()
 
     def test_freeform_api_error_returns_empty(self) -> None:
@@ -316,7 +316,7 @@ class TestErrorHandling:
         with patch("mementic.extraction.get_client",
                    return_value=self._make_raising_client(
                        APIError("err", request=MagicMock(), body=None))):
-            output = extract_from_freeform("text", "src", config)
+            output, _usage = extract_from_freeform("text", "src", config)
         assert output == ExtractionResult()
 
     def test_freeform_json_decode_error_returns_empty(self) -> None:
@@ -328,7 +328,7 @@ class TestErrorHandling:
         response_obj.choices = [choice]
         client.chat.completions.create.return_value = response_obj
         with patch("mementic.extraction.get_client", return_value=client):
-            output = extract_from_freeform("text", "src", config)
+            output, _usage = extract_from_freeform("text", "src", config)
         assert output == ExtractionResult()
 
     def test_freeform_validation_error_returns_empty(self) -> None:
@@ -340,7 +340,7 @@ class TestErrorHandling:
         response_obj.choices = [choice]
         client.chat.completions.create.return_value = response_obj
         with patch("mementic.extraction.get_client", return_value=client):
-            output = extract_from_freeform("text", "src", config)
+            output, _usage = extract_from_freeform("text", "src", config)
         assert output == ExtractionResult()
 
     def test_session_auth_error_returns_empty(self) -> None:
@@ -354,21 +354,21 @@ class TestErrorHandling:
         config = LLMConfig()
         with patch("mementic.extraction.get_client",
                    return_value=self._make_raising_client(self._make_rate_limit_error())):
-            output = extract_from_session("log", "diff", "notes", config)
+            output, _usage = extract_from_session("log", "diff", "notes", config)
         assert output == ExtractionResult()
 
     def test_session_timeout_returns_empty(self) -> None:
         config = LLMConfig()
         with patch("mementic.extraction.get_client",
                    return_value=self._make_raising_client(APITimeoutError(request=MagicMock()))):
-            output = extract_from_session("log", "diff", "notes", config)
+            output, _usage = extract_from_session("log", "diff", "notes", config)
         assert output == ExtractionResult()
 
     def test_session_connection_error_returns_empty(self) -> None:
         config = LLMConfig()
         with patch("mementic.extraction.get_client",
                    return_value=self._make_raising_client(APIConnectionError(request=MagicMock()))):
-            output = extract_from_session("log", "diff", "notes", config)
+            output, _usage = extract_from_session("log", "diff", "notes", config)
         assert output == ExtractionResult()
 
     def test_session_api_error_returns_empty(self) -> None:
@@ -376,7 +376,7 @@ class TestErrorHandling:
         with patch("mementic.extraction.get_client",
                    return_value=self._make_raising_client(
                        APIError("err", request=MagicMock(), body=None))):
-            output = extract_from_session("log", "diff", "notes", config)
+            output, _usage = extract_from_session("log", "diff", "notes", config)
         assert output == ExtractionResult()
 
     def test_session_json_decode_error_returns_empty(self) -> None:
@@ -388,7 +388,7 @@ class TestErrorHandling:
         response_obj.choices = [choice]
         client.chat.completions.create.return_value = response_obj
         with patch("mementic.extraction.get_client", return_value=client):
-            output = extract_from_session("log", "diff", "notes", config)
+            output, _usage = extract_from_session("log", "diff", "notes", config)
         assert output == ExtractionResult()
 
     def test_session_validation_error_returns_empty(self) -> None:
@@ -400,7 +400,7 @@ class TestErrorHandling:
         response_obj.choices = [choice]
         client.chat.completions.create.return_value = response_obj
         with patch("mementic.extraction.get_client", return_value=client):
-            output = extract_from_session("log", "diff", "notes", config)
+            output, _usage = extract_from_session("log", "diff", "notes", config)
         assert output == ExtractionResult()
 
     def test_adr_consequences_auth_error_returns_empty(self) -> None:
@@ -414,21 +414,21 @@ class TestErrorHandling:
         config = LLMConfig()
         with patch("mementic.extraction.get_client",
                    return_value=self._make_raising_client(self._make_rate_limit_error())):
-            output = extract_from_adr_consequences("consequences", config)
+            output, _usage = extract_from_adr_consequences("consequences", config)
         assert output == []
 
     def test_adr_consequences_timeout_returns_empty(self) -> None:
         config = LLMConfig()
         with patch("mementic.extraction.get_client",
                    return_value=self._make_raising_client(APITimeoutError(request=MagicMock()))):
-            output = extract_from_adr_consequences("consequences", config)
+            output, _usage = extract_from_adr_consequences("consequences", config)
         assert output == []
 
     def test_adr_consequences_connection_error_returns_empty(self) -> None:
         config = LLMConfig()
         with patch("mementic.extraction.get_client",
                    return_value=self._make_raising_client(APIConnectionError(request=MagicMock()))):
-            output = extract_from_adr_consequences("consequences", config)
+            output, _usage = extract_from_adr_consequences("consequences", config)
         assert output == []
 
     def test_adr_consequences_api_error_returns_empty(self) -> None:
@@ -436,7 +436,7 @@ class TestErrorHandling:
         with patch("mementic.extraction.get_client",
                    return_value=self._make_raising_client(
                        APIError("err", request=MagicMock(), body=None))):
-            output = extract_from_adr_consequences("consequences", config)
+            output, _usage = extract_from_adr_consequences("consequences", config)
         assert output == []
 
     def test_adr_consequences_json_decode_error_returns_empty(self) -> None:
@@ -448,7 +448,7 @@ class TestErrorHandling:
         response_obj.choices = [choice]
         client.chat.completions.create.return_value = response_obj
         with patch("mementic.extraction.get_client", return_value=client):
-            output = extract_from_adr_consequences("text", config)
+            output, _usage = extract_from_adr_consequences("text", config)
         assert output == []
 
     def test_adr_consequences_validation_error_returns_empty(self) -> None:
@@ -460,7 +460,7 @@ class TestErrorHandling:
         response_obj.choices = [choice]
         client.chat.completions.create.return_value = response_obj
         with patch("mementic.extraction.get_client", return_value=client):
-            output = extract_from_adr_consequences("text", config)
+            output, _usage = extract_from_adr_consequences("text", config)
         assert output == []
 
 

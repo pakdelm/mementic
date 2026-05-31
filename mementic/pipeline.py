@@ -15,6 +15,7 @@ from mementic.models import (
     DecisionStatus,
     EntityType,
     ExtractionResult,
+    UsageStats,
 )
 from mementic.sources.adr import scan_adr_dir
 from mementic.sources.opencode import scan_opencode_instructions
@@ -129,10 +130,16 @@ def _backfill_decision_edges(graph: GraphStore) -> int:
     return count
 
 
-def run_init(config_path: str = ".mementic.json") -> GraphStore:
-    """Initialize the knowledge graph from all configured sources."""
+def run_init(config_path: str = ".mementic.json") -> tuple[GraphStore, list[UsageStats]]:
+    """Initialize the knowledge graph from all configured sources.
+
+    Returns:
+        A tuple of (GraphStore, list[UsageStats]) — usage stats from all
+        LLM extraction calls made during init.
+    """
     cfg = load_config(config_path)
     graph = GraphStore()
+    all_usage: list[UsageStats] = []
 
     for adr_source in cfg.sources.adr_dirs:
         adrs = scan_adr_dir(adr_source.path)
@@ -152,7 +159,8 @@ def run_init(config_path: str = ".mementic.json") -> GraphStore:
             _add_decision_dedup(graph, decision)
 
             if adr.consequences.strip():
-                constraints = extract_from_adr_consequences(adr.consequences, cfg.llm)
+                constraints, usage = extract_from_adr_consequences(adr.consequences, cfg.llm)
+                all_usage.append(usage)
                 for c in constraints:
                     c.enforced_by = decision_id
                     if _add_constraint_dedup(graph, c):
@@ -165,13 +173,25 @@ def run_init(config_path: str = ".mementic.json") -> GraphStore:
     for oc_source in cfg.sources.opencode_instructions:
         instructions = scan_opencode_instructions(oc_source.path)
         for instr in instructions:
-            result = extract_from_freeform(instr.content, instr.path, cfg.llm)
+            result, usage = extract_from_freeform(instr.content, instr.path, cfg.llm)
+            all_usage.append(usage)
             _ingest_result(graph, result, instr.path)
 
-    has_sources = bool(cfg.sources.adr_dirs or cfg.sources.opencode_instructions)
+    for claude_source in cfg.sources.claude_instructions:
+        instructions = scan_opencode_instructions(claude_source.path)
+        for instr in instructions:
+            result, usage = extract_from_freeform(instr.content, instr.path, cfg.llm)
+            all_usage.append(usage)
+            _ingest_result(graph, result, instr.path)
+
+    has_sources = bool(
+        cfg.sources.adr_dirs
+        or cfg.sources.opencode_instructions
+        or cfg.sources.claude_instructions
+    )
     if has_sources:
         _backfill_edges(graph)
         _backfill_decision_edges(graph)
         Path(cfg.output.graph_path).parent.mkdir(parents=True, exist_ok=True)
         graph.save(cfg.output.graph_path)
-    return graph
+    return graph, all_usage

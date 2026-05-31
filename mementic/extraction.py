@@ -17,7 +17,7 @@ from pydantic import BaseModel, ValidationError
 load_dotenv()
 
 from mementic.config import LLMConfig  # noqa: E402
-from mementic.models import Constraint, ExtractionResult  # noqa: E402
+from mementic.models import Constraint, ExtractionResult, UsageStats  # noqa: E402
 
 
 FREE_FORM_SYSTEM_PROMPT = """You are a software architecture analyst. Given text from an engineering document, identify architectural decisions and constraints.
@@ -92,7 +92,7 @@ def extract_from_freeform(
     text: str,
     source_label: str,
     config: LLMConfig,
-) -> ExtractionResult:
+) -> tuple[ExtractionResult, UsageStats]:
     """
     Extract architectural decisions and constraints from freeform text.
     Sends text to LLM with system prompt. Returns ExtractionResult with decisions,
@@ -100,9 +100,12 @@ def extract_from_freeform(
     Uses the extraction_model from config.
     Set temperature=0.1 for deterministic output.
     Pass response_format with json_schema from ExtractionResult.model_json_schema().
+
+    Returns:
+        A tuple of (ExtractionResult, UsageStats).
     """
     if not text.strip():
-        return ExtractionResult()
+        return ExtractionResult(), UsageStats(model=config.extraction_model, status="success")
 
     client = get_client(config)
 
@@ -129,24 +132,59 @@ def extract_from_freeform(
         raise RuntimeError(msg) from None
     except RateLimitError:
         sys.stderr.write(f"WARNING: {prefix} rate limit hit. Skipping this source.\n")
-        return ExtractionResult()
+        stats = UsageStats(model=config.extraction_model, status="rate_limited")
+        return ExtractionResult(), stats
     except (APITimeoutError, APIConnectionError):
         sys.stderr.write(f"WARNING: {prefix} API unreachable. Skipping this source.\n")
-        return ExtractionResult()
+        stats = UsageStats(model=config.extraction_model, status="error")
+        return ExtractionResult(), stats
     except APIError as e:
         sys.stderr.write(f"WARNING: {prefix} API error: {e}. Skipping this source.\n")
-        return ExtractionResult()
+        stats = UsageStats(model=config.extraction_model, status="error")
+        return ExtractionResult(), stats
 
+    usage = response.usage
     content = response.choices[0].message.content
     if content is None:
-        return ExtractionResult()
+        if usage:
+            stats = UsageStats(
+                input_tokens=usage.prompt_tokens,
+                output_tokens=usage.completion_tokens,
+                total_tokens=usage.total_tokens,
+                model=config.extraction_model,
+                status="success",
+            )
+        else:
+            stats = UsageStats(model=config.extraction_model, status="success")
+        return ExtractionResult(), stats
 
     try:
         data = json.loads(content)
-        return ExtractionResult.model_validate(data)
+        result = ExtractionResult.model_validate(data)
+        if usage:
+            stats = UsageStats(
+                input_tokens=usage.prompt_tokens,
+                output_tokens=usage.completion_tokens,
+                total_tokens=usage.total_tokens,
+                model=config.extraction_model,
+                status="success",
+            )
+        else:
+            stats = UsageStats(model=config.extraction_model, status="success")
+        return result, stats
     except (json.JSONDecodeError, ValidationError):
         sys.stderr.write("WARNING: LLM returned invalid JSON. Skipping.\n")
-        return ExtractionResult()
+        if usage:
+            stats = UsageStats(
+                input_tokens=usage.prompt_tokens,
+                output_tokens=usage.completion_tokens,
+                total_tokens=usage.total_tokens,
+                model=config.extraction_model,
+                status="error",
+            )
+        else:
+            stats = UsageStats(model=config.extraction_model, status="error")
+        return ExtractionResult(), stats
 
 
 def extract_from_session(
@@ -154,10 +192,13 @@ def extract_from_session(
     git_diff: str,
     user_notes: str,
     config: LLMConfig,
-) -> ExtractionResult:
+) -> tuple[ExtractionResult, UsageStats]:
     """
     Extract decisions from an agent session (log + diff + human notes).
     Similar to extract_from_freeform but with a session-specific system prompt.
+
+    Returns:
+        A tuple of (ExtractionResult, UsageStats).
     """
     combined = ""
 
@@ -171,7 +212,7 @@ def extract_from_session(
         combined += f"## Human Notes\n{user_notes}\n\n"
 
     if not combined.strip():
-        return ExtractionResult()
+        return ExtractionResult(), UsageStats(model=config.extraction_model, status="success")
 
     client = get_client(config)
 
@@ -198,36 +239,74 @@ def extract_from_session(
         raise RuntimeError(msg) from None
     except RateLimitError:
         sys.stderr.write(f"WARNING: {prefix} rate limit hit. Skipping this source.\n")
-        return ExtractionResult()
+        stats = UsageStats(model=config.extraction_model, status="rate_limited")
+        return ExtractionResult(), stats
     except (APITimeoutError, APIConnectionError):
         sys.stderr.write(f"WARNING: {prefix} API unreachable. Skipping this source.\n")
-        return ExtractionResult()
+        stats = UsageStats(model=config.extraction_model, status="error")
+        return ExtractionResult(), stats
     except APIError as e:
         sys.stderr.write(f"WARNING: {prefix} API error: {e}. Skipping this source.\n")
-        return ExtractionResult()
+        stats = UsageStats(model=config.extraction_model, status="error")
+        return ExtractionResult(), stats
 
+    usage = response.usage
     content = response.choices[0].message.content
     if content is None:
-        return ExtractionResult()
+        if usage:
+            stats = UsageStats(
+                input_tokens=usage.prompt_tokens,
+                output_tokens=usage.completion_tokens,
+                total_tokens=usage.total_tokens,
+                model=config.extraction_model,
+                status="success",
+            )
+        else:
+            stats = UsageStats(model=config.extraction_model, status="success")
+        return ExtractionResult(), stats
 
     try:
         data = json.loads(content)
-        return ExtractionResult.model_validate(data)
+        result = ExtractionResult.model_validate(data)
+        if usage:
+            stats = UsageStats(
+                input_tokens=usage.prompt_tokens,
+                output_tokens=usage.completion_tokens,
+                total_tokens=usage.total_tokens,
+                model=config.extraction_model,
+                status="success",
+            )
+        else:
+            stats = UsageStats(model=config.extraction_model, status="success")
+        return result, stats
     except (json.JSONDecodeError, ValidationError):
         sys.stderr.write("WARNING: LLM returned invalid JSON. Skipping.\n")
-        return ExtractionResult()
+        if usage:
+            stats = UsageStats(
+                input_tokens=usage.prompt_tokens,
+                output_tokens=usage.completion_tokens,
+                total_tokens=usage.total_tokens,
+                model=config.extraction_model,
+                status="error",
+            )
+        else:
+            stats = UsageStats(model=config.extraction_model, status="error")
+        return ExtractionResult(), stats
 
 
 def extract_from_adr_consequences(
     consequences_text: str,
     config: LLMConfig,
-) -> list[Constraint]:
+) -> tuple[list[Constraint], UsageStats]:
     """
     Extract Constraint nodes from an ADR Consequences section (freeform text).
     Uses LLM. Returns list of Constraint objects.
+
+    Returns:
+        A tuple of (list[Constraint], UsageStats).
     """
     if not consequences_text.strip():
-        return []
+        return [], UsageStats(model=config.extraction_model, status="success")
 
     client = get_client(config)
 
@@ -254,22 +333,56 @@ def extract_from_adr_consequences(
         raise RuntimeError(msg) from None
     except RateLimitError:
         sys.stderr.write(f"WARNING: {prefix} rate limit hit. Skipping this source.\n")
-        return []
+        stats = UsageStats(model=config.extraction_model, status="rate_limited")
+        return [], stats
     except (APITimeoutError, APIConnectionError):
         sys.stderr.write(f"WARNING: {prefix} API unreachable. Skipping this source.\n")
-        return []
+        stats = UsageStats(model=config.extraction_model, status="error")
+        return [], stats
     except APIError as e:
         sys.stderr.write(f"WARNING: {prefix} API error: {e}. Skipping this source.\n")
-        return []
+        stats = UsageStats(model=config.extraction_model, status="error")
+        return [], stats
 
+    usage = response.usage
     content = response.choices[0].message.content
     if content is None:
-        return []
+        if usage:
+            stats = UsageStats(
+                input_tokens=usage.prompt_tokens,
+                output_tokens=usage.completion_tokens,
+                total_tokens=usage.total_tokens,
+                model=config.extraction_model,
+                status="success",
+            )
+        else:
+            stats = UsageStats(model=config.extraction_model, status="success")
+        return [], stats
 
     try:
         data = json.loads(content)
         parsed = _ConstraintListResponse.model_validate(data)
-        return parsed.constraints
+        if usage:
+            stats = UsageStats(
+                input_tokens=usage.prompt_tokens,
+                output_tokens=usage.completion_tokens,
+                total_tokens=usage.total_tokens,
+                model=config.extraction_model,
+                status="success",
+            )
+        else:
+            stats = UsageStats(model=config.extraction_model, status="success")
+        return parsed.constraints, stats
     except (json.JSONDecodeError, ValidationError):
         sys.stderr.write("WARNING: LLM returned invalid JSON. Skipping.\n")
-        return []
+        if usage:
+            stats = UsageStats(
+                input_tokens=usage.prompt_tokens,
+                output_tokens=usage.completion_tokens,
+                total_tokens=usage.total_tokens,
+                model=config.extraction_model,
+                status="error",
+            )
+        else:
+            stats = UsageStats(model=config.extraction_model, status="error")
+        return [], stats

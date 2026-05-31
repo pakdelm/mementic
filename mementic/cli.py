@@ -13,11 +13,12 @@ load_dotenv()
 
 from mementic.config import load_config  # noqa: E402
 from mementic.extraction import extract_from_session  # noqa: E402
-from mementic.format import format_context_pack  # noqa: E402
+from mementic.format import count_tokens, format_context_pack, timestamp  # noqa: E402
 from mementic.graph import GraphStore  # noqa: E402
-from mementic.models import CodeEntity, Decision, DecisionStatus, EntityType  # noqa: E402
+from mementic.models import CodeEntity, Decision, DecisionStatus, EntityType, MetricsEntry  # noqa: E402
 from mementic.pipeline import run_init  # noqa: E402
 from mementic.conflict import detect_conflicts  # noqa: E402
+from mementic.metrics import UsageStore  # noqa: E402
 
 if TYPE_CHECKING:
     from mementic.lint import LintFinding  # noqa: F401
@@ -159,12 +160,29 @@ def init(
         typer.echo(f"Updated {config_path}")
 
     try:
-        graph = run_init(config_path)
+        graph, all_usage = run_init(config_path)
     except RuntimeError as e:
         typer.echo(str(e), err=True)
         raise typer.Exit(code=1)
     stats = graph.stats()
     typer.echo(f"Mementic graph initialized: {stats}")
+
+    # Log extraction costs to metrics
+    if all_usage:
+        store = UsageStore()
+        for usage in all_usage:
+            if usage.total_tokens > 0 or usage.status != "success":
+                entry = MetricsEntry(
+                    timestamp=timestamp(),
+                    operation="init",
+                    source_label=usage.model,
+                    input_tokens=usage.input_tokens,
+                    output_tokens=usage.output_tokens,
+                    total_tokens=usage.total_tokens,
+                    model=usage.model,
+                    status=usage.status,
+                )
+                store.append(entry)
 
 
 @app.command()
@@ -215,7 +233,7 @@ def capture(
 
     try:
         cfg = load_config()
-        extraction = extract_from_session(session_text, git_diff, notes or "", cfg.llm)
+        extraction, _usage = extract_from_session(session_text, git_diff, notes or "", cfg.llm)
     except RuntimeError as e:
         typer.echo(str(e), err=True)
         raise typer.Exit(code=1)
@@ -294,13 +312,37 @@ def capture(
         typer.echo("  Run 'mementic review' to resolve flagged conflicts.")
     typer.echo(f"  Written to {graph_path}")
 
+    # Log capture metrics
+    metrics_store = UsageStore()
+    entry = MetricsEntry(
+        timestamp=timestamp(),
+        operation="capture",
+        source_label=session or "auto-detected",
+        input_tokens=_usage.input_tokens,
+        output_tokens=_usage.output_tokens,
+        total_tokens=_usage.total_tokens,
+        model=_usage.model,
+        status=_usage.status,
+    )
+    metrics_store.append(entry)
+
     if got_diff:
         _save_checkpoint()
 
 
 @app.command()
-def enforce(task: str, files: list[str]) -> None:
-    """Load constraints and format a context pack for a given task."""
+def context(
+    task: str,
+    files: list[str],
+    benchmark: bool = typer.Option(
+        False, "--benchmark", help="Measure token savings vs. raw source docs"
+    ),
+) -> None:
+    """Load constraints and produce a context pack for a given task.
+
+    Queries the knowledge graph for constraints and decisions relevant to
+    the specified files, then formats them as a context pack for agent injection.
+    """
     cfg = load_config()
 
     graph = _load_graph_safe(cfg.output.graph_path)
@@ -310,6 +352,56 @@ def enforce(task: str, files: list[str]) -> None:
 
     output = format_context_pack(task, decisions, constraints)
     typer.echo(output)
+
+    if benchmark:
+        # Collect all source file paths from config
+        source_paths: list[str] = []
+        for adr_src in cfg.sources.adr_dirs:
+            source_paths.append(adr_src.path)
+        for oc_src in cfg.sources.opencode_instructions:
+            source_paths.append(oc_src.path)
+        for claude_src in cfg.sources.claude_instructions:
+            source_paths.append(claude_src.path)
+
+        # Concatenate all *.md files from source directories
+        all_source_text = ""
+        for dir_path in source_paths:
+            p = Path(dir_path)
+            if not p.is_dir():
+                continue
+            for md_file in sorted(p.rglob("*.md")):
+                try:
+                    all_source_text += md_file.read_text(encoding="utf-8") + "\n"
+                except Exception:
+                    continue
+
+        baseline_tokens = count_tokens(all_source_text)
+        context_pack_tokens = count_tokens(output)
+        savings = baseline_tokens - context_pack_tokens
+        ratio = savings / baseline_tokens if baseline_tokens > 0 else 0.0
+
+        typer.echo()
+        typer.echo("Benchmark")
+        typer.echo(f"  Raw source size:   {baseline_tokens:,} tokens")
+        typer.echo(f"  Context pack:      {context_pack_tokens:,} tokens")
+        typer.echo(f"  Savings:           {savings:,} tokens ({ratio:.0%})")
+
+        # Log benchmark metrics
+        metrics_store = UsageStore()
+        entry = MetricsEntry(
+            timestamp=timestamp(),
+            operation="enforce_benchmark",
+            source_label=task,
+            input_tokens=0,
+            output_tokens=0,
+            total_tokens=0,
+            model="",
+            status="success",
+            baseline_tokens=baseline_tokens,
+            context_pack_tokens=context_pack_tokens,
+            savings_ratio=ratio,
+        )
+        metrics_store.append(entry)
 
 
 @app.command()
@@ -407,7 +499,11 @@ def server():
 
 
 @app.command()
-def status() -> None:
+def status(
+    verbose: bool = typer.Option(
+        False, "--verbose", "-v", help="Show token usage totals"
+    ),
+) -> None:
     """Show graph statistics."""
     cfg = load_config()
 
@@ -417,6 +513,21 @@ def status() -> None:
     typer.echo(f"Constraints: {stats.get('constraints', 0)}")
     typer.echo(f"Code Entities: {stats.get('entities', 0)}")
     typer.echo(f"Edges: {stats.get('edges', 0)}")
+
+    if verbose:
+        metrics_path = Path(".mementic/metrics.jsonl")
+        if not metrics_path.exists():
+            typer.echo()
+            typer.echo("No metrics data yet.")
+        else:
+            store = UsageStore()
+            summary = store.summary()
+            typer.echo()
+            typer.echo("Token Usage")
+            typer.echo(f"  LLM calls:         {summary['total_calls']}")
+            typer.echo(f"  Total input:       {summary['total_input_tokens']:,} tokens")
+            typer.echo(f"  Total output:      {summary['total_output_tokens']:,} tokens")
+            typer.echo(f"  Total cost:        {summary['total_tokens']:,} tokens")
 
 
 @app.command()
@@ -681,6 +792,84 @@ def list_cmd(
             etype = p.get("type", "file")
             repo = p.get("repo", "-")
             typer.echo(f"  {eid:<{pad}}  {etype:<10}  {repo}")
+
+
+@app.command()
+def metrics(
+    json_output: bool = typer.Option(
+        False, "--json", help="Output as JSON"
+    ),
+    reset: bool = typer.Option(
+        False, "--reset", help="Reset all metrics after displaying"
+    ),
+) -> None:
+    """Display aggregated token usage metrics."""
+    store = UsageStore()
+    summary = store.summary()
+
+    if json_output:
+        typer.echo(json.dumps(summary, indent=2, default=str))
+    else:
+        typer.echo("Token Usage Since Inception")
+        typer.echo("─" * 50)
+        typer.echo(f"  LLM calls made:      {summary['total_calls']}")
+        typer.echo(f"  Input tokens sent:   {summary['total_input_tokens']:,}")
+        typer.echo(f"  Output tokens:        {summary['total_output_tokens']:,}")
+        typer.echo(f"  Total tokens:         {summary['total_tokens']:,}")
+
+        typer.echo()
+        typer.echo("Breakdown by Activity")
+        typer.echo("─" * 50)
+
+        # Human-friendly labels for known operations
+        operation_labels: dict[str, str] = {
+            "init": "one-time setup cost",
+            "capture": "decision extraction",
+            "enforce_benchmark": "benchmark runs",
+            "mcp_context_pack": "agent context packs",
+        }
+
+        by_operation = summary.get("by_operation", {})
+        if by_operation:
+            for op, data in sorted(by_operation.items()):
+                label = operation_labels.get(op, op)
+                typer.echo(
+                    f"  {op:<22} {data['calls']:>5} calls   "
+                    f"{data['total_tokens']:>10,} tokens   ({label})"
+                )
+        else:
+            typer.echo("  (no activity yet)")
+
+        typer.echo()
+        typer.echo("Agent Context Savings (benchmarks)")
+        typer.echo("─" * 50)
+
+        benchmark_tasks = summary.get("benchmark_tasks", 0)
+        if benchmark_tasks > 0:
+            avg_baseline = summary["avg_baseline_tokens"]
+            avg_context_pack = summary["avg_context_pack_tokens"]
+            avg_savings = avg_baseline - avg_context_pack
+            avg_ratio = summary["avg_savings_ratio"]
+            breakeven = summary.get("tasks_to_breakeven")
+            typer.echo(f"  Tasks benchmarked:   {benchmark_tasks}")
+            typer.echo(f"  Avg. raw source size: {avg_baseline:,.0f} tokens")
+            typer.echo(f"  Avg. context pack:    {avg_context_pack:,.0f} tokens")
+            typer.echo(
+                f"  Avg. savings:         {avg_savings:,.0f} tokens"
+                f" ({avg_ratio:.0%})"
+            )
+            if breakeven is not None:
+                typer.echo(f"  Tasks to breakeven:   ~{breakeven:.0f} tasks")
+        else:
+            typer.echo(
+                "  No benchmarks run yet. "
+                "Use `mementic context --benchmark` to measure savings."
+            )
+
+    if reset:
+        if typer.confirm("Delete all metrics?"):
+            store.reset()
+            typer.echo("Metrics reset.")
 
 
 @app.command()

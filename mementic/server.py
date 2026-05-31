@@ -9,13 +9,15 @@ from pathlib import Path
 from mcp.server.fastmcp import FastMCP
 
 from mementic.config import MementicConfig, load_config
-from mementic.format import format_context_pack, slugify, timestamp
+from mementic.format import count_tokens, format_context_pack, slugify, timestamp
 from mementic.graph import GraphStore
-from mementic.models import CodeEntity, Constraint, Decision, DecisionStatus, EntityType
+from mementic.metrics import UsageStore
+from mementic.models import CodeEntity, Constraint, Decision, DecisionStatus, EntityType, MetricsEntry
 
 mcp = FastMCP("Mementic")
 
 _graph_lock = threading.Lock()
+_metrics_store = UsageStore()
 
 
 def _load_graph() -> tuple[GraphStore, MementicConfig]:
@@ -39,7 +41,11 @@ def _save_graph(graph: GraphStore, cfg: MementicConfig) -> None:
 
 
 @mcp.tool()
-async def get_context_pack(task_description: str, affected_files: list[str]) -> str:
+async def get_context_pack(
+    task_description: str,
+    affected_files: list[str],
+    benchmark: bool = False,
+) -> str:
     """Return all relevant Decisions and Constraints for a given task.
 
     Call this BEFORE starting work on a task.
@@ -47,6 +53,10 @@ async def get_context_pack(task_description: str, affected_files: list[str]) -> 
     Args:
         task_description: Description of the task being started.
         affected_files: List of file paths that will be affected.
+        benchmark: If True, also measure token savings by comparing the
+            context pack size against the total size of all raw source
+            documents (ADRs + instructions). The result is logged to
+            the metrics store for use by ``mementic metrics``.
 
     Returns:
         Formatted markdown with relevant architectural context.
@@ -54,7 +64,68 @@ async def get_context_pack(task_description: str, affected_files: list[str]) -> 
     graph, cfg = _load_graph()
     constraints = graph.get_constraints_for_entities(affected_files)
     decisions = graph.get_decisions_for_entities(affected_files)
-    return format_context_pack(task_description, decisions, constraints)
+    pack_text = format_context_pack(task_description, decisions, constraints)
+    pack_tokens = count_tokens(pack_text)
+    entry = MetricsEntry(
+        timestamp=timestamp(),
+        operation="mcp_context_pack",
+        source_label=task_description[:80],
+        input_tokens=0,
+        output_tokens=0,
+        total_tokens=pack_tokens,
+        model="",
+        status="success",
+    )
+    _metrics_store.append(entry)
+
+    if benchmark:
+        baseline_tokens = _count_raw_source_tokens(cfg)
+        if baseline_tokens > 0:
+            ratio = (baseline_tokens - pack_tokens) / baseline_tokens
+            benchmark_entry = MetricsEntry(
+                timestamp=timestamp(),
+                operation="enforce_benchmark",
+                source_label=task_description[:80],
+                input_tokens=0,
+                output_tokens=0,
+                total_tokens=0,
+                model="",
+                status="success",
+                baseline_tokens=baseline_tokens,
+                context_pack_tokens=pack_tokens,
+                savings_ratio=ratio,
+            )
+            _metrics_store.append(benchmark_entry)
+
+    return pack_text
+
+
+def _count_raw_source_tokens(cfg: MementicConfig) -> int:
+    """Count tokens across all configured source directories (ADRs + instructions).
+
+    Reads every ``*.md`` file in each configured source directory and sums
+    their token counts. Returns 0 if no source files are found.
+    """
+    total = 0
+    for adr in cfg.sources.adr_dirs:
+        dir_path = Path(adr.path)
+        if dir_path.is_dir():
+            for f in dir_path.rglob("*.md"):
+                if f.is_file():
+                    total += count_tokens(f.read_text(encoding="utf-8"))
+    for oc_src in cfg.sources.opencode_instructions:
+        dir_path = Path(oc_src.path)
+        if dir_path.is_dir():
+            for f in dir_path.rglob("*.md"):
+                if f.is_file():
+                    total += count_tokens(f.read_text(encoding="utf-8"))
+    for claude_src in cfg.sources.claude_instructions:
+        dir_path = Path(claude_src.path)
+        if dir_path.is_dir():
+            for f in dir_path.rglob("*.md"):
+                if f.is_file():
+                    total += count_tokens(f.read_text(encoding="utf-8"))
+    return total
 
 
 @mcp.tool()

@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field, model_validator
 
 __all__ = [
     "AdrDirSource",
+    "ClaudeSource",
     "LLMConfig",
     "MementicConfig",
     "OpenCodeSource",
@@ -83,11 +84,18 @@ class OpenCodeSource(BaseModel):
     path: str
 
 
+class ClaudeSource(BaseModel):
+    """A path to Claude Code instruction files."""
+
+    path: str
+
+
 class Sources(BaseModel):
     """Configuration for knowledge sources."""
 
     adr_dirs: list[AdrDirSource] = Field(default_factory=list)
     opencode_instructions: list[OpenCodeSource] = Field(default_factory=list)
+    claude_instructions: list[ClaudeSource] = Field(default_factory=list)
 
 
 class OutputConfig(BaseModel):

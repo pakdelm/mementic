@@ -4,7 +4,14 @@ import json
 from pathlib import Path
 from unittest.mock import patch
 
-from mementic.models import Constraint, Decision, DecisionStatus, ExtractionResult, GraphEdge
+from mementic.models import (
+    Constraint,
+    Decision,
+    DecisionStatus,
+    ExtractionResult,
+    GraphEdge,
+    UsageStats,
+)
 from mementic.pipeline import (
     _add_constraint_dedup,
     _add_decision_dedup,
@@ -96,6 +103,34 @@ def _mock_freeform_result() -> ExtractionResult:
             )
         ],
         affected_entities=["src/models/base.py"],
+        edges_to_create=[],
+    )
+
+
+def _mock_claude_freeform_result() -> ExtractionResult:
+    return ExtractionResult(
+        decisions=[
+            Decision(
+                id="d-claude-1",
+                title="Use async handlers",
+                rationale="Performance",
+                source="claude:instructions/style.md",
+                status=DecisionStatus.ACCEPTED,
+                timestamp="2024-01-01T00:00:00Z",
+            )
+        ],
+        constraints=[
+            Constraint(
+                id="c-claude-1",
+                description="All handlers must be async",
+                bound_entities=["src/handlers/"],
+                enforced_by="d-claude-1",
+                source="claude:instructions/style.md",
+                status="active",
+                timestamp="2024-01-01T00:00:00Z",
+            )
+        ],
+        affected_entities=["src/handlers/base.py"],
         edges_to_create=[],
     )
 
@@ -212,9 +247,9 @@ class TestRunInitWithAdr:
 
         with patch(
             "mementic.pipeline.extract_from_adr_consequences",
-            return_value=[],
+            return_value=([], UsageStats(model="test-model", status="success")),
         ):
-            gs = run_init(str(config_path))
+            gs, _all_usage = run_init(str(config_path))
 
         decisions = gs.get_all_decisions()
         assert len(decisions) == 1
@@ -239,9 +274,9 @@ class TestRunInitWithAdr:
 
         with patch(
             "mementic.pipeline.extract_from_adr_consequences",
-            return_value=[],
+            return_value=([], UsageStats(model="test-model", status="success")),
         ):
-            gs = run_init(str(config_path))
+            gs, _all_usage = run_init(str(config_path))
 
         decisions = gs.get_all_decisions()
         assert len(decisions) == 2
@@ -263,9 +298,9 @@ class TestRunInitWithAdr:
 
         with patch(
             "mementic.pipeline.extract_from_adr_consequences",
-            return_value=[],
+            return_value=([], UsageStats(model="test-model", status="success")),
         ):
-            gs = run_init(str(config_path))
+            gs, _all_usage = run_init(str(config_path))
 
         stats = gs.stats()
         assert stats["entities"] >= 1
@@ -284,9 +319,9 @@ class TestRunInitWithAdr:
 
         with patch(
             "mementic.pipeline.extract_from_adr_consequences",
-            return_value=_mock_adr_result().constraints,
+            return_value=(_mock_adr_result().constraints, UsageStats(model="test-model", status="success")),
         ):
-            gs = run_init(str(config_path))
+            gs, _all_usage = run_init(str(config_path))
 
         constraints = gs.get_all_constraints()
         assert len(constraints) >= 1
@@ -300,7 +335,7 @@ class TestRunInitEmptyConfig:
         }
         config_path.write_text(json.dumps(config_data))
 
-        gs = run_init(str(config_path))
+        gs, _all_usage = run_init(str(config_path))
 
         stats = gs.stats()
         assert stats["decisions"] == 0
@@ -314,7 +349,7 @@ class TestRunInitEmptyConfig:
         config_path.write_text(json.dumps({
             "output": {"graph_path": str(tmp_path / ".mementic" / "graph.json")},
         }))
-        gs = run_init(str(config_path))
+        gs, _all_usage = run_init(str(config_path))
 
         stats = gs.stats()
         assert stats == {"decisions": 0, "constraints": 0, "entities": 0, "edges": 0}
@@ -335,9 +370,9 @@ class TestRunInitWithOpenCode:
 
         with patch(
             "mementic.pipeline.extract_from_freeform",
-            return_value=_mock_freeform_result(),
+            return_value=(_mock_freeform_result(), UsageStats(model="test-model", status="success")),
         ):
-            gs = run_init(str(config_path))
+            gs, _all_usage = run_init(str(config_path))
 
         decisions = gs.get_all_decisions()
         assert len(decisions) == 1
@@ -371,12 +406,43 @@ class TestRunInitWithOpenCode:
         ]
 
         with patch(
-            "mementic.pipeline.extract_from_freeform", return_value=result
+            "mementic.pipeline.extract_from_freeform", return_value=(result, UsageStats(model="test-model", status="success"))
         ):
-            gs = run_init(str(config_path))
+            gs, _all_usage = run_init(str(config_path))
 
         stats = gs.stats()
         assert stats["edges"] >= 2
+
+
+class TestRunInitWithClaude:
+    def test_extracts_from_claude_instructions(self, tmp_path: Path) -> None:
+        claude_dir = tmp_path / "claude_instructions"
+        claude_dir.mkdir()
+        (claude_dir / "style.md").write_text("# Claude Style\nUse async everywhere.")
+
+        config_path = tmp_path / ".mementic.json"
+        config_data = {
+            "sources": {"claude_instructions": [{"path": str(claude_dir)}]},
+            "output": {"graph_path": str(tmp_path / ".mementic" / "graph.json")},
+        }
+        config_path.write_text(json.dumps(config_data))
+
+        with patch(
+            "mementic.pipeline.extract_from_freeform",
+            return_value=(_mock_claude_freeform_result(), UsageStats(model="test-model", status="success")),
+        ):
+            gs, _all_usage = run_init(str(config_path))
+
+        decisions = gs.get_all_decisions()
+        assert len(decisions) == 1
+        assert decisions[0].title == "Use async handlers"
+
+        constraints = gs.get_all_constraints()
+        assert len(constraints) == 1
+        assert constraints[0].description == "All handlers must be async"
+
+        stats = gs.stats()
+        assert stats["entities"] >= 1
 
 
 class TestRunInitCombined:
@@ -401,18 +467,61 @@ class TestRunInitCombined:
 
         with patch(
             "mementic.pipeline.extract_from_freeform",
-            return_value=_mock_freeform_result(),
+            return_value=(_mock_freeform_result(), UsageStats(model="test-model", status="success")),
         ), patch(
             "mementic.pipeline.extract_from_adr_consequences",
-            return_value=[],
+            return_value=([], UsageStats(model="test-model", status="success")),
         ):
-            gs = run_init(str(config_path))
+            gs, _all_usage = run_init(str(config_path))
 
         decisions = gs.get_all_decisions()
         assert len(decisions) == 2
         sources = {d.source for d in decisions}
         assert any(s.startswith("adr:") for s in sources)
         assert any(s.startswith("opencode:") for s in sources)
+
+    def test_all_three_source_types(self, tmp_path: Path) -> None:
+        adr_dir = tmp_path / "adrs"
+        adr_dir.mkdir()
+        (adr_dir / "0001-use-postgres.md").write_text(ADR_CONTENT)
+
+        oc_dir = tmp_path / "opencode_instructions"
+        oc_dir.mkdir()
+        (oc_dir / "python-style.md").write_text(OPECODE_INSTRUCTION)
+
+        claude_dir = tmp_path / "claude_instructions"
+        claude_dir.mkdir()
+        (claude_dir / "style.md").write_text("# Claude Style\nBe async.")
+
+        config_path = tmp_path / ".mementic.json"
+        config_data = {
+            "sources": {
+                "adr_dirs": [{"path": str(adr_dir)}],
+                "opencode_instructions": [{"path": str(oc_dir)}],
+                "claude_instructions": [{"path": str(claude_dir)}],
+            },
+            "output": {"graph_path": str(tmp_path / ".mementic" / "graph.json")},
+        }
+        config_path.write_text(json.dumps(config_data))
+
+        with patch(
+            "mementic.pipeline.extract_from_freeform",
+            side_effect=[
+                (_mock_freeform_result(), UsageStats(model="test-model", status="success")),
+                (_mock_claude_freeform_result(), UsageStats(model="test-model", status="success")),
+            ],
+        ), patch(
+            "mementic.pipeline.extract_from_adr_consequences",
+            return_value=([], UsageStats(model="test-model", status="success")),
+        ):
+            gs, _all_usage = run_init(str(config_path))
+
+        decisions = gs.get_all_decisions()
+        assert len(decisions) == 3
+        sources = {d.source for d in decisions}
+        assert any(s.startswith("adr:") for s in sources)
+        assert any(s.startswith("opencode:") for s in sources)
+        assert any(s.startswith("claude:") for s in sources)
 
 
 class TestSaveAndLoad:
@@ -432,9 +541,9 @@ class TestSaveAndLoad:
 
         with patch(
             "mementic.pipeline.extract_from_adr_consequences",
-            return_value=[],
+            return_value=([], UsageStats(model="test-model", status="success")),
         ):
-            gs1 = run_init(str(config_path))
+            gs1, _all_usage = run_init(str(config_path))
 
         assert graph_path.is_file()
 

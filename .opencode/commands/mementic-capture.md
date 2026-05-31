@@ -1,6 +1,5 @@
 ---
 description: Capture architectural decisions made during this session for review
-agent: build
 ---
 
 Review the architectural changes made in this session. For each significant decision:

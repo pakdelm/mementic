@@ -67,3 +67,33 @@ class ExtractionResult(BaseModel):
     constraints: list[Constraint] = Field(default_factory=list)
     affected_entities: list[str] = Field(default_factory=list)
     edges_to_create: list[GraphEdge] = Field(default_factory=list)
+
+
+class UsageStats(BaseModel):
+    """Raw token counts from a single LLM API call."""
+
+    input_tokens: int = 0
+    output_tokens: int = 0
+    total_tokens: int = 0
+    model: str = ""
+    status: str = "success"
+
+
+class MetricsEntry(BaseModel):
+    """One row in the metrics log, representing a single mementic operation.
+
+    Benchmark fields (baseline_tokens, context_pack_tokens, savings_ratio) are
+    only populated for 'enforce_benchmark' entries.
+    """
+
+    timestamp: str
+    operation: str  # init_freeform / init_adr / capture / enforce_benchmark / mcp_context_pack
+    source_label: str = ""
+    input_tokens: int = 0
+    output_tokens: int = 0
+    total_tokens: int = 0
+    model: str = ""
+    status: str = "success"
+    baseline_tokens: int | None = None
+    context_pack_tokens: int | None = None
+    savings_ratio: float | None = None

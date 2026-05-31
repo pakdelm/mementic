@@ -21,6 +21,7 @@ class TestLoadConfig:
             "sources": {
                 "adr_dirs": [{"path": "docs/adr"}],
                 "opencode_instructions": [{"path": ".opencode/instructions"}],
+                "claude_instructions": [{"path": ".claude/instructions"}],
             },
             "output": {"graph_path": "./custom/graph.json"},
             "llm": {"provider": "openai", "model": "gpt-4"},
@@ -37,6 +38,8 @@ class TestLoadConfig:
             assert config.sources.adr_dirs[0].path == "docs/adr"
             assert len(config.sources.opencode_instructions) == 1
             assert config.sources.opencode_instructions[0].path == ".opencode/instructions"
+            assert len(config.sources.claude_instructions) == 1
+            assert config.sources.claude_instructions[0].path == ".claude/instructions"
             assert config.output.graph_path == "./custom/graph.json"
             assert config.llm.provider == "openai"
             assert config.llm.model == "gpt-4"
@@ -49,6 +52,7 @@ class TestLoadConfig:
         assert isinstance(config, MementicConfig)
         assert config.sources.adr_dirs == []
         assert config.sources.opencode_instructions == []
+        assert config.sources.claude_instructions == []
         assert config.output.graph_path == "./.mementic/graph.json"
         assert config.llm.provider == "deepseek"
         assert config.llm.model == "deepseek-chat"
@@ -111,6 +115,7 @@ class TestLoadConfig:
             assert isinstance(config, MementicConfig)
             assert config.sources.adr_dirs == []
             assert config.sources.opencode_instructions == []
+            assert config.sources.claude_instructions == []
         finally:
             Path(tmp.name).unlink()
 
