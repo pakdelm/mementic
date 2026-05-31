@@ -249,7 +249,7 @@ class TestRunInitWithAdr:
             "mementic.pipeline.extract_from_adr_consequences",
             return_value=([], UsageStats(model="test-model", status="success")),
         ):
-            gs = run_init(str(config_path))
+            gs, _all_usage = run_init(str(config_path))
 
         decisions = gs.get_all_decisions()
         assert len(decisions) == 1
@@ -276,7 +276,7 @@ class TestRunInitWithAdr:
             "mementic.pipeline.extract_from_adr_consequences",
             return_value=([], UsageStats(model="test-model", status="success")),
         ):
-            gs = run_init(str(config_path))
+            gs, _all_usage = run_init(str(config_path))
 
         decisions = gs.get_all_decisions()
         assert len(decisions) == 2
@@ -300,7 +300,7 @@ class TestRunInitWithAdr:
             "mementic.pipeline.extract_from_adr_consequences",
             return_value=([], UsageStats(model="test-model", status="success")),
         ):
-            gs = run_init(str(config_path))
+            gs, _all_usage = run_init(str(config_path))
 
         stats = gs.stats()
         assert stats["entities"] >= 1
@@ -321,7 +321,7 @@ class TestRunInitWithAdr:
             "mementic.pipeline.extract_from_adr_consequences",
             return_value=(_mock_adr_result().constraints, UsageStats(model="test-model", status="success")),
         ):
-            gs = run_init(str(config_path))
+            gs, _all_usage = run_init(str(config_path))
 
         constraints = gs.get_all_constraints()
         assert len(constraints) >= 1
@@ -335,7 +335,7 @@ class TestRunInitEmptyConfig:
         }
         config_path.write_text(json.dumps(config_data))
 
-        gs = run_init(str(config_path))
+        gs, _all_usage = run_init(str(config_path))
 
         stats = gs.stats()
         assert stats["decisions"] == 0
@@ -349,7 +349,7 @@ class TestRunInitEmptyConfig:
         config_path.write_text(json.dumps({
             "output": {"graph_path": str(tmp_path / ".mementic" / "graph.json")},
         }))
-        gs = run_init(str(config_path))
+        gs, _all_usage = run_init(str(config_path))
 
         stats = gs.stats()
         assert stats == {"decisions": 0, "constraints": 0, "entities": 0, "edges": 0}
@@ -372,7 +372,7 @@ class TestRunInitWithOpenCode:
             "mementic.pipeline.extract_from_freeform",
             return_value=(_mock_freeform_result(), UsageStats(model="test-model", status="success")),
         ):
-            gs = run_init(str(config_path))
+            gs, _all_usage = run_init(str(config_path))
 
         decisions = gs.get_all_decisions()
         assert len(decisions) == 1
@@ -408,7 +408,7 @@ class TestRunInitWithOpenCode:
         with patch(
             "mementic.pipeline.extract_from_freeform", return_value=(result, UsageStats(model="test-model", status="success"))
         ):
-            gs = run_init(str(config_path))
+            gs, _all_usage = run_init(str(config_path))
 
         stats = gs.stats()
         assert stats["edges"] >= 2
@@ -431,7 +431,7 @@ class TestRunInitWithClaude:
             "mementic.pipeline.extract_from_freeform",
             return_value=(_mock_claude_freeform_result(), UsageStats(model="test-model", status="success")),
         ):
-            gs = run_init(str(config_path))
+            gs, _all_usage = run_init(str(config_path))
 
         decisions = gs.get_all_decisions()
         assert len(decisions) == 1
@@ -472,7 +472,7 @@ class TestRunInitCombined:
             "mementic.pipeline.extract_from_adr_consequences",
             return_value=([], UsageStats(model="test-model", status="success")),
         ):
-            gs = run_init(str(config_path))
+            gs, _all_usage = run_init(str(config_path))
 
         decisions = gs.get_all_decisions()
         assert len(decisions) == 2
@@ -514,7 +514,7 @@ class TestRunInitCombined:
             "mementic.pipeline.extract_from_adr_consequences",
             return_value=([], UsageStats(model="test-model", status="success")),
         ):
-            gs = run_init(str(config_path))
+            gs, _all_usage = run_init(str(config_path))
 
         decisions = gs.get_all_decisions()
         assert len(decisions) == 3
@@ -543,7 +543,7 @@ class TestSaveAndLoad:
             "mementic.pipeline.extract_from_adr_consequences",
             return_value=([], UsageStats(model="test-model", status="success")),
         ):
-            gs1 = run_init(str(config_path))
+            gs1, _all_usage = run_init(str(config_path))
 
         assert graph_path.is_file()
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from typer.testing import CliRunner
@@ -87,7 +87,7 @@ class TestInitAutoBootstrap:
 
             config_path = tmp_path / ".mementic.json"
 
-            with patch("mementic.cli.run_init"):
+            with patch("mementic.cli.run_init", return_value=(MagicMock(), [])):
                 result = runner.invoke(
                     app, ["init", "--config-path", str(config_path)],
                 )
@@ -130,7 +130,7 @@ class TestInitAutoBootstrap:
             os.chdir(tmp_path)
             config_path = tmp_path / ".mementic.json"
 
-            with patch("mementic.cli.run_init"):
+            with patch("mementic.cli.run_init", return_value=(MagicMock(), [])):
                 result = runner.invoke(
                     app, ["init", "--config-path", str(config_path)],
                 )
@@ -155,7 +155,7 @@ class TestInitAutoBootstrap:
             }
             config_path.write_text(json.dumps(original))
 
-            with patch("mementic.cli.run_init"):
+            with patch("mementic.cli.run_init", return_value=(MagicMock(), [])):
                 result = runner.invoke(
                     app, ["init", "--config-path", str(config_path)],
                 )
@@ -184,7 +184,7 @@ class TestInitInteractive:
                 "llm": {"provider": "deepseek", "model": "deepseek-chat"},
             }))
 
-            with patch("mementic.cli.run_init"):
+            with patch("mementic.cli.run_init", return_value=(MagicMock(), [])):
                 result = runner.invoke(
                     app,
                     ["init", "--config-path", str(config_path), "--interactive"],
@@ -212,7 +212,7 @@ class TestInitInteractive:
                 "llm": {"provider": "deepseek", "model": "deepseek-chat"},
             }))
 
-            with patch("mementic.cli.run_init"):
+            with patch("mementic.cli.run_init", return_value=(MagicMock(), [])):
                 result = runner.invoke(
                     app,
                     ["init", "--config-path", str(config_path), "--interactive"],
@@ -349,7 +349,7 @@ class TestCaptureAutoAccept:
         session_file = tmp_path / "session.log"
         session_file.write_text("Agent session about adding auth.\n")
 
-        from mementic.models import Decision, DecisionStatus, ExtractionResult
+        from mementic.models import Decision, DecisionStatus, ExtractionResult, UsageStats
 
         mock_result = ExtractionResult(
             decisions=[
@@ -364,10 +364,13 @@ class TestCaptureAutoAccept:
             ],
             affected_entities=["src/auth.py"],
         )
+        mock_usage = UsageStats(model="test-model", status="success")
 
         with patch(
             "mementic.cli.extract_from_session",
-            return_value=mock_result,
+            return_value=(mock_result, mock_usage),
+        ), patch(
+            "mementic.cli._run_git_diff", return_value=("", 0),
         ):
             result = runner.invoke(
                 app, ["capture", "--session", str(session_file)],
@@ -406,7 +409,7 @@ class TestCaptureAutoAccept:
         session_file = tmp_path / "session.log"
         session_file.write_text("Session about JWT auth updates.\n")
 
-        from mementic.models import Decision, DecisionStatus, ExtractionResult
+        from mementic.models import Decision, DecisionStatus, ExtractionResult, UsageStats
 
         mock_result = ExtractionResult(
             decisions=[
@@ -421,10 +424,13 @@ class TestCaptureAutoAccept:
             ],
             affected_entities=[],
         )
+        mock_usage = UsageStats(model="test-model", status="success")
 
         with patch(
             "mementic.cli.extract_from_session",
-            return_value=mock_result,
+            return_value=(mock_result, mock_usage),
+        ), patch(
+            "mementic.cli._run_git_diff", return_value=("", 0),
         ):
             result = runner.invoke(
                 app, ["capture", "--session", str(session_file)],

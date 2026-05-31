@@ -160,12 +160,29 @@ def init(
         typer.echo(f"Updated {config_path}")
 
     try:
-        graph = run_init(config_path)
+        graph, all_usage = run_init(config_path)
     except RuntimeError as e:
         typer.echo(str(e), err=True)
         raise typer.Exit(code=1)
     stats = graph.stats()
     typer.echo(f"Mementic graph initialized: {stats}")
+
+    # Log extraction costs to metrics
+    if all_usage:
+        store = UsageStore()
+        for usage in all_usage:
+            if usage.total_tokens > 0 or usage.status != "success":
+                entry = MetricsEntry(
+                    timestamp=timestamp(),
+                    operation="init",
+                    source_label=usage.model,
+                    input_tokens=usage.input_tokens,
+                    output_tokens=usage.output_tokens,
+                    total_tokens=usage.total_tokens,
+                    model=usage.model,
+                    status=usage.status,
+                )
+                store.append(entry)
 
 
 @app.command()
@@ -370,7 +387,7 @@ def enforce(
         entry = MetricsEntry(
             timestamp=timestamp(),
             operation="enforce_benchmark",
-            source_label="",
+            source_label=task,
             input_tokens=0,
             output_tokens=0,
             total_tokens=0,

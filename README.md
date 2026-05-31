@@ -265,8 +265,8 @@ tasks to get a realistic picture.
 | **Savings** | Baseline minus context pack — tokens the agent *didn't* read |
 | **Breakeven** | How many tasks until cumulative savings exceed cumulative extraction cost |
 
-Data is stored as JSONL in `.mementic/metrics.jsonl` (created automatically,
-add to `.gitignore` if desired). No LLM cost for reading or summarizing
+Data is stored as JSONL in `.mementic/metrics.jsonl` (auto-created,
+automatically gitignored with the rest of `.mementic/`). No LLM cost for reading or summarizing
 metrics — it's just filesystem I/O.
 
 ### Quick token count
