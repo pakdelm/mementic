@@ -157,12 +157,23 @@ project's `AGENTS.md` or equivalent instruction file (Claude Code, Cursor, etc.)
 This project uses Mementic as its architectural memory layer. These rules apply
 to every task, every session.
 
+**Token discipline — primary vs. secondary sources:**
+1. **Primary (always):** the context pack from `mementic_get_context_pack`.
+   It is the compressed index — a fraction of the token cost of reading raw
+   ADRs. Read it first, every time.
+2. **Secondary (only when needed):** raw ADR and instruction files on disk.
+   Read them to resolve ambiguity, not to check for things the context pack
+   didn't mention.
+3. **Never:** read all ADRs and instruction files as a batch before every task.
+
 **Before ANY task:**
 1. Call `mementic_get_context_pack` with the task description and ALL files
-   you intend to touch.
+   you intend to touch — even new files, even speculative changes.
 2. Call `mementic_get_system_evolution` for each file being modified.
 3. Validate your plan against every returned constraint. Do NOT write code
    that violates an active constraint.
+4. Only read raw ADR or instruction files if the context pack leaves ambiguity
+   you must resolve to proceed safely.
 
 **After architecturally significant changes:**
 1. Call `mementic_propose_decision` with title, rationale, rejected
