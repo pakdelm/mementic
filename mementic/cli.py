@@ -331,14 +331,18 @@ def capture(
 
 
 @app.command()
-def enforce(
+def context(
     task: str,
     files: list[str],
     benchmark: bool = typer.Option(
         False, "--benchmark", help="Measure token savings vs. raw source docs"
     ),
 ) -> None:
-    """Load constraints and format a context pack for a given task."""
+    """Load constraints and produce a context pack for a given task.
+
+    Queries the knowledge graph for constraints and decisions relevant to
+    the specified files, then formats them as a context pack for agent injection.
+    """
     cfg = load_config()
 
     graph = _load_graph_safe(cfg.output.graph_path)
@@ -859,7 +863,7 @@ def metrics(
         else:
             typer.echo(
                 "  No benchmarks run yet. "
-                "Use `mementic enforce --benchmark` to measure savings."
+                "Use `mementic context --benchmark` to measure savings."
             )
 
     if reset:

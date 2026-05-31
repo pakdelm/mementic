@@ -80,10 +80,10 @@ mementic query --search "auth"
 mementic query --entity src/auth/handler.py
 ```
 
-### 3. Enforce constraints before tasks
+### 3. Load context before tasks
 
 ```bash
-mementic enforce --task "Add rate limiting to auth" --files src/auth/handler.py
+mementic context --task "Add rate limiting to auth" --files src/auth/handler.py
 ```
 
 Outputs a context pack with all relevant constraints and decisions.
@@ -142,7 +142,7 @@ The agent automatically discovers these MCP tools:
 - `get_system_evolution` — trace decision history of a code entity
 
 OpenCode custom commands are also available in the TUI:
-- `/mementic-enforce <task>` — load constraints before working
+- `/mementic-context <task>` — load constraints before working
 - `/mementic-capture` — record session decisions for review
 
 
@@ -191,7 +191,7 @@ conflicts, run `mementic review` to resolve them.
 |---|---|
 | `mementic init [--config PATH] [--interactive] [--force]` | Auto-bootstrap config and initialize graph |
 | `mementic capture [--session PATH] [--notes TEXT]` | Extract decisions from session (auto-accepts, flags conflicts) |
-| `mementic enforce --task TEXT --files FILE... [--benchmark]` | Generate context pack; `--benchmark` measures token savings vs. raw source docs |
+| `mementic context --task TEXT --files FILE... [--benchmark]` | Generate context pack; `--benchmark` measures token savings vs. raw source docs |
 | `mementic query [--entity PATH] [--search TERM] [--depth N]` | Search graph |
 | `mementic list [decisions\|constraints\|entities] [--status] [-n N]` | Browse graph in scannable format |
 | `mementic deprecate <id> [--reason TEXT]` | Retire a decision (don't edit history) |
@@ -234,11 +234,10 @@ start fresh.
 
 ### Benchmark context savings
 
-Run `enforce` with `--benchmark` to measure how many tokens the agent avoids
-reading thanks to the context pack:
+Run `context` with `--benchmark` to measure how many tokens the agent avoids
 
 ```bash
-mementic enforce --benchmark --task "Refactor auth module" --files src/auth/handler.py
+mementic context --benchmark --task "Refactor auth module" --files src/auth/handler.py
 ```
 
 Compares every raw source file the agent *would* have read against what the
