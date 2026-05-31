@@ -1,13 +1,12 @@
 """Graph linting — deterministic rules for graph health checks.
 
-Seven rules, zero API cost:
+Six rules, zero API cost:
 - orphaned-constraint: Constraint with no enforcing decision.
 - unlinked-decision: Decision with no affected entities.
 - stale-entity: Entity referencing a deleted file.
 - duplicate-slug: Two decisions with same ID.
 - status-inconsistency: Deprecated decision with active constraints.
 - orphaned-entity: Entity with no incoming edges.
-- untagged-decision: Decision with no tags.
 """
 
 from __future__ import annotations
@@ -33,6 +32,19 @@ class LintFinding:
     node_id: str = ""
     related_id: str = ""
 
+    @property
+    def fixable(self) -> bool:
+        """Whether this finding can be auto-resolved by --fix."""
+        return self.rule in _FIXABLE_RULES
+
+
+_FIXABLE_RULES: set[str] = {
+    "stale-entity",
+    "status-inconsistency",
+    "orphaned-entity",
+    "orphaned-constraint",
+}
+
 
 @dataclass
 class LintResult:
@@ -51,6 +63,14 @@ class LintResult:
     @property
     def info_count(self) -> int:
         return sum(1 for f in self.findings if f.severity == "info")
+
+    @property
+    def fixable_count(self) -> int:
+        return sum(1 for f in self.findings if f.fixable)
+
+    @property
+    def needs_review_count(self) -> int:
+        return sum(1 for f in self.findings if not f.fixable)
 
 
 def _get_decision_node_ids(graph: GraphStore) -> set[str]:
@@ -189,24 +209,10 @@ def lint(graph: GraphStore) -> LintResult:
                 node_id=eid,
             ))
 
-    # ── Rule: untagged-decision (info) ──
-    # Decision with no tags
-    for nid, ntype, payload in graph.iter_nodes():
-        if ntype != "Decision":
-            continue
-        tags = payload.get("tags", [])
-        if not tags:
-            findings.append(LintFinding(
-                rule="untagged-decision",
-                severity="info",
-                message=f"Decision '{nid}' has no tags",
-                node_id=nid,
-            ))
-
     return LintResult(findings=findings)
 
 
-def lint_fix(graph: GraphStore, result: LintResult) -> int:
+def lint_fix(graph: GraphStore, result: LintResult) -> dict[str, int]:
     """Auto-fix resolvable lint issues in-place.
 
     Args:
@@ -214,29 +220,37 @@ def lint_fix(graph: GraphStore, result: LintResult) -> int:
         result: Lint findings from a prior lint() call.
 
     Returns:
-        Number of findings resolved.
+        Dict with action counts: 'removed', 'deprecated', 'cleared', 'total'.
     """
-    resolved = 0
+    counts: dict[str, int] = {"removed": 0, "deprecated": 0, "cleared": 0}
 
     for finding in result.findings:
+        if not finding.fixable:
+            continue
+
         if finding.rule == "stale-entity":
-            # Remove stale entity nodes (NetworkX removal)
             if finding.node_id in graph._g:
                 graph._g.remove_node(finding.node_id)
-                resolved += 1
+                counts["removed"] += 1
+
+        elif finding.rule == "orphaned-entity":
+            if finding.node_id in graph._g:
+                graph._g.remove_node(finding.node_id)
+                counts["removed"] += 1
 
         elif finding.rule == "status-inconsistency":
-            # Cascade: if decision is deprecated, deprecate its active constraints too
             succ_payload = graph.get_node_payload(finding.related_id)
             if succ_payload.get("status") == "active":
                 succ_payload["status"] = "deprecated"
                 graph.set_node_payload(finding.related_id, succ_payload)
-                resolved += 1
+                counts["deprecated"] += 1
 
-        elif finding.rule == "orphaned-entity":
-            # Remove orphaned entity nodes
-            if finding.node_id in graph._g:
-                graph._g.remove_node(finding.node_id)
-                resolved += 1
+        elif finding.rule == "orphaned-constraint":
+            payload = graph.get_node_payload(finding.node_id)
+            if payload.get("enforced_by"):
+                payload["enforced_by"] = ""
+                graph.set_node_payload(finding.node_id, payload)
+                counts["cleared"] += 1
 
-    return resolved
+    counts["total"] = counts["removed"] + counts["deprecated"] + counts["cleared"]
+    return counts

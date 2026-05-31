@@ -13,11 +13,13 @@ every task wastes tokens. Instead, the graph returns only the constraints and
 decisions relevant to the files you are about to touch.
 
 **Before ANY task** (planning, implementation, refactoring, or review):
-1. Call `mementic_get_context_pack` with the task description and ALL files
+1. Run `mementic lint --fix` in the terminal to clean up stale entities,
+   orphaned nodes, and broken references before querying the graph.
+2. Call `mementic_get_context_pack` with the task description and ALL files
    you intend to touch — even new files, even speculative changes.
-2. Call `mementic_get_system_evolution` for each file being modified to
+3. Call `mementic_get_system_evolution` for each file being modified to
    understand what decisions shaped it.
-3. Validate your plan against every returned constraint. If a constraint
+4. Validate your plan against every returned constraint. If a constraint
    seems inapplicable, explain why before proceeding. Do NOT write code
    that violates an active constraint.
 

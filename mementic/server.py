@@ -81,7 +81,7 @@ async def propose_decision(
         graph, cfg = _load_graph()
 
         decision = Decision(
-            id=slugify(title),
+            id=slugify(title, max_length=80),
             title=title,
             rationale=rationale,
             rejected_alternatives=rejected_alternatives or [],
@@ -109,6 +109,7 @@ async def propose_constraint(
     description: str,
     bound_entities: list[str],
     decision_id: str | None = None,
+    id: str | None = None,
 ) -> str:
     """Propose a new constraint for human review.
 
@@ -116,6 +117,8 @@ async def propose_constraint(
         description: Description of the constraint.
         bound_entities: Code entity paths this constraint applies to.
         decision_id: Optional decision that enforces this constraint.
+        id: Optional explicit ID for the constraint. If not provided,
+            generated from the description (capped at 80 chars).
 
     Returns:
         Confirmation message with save status.
@@ -123,8 +126,10 @@ async def propose_constraint(
     with _graph_lock:
         graph, cfg = _load_graph()
 
+        constraint_id = id or slugify(description, max_length=80)
+
         constraint = Constraint(
-            id=slugify(description),
+            id=constraint_id,
             description=description,
             bound_entities=bound_entities,
             enforced_by=decision_id or "",

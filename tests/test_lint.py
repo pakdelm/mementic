@@ -53,14 +53,16 @@ class TestLintResult:
 
     def test_counts_mixed(self) -> None:
         result = LintResult(findings=[
-            LintFinding(rule="r1", severity="error", message="e1"),
-            LintFinding(rule="r2", severity="error", message="e2"),
-            LintFinding(rule="r3", severity="warning", message="w1"),
-            LintFinding(rule="r4", severity="info", message="i1"),
+            LintFinding(rule="duplicate-slug", severity="error", message="e1"),
+            LintFinding(rule="orphaned-constraint", severity="warning", message="w1"),
+            LintFinding(rule="stale-entity", severity="info", message="i1"),
         ])
-        assert result.error_count == 2
+        assert result.error_count == 1
         assert result.warning_count == 1
         assert result.info_count == 1
+        # orphaned-constraint and stale-entity are fixable; duplicate-slug is not
+        assert result.fixable_count == 2
+        assert result.needs_review_count == 1
 
 
 class TestLintCleanGraph:
@@ -252,27 +254,6 @@ class TestLintOrphanedEntity:
         assert len(findings) == 0
 
 
-class TestLintUntaggedDecision:
-    def test_decision_with_no_tags(self) -> None:
-        graph = GraphStore()
-        d = make_decision(tags=[])
-        graph.add_decision(d)
-
-        result = lint(graph)
-        findings = [f for f in result.findings if f.rule == "untagged-decision"]
-        assert len(findings) == 1
-        assert findings[0].node_id == "d-001"
-
-    def test_decision_with_tags(self) -> None:
-        graph = GraphStore()
-        d = make_decision(tags=["performance", "architecture"])
-        graph.add_decision(d)
-
-        result = lint(graph)
-        findings = [f for f in result.findings if f.rule == "untagged-decision"]
-        assert len(findings) == 0
-
-
 class TestLintFix:
     def test_fix_stale_entity_removes_node(self) -> None:
         graph = GraphStore()
@@ -283,8 +264,8 @@ class TestLintFix:
         # The stale entity is also orphaned (no incoming edges), so we get two findings
         assert len(result.findings) >= 1
 
-        resolved = lint_fix(graph, result)
-        assert resolved >= 1
+        counts = lint_fix(graph, result)
+        assert counts["total"] >= 1
         assert not graph.has_node("/does/not/exist.py")
 
     def test_fix_status_inconsistency_cascades_deprecation(self) -> None:
@@ -298,8 +279,9 @@ class TestLintFix:
         inconsistencies = [f for f in result.findings if f.rule == "status-inconsistency"]
         assert len(inconsistencies) == 1
 
-        resolved = lint_fix(graph, result)
-        assert resolved >= 1
+        counts = lint_fix(graph, result)
+        assert counts["total"] >= 1
+        assert counts["deprecated"] == 1
 
         # Constraint should now be deprecated
         payload = graph.get_node_payload("c-active")
@@ -311,8 +293,8 @@ class TestLintFix:
         graph.add_code_entity(e)
 
         result = lint(graph)
-        resolved = lint_fix(graph, result)
-        assert resolved >= 1
+        counts = lint_fix(graph, result)
+        assert counts["total"] >= 1
         assert not graph.has_node("src/orphan.py")
 
     def test_fix_combined_resolves_multiple(self) -> None:
@@ -327,5 +309,25 @@ class TestLintFix:
         orphan_count = len([f for f in result.findings if f.rule == "orphaned-entity"])
         assert stale_count + orphan_count >= 2
 
-        resolved = lint_fix(graph, result)
-        assert resolved >= 2
+        counts = lint_fix(graph, result)
+        assert counts["total"] >= 2
+
+    def test_fix_orphaned_constraint_clears_enforced_by(self) -> None:
+        graph = GraphStore()
+        c = make_constraint(
+            id="c-orphan",
+            enforced_by="missing-decision",
+        )
+        graph.add_constraint(c)
+
+        result = lint(graph)
+        orphaned = [f for f in result.findings if f.rule == "orphaned-constraint"]
+        assert len(orphaned) == 1
+
+        counts = lint_fix(graph, result)
+        assert counts["total"] == 1
+        assert counts["cleared"] == 1
+
+        # enforced_by should now be cleared
+        payload = graph.get_node_payload("c-orphan")
+        assert payload["enforced_by"] == ""

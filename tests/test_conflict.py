@@ -173,13 +173,13 @@ class TestDetectConflicts:
         assert len(conflicts) == 0
 
     def test_only_accepted_decisions_checked(self) -> None:
-        """Proposed or superseded existing decisions are not checked."""
+        """Deprecated existing decisions are not checked for conflicts."""
         graph = GraphStore()
         existing = make_decision(
             id="old-idea",
             title="Old Idea",
             rationale="Some old rationale",
-            status=DecisionStatus.SUPERSEDED,
+            status=DecisionStatus.DEPRECATED,
         )
         graph.add_decision(existing)
 

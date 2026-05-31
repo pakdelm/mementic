@@ -55,7 +55,7 @@ def detect_conflicts(
     accepted = [d for d in existing if d.status == "accepted"]
 
     for p in proposed:
-        p_slug = slugify(p.title)
+        p_slug = slugify(p.title, max_length=80)
 
         for existing_d in accepted:
             # Rule 1: Slug collision

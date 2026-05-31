@@ -241,7 +241,7 @@ def capture(
     flagged = 0
 
     for d in extraction.decisions:
-        if slugify(d.title) in conflicting_existing_slugs:
+        if slugify(d.title, max_length=80) in conflicting_existing_slugs:
             d.status = DecisionStatus.PROPOSED
             flagged += 1
         else:
@@ -280,7 +280,7 @@ def capture(
     if flagged:
         typer.echo(f"  Flagged for review: {flagged}")
         for d in extraction.decisions:
-            if slugify(d.title) in conflicting_existing_slugs:
+            if slugify(d.title, max_length=80) in conflicting_existing_slugs:
                 typer.echo(f"    - [{d.id}] {d.title}")
         typer.echo()
         typer.echo("  Run 'mementic review' to resolve flagged conflicts.")
@@ -508,7 +508,7 @@ def review() -> None:
             d.status = DecisionStatus.ACCEPTED
             graph.add_decision(d)
         else:
-            d.status = DecisionStatus.SUPERSEDED
+            d.status = DecisionStatus.DEPRECATED
             graph.add_decision(d)
 
     for c in pending_c:
@@ -518,7 +518,7 @@ def review() -> None:
             c.status = "active"
             graph.add_constraint(c)
         else:
-            c.status = "superseded"
+            c.status = "deprecated"
             graph.add_constraint(c)
 
     graph.save(cfg.output.graph_path)
@@ -535,6 +535,17 @@ def _get_entities_for_decision(graph: GraphStore, decision_id: str) -> list[str]
             if pred == decision_id:
                 entities.append(_nid)
     return entities
+
+
+def _status_icon(status: str) -> str:
+    """Return a compact status marker for list output."""
+    icons = {
+        "accepted": "+",
+        "proposed": "?",
+        "deprecated": "-",
+        "active": "+",
+    }
+    return icons.get(status, " ")
 
 
 @app.command(name="list")
@@ -596,12 +607,18 @@ def list_cmd(
             typer.echo("No decisions found.")
             raise typer.Exit()
 
-        # Table header
-        typer.echo(f"{'ID':<26} {'Status':<12} {'Date':<12} Title")
-        typer.echo("-" * 80)
+        max_id = max((len(d.id) for d in decisions), default=0)
+        max_id = max(max_id, 4)
+        pad = max_id + 2  # space after longest ID
+
+        typer.echo(f"Decisions ({len(decisions)}):")
         for d in decisions:
             date = d.timestamp[:10] if d.timestamp else ""
-            typer.echo(f"{d.id:<26} {d.status:<12} {date:<12} {d.title}")
+            icon = _status_icon(d.status)
+            typer.echo(
+                f"  {icon}  {d.id:<{pad}}  {date}"
+            )
+            typer.echo(f"     {d.title}")
 
     elif entity_type == "constraints":
         constraints = graph.get_all_constraints()
@@ -614,11 +631,18 @@ def list_cmd(
             typer.echo("No constraints found.")
             raise typer.Exit()
 
-        typer.echo(f"{'ID':<26} {'Status':<12} {'Enforced by':<14} Description")
-        typer.echo("-" * 80)
+        max_id = max((len(c.id) for c in constraints), default=0)
+        max_id = max(max_id, 4)
+        pad = max_id + 2
+
+        typer.echo(f"Constraints ({len(constraints)}):")
         for c in constraints:
-            enforced = c.enforced_by if c.enforced_by else "-"
-            typer.echo(f"{c.id:<26} {c.status:<12} {enforced:<14} {c.description}")
+            enforced = f"via {c.enforced_by}" if c.enforced_by else ""
+            icon = _status_icon(c.status)
+            typer.echo(
+                f"  {icon}  {c.id:<{pad}}  {enforced}"
+            )
+            typer.echo(f"     {c.description}")
 
     elif entity_type == "entities":
         entities: list[tuple[str, dict]] = []
@@ -641,12 +665,15 @@ def list_cmd(
             typer.echo("No entities found.")
             raise typer.Exit()
 
-        typer.echo(f"{'ID':<40} {'Type':<10} Repo")
-        typer.echo("-" * 60)
+        max_id = max((len(eid) for eid, _ in entities), default=0)
+        max_id = max(max_id, 4)
+        pad = max_id + 2
+
+        typer.echo(f"Entities ({len(entities)}):")
         for eid, p in entities:
             etype = p.get("type", "file")
             repo = p.get("repo", "-")
-            typer.echo(f"{eid:<40} {etype:<10} {repo}")
+            typer.echo(f"  {eid:<{pad}}  {etype:<10}  {repo}")
 
 
 @app.command()
@@ -713,13 +740,14 @@ def deprecate(
 def lint_cmd(
     fix: bool = typer.Option(
         False, "--fix",
-        help="Auto-resolve fixable issues (stale entities, constraint cascading)",
+        help="Auto-resolve all fixable issues and save the graph",
     ),
 ) -> None:
     """Run rules-based graph health checks.
 
     Checks 7 deterministic rules for graph integrity. No LLM cost.
-    Use --fix to auto-resolve stale entities and cascade deprecated constraints.
+    `mementic lint` shows issues grouped by actionability.
+    `mementic lint --fix` auto-resolves everything that can be fixed safely.
     """
     from mementic.lint import lint, lint_fix
 
@@ -733,17 +761,47 @@ def lint_cmd(
         typer.echo("Graph is clean — no issues found.")
         return
 
-    typer.echo(f"Lint results: {result.error_count} errors, "
-               f"{result.warning_count} warnings, "
-               f"{result.info_count} info")
+    fixable = [f for f in result.findings if f.fixable]
+    needs_review = [f for f in result.findings if not f.fixable]
+
+    total = len(result.findings)
+    typer.echo(f"{total} issue(s): {len(fixable)} auto-fixable, "
+               f"{len(needs_review)} need review.")
     typer.echo()
 
-    for finding in result.findings:
-        icon = {"error": "✗", "warning": "⚠", "info": "ℹ"}.get(finding.severity, "?")
-        typer.echo(f"  {icon} [{finding.rule}] {finding.message}")
-
-    if fix and result.findings:
-        typer.echo()
-        resolved = lint_fix(graph, result)
+    if fix:
+        counts = lint_fix(graph, result)
         graph.save(cfg.output.graph_path)
-        typer.echo(f"Fixed {resolved} issue(s). Graph saved.")
+
+        typer.echo(f"Fixed {counts['total']} issue(s). Graph saved.")
+        if counts["removed"]:
+            typer.echo(f"  {counts['removed']} entity node(s) removed "
+                       f"(stale or orphaned)")
+        if counts["deprecated"]:
+            typer.echo(f"  {counts['deprecated']} constraint(s) deprecated "
+                       f"(cascaded from deprecated decision)")
+        if counts["cleared"]:
+            typer.echo(f"  {counts['cleared']} broken enforced_by reference(s) cleared")
+
+        remaining = [f for f in result.findings if not f.fixable]
+        if remaining:
+            typer.echo()
+            typer.echo(f"{len(remaining)} remaining (need manual review):")
+            _print_findings(remaining)
+    else:
+        if fixable:
+            typer.echo("Auto-fixable (run `mementic lint --fix`):")
+            _print_findings(fixable)
+        if needs_review:
+            if fixable:
+                typer.echo()
+            typer.echo("Needs review:")
+            _print_findings(needs_review)
+
+
+def _print_findings(findings: list) -> None:
+    """Print a compact list of lint findings."""
+    markers = {"error": "ERR", "warning": "WARN", "info": "INFO"}
+    for f in findings:
+        marker = markers.get(f.severity, "?")
+        typer.echo(f"  [{marker}] {f.rule:<24} {f.message}")
