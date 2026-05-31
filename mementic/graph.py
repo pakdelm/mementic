@@ -20,13 +20,43 @@ class GraphStore:
         self._g: nx.DiGraph = nx.DiGraph()
 
     def add_decision(self, d: Decision) -> None:
-        self._g.add_node(d.id, node_type="Decision", payload=d.model_dump())
+        if d.id in self._g:
+            existing_type = self._g.nodes[d.id].get("node_type")
+            if existing_type and existing_type != "Decision":
+                raise ValueError(
+                    f"Node {d.id} already exists as {existing_type}, "
+                    f"refusing to overwrite as Decision"
+                )
+            self._g.nodes[d.id]["node_type"] = "Decision"
+            self._g.nodes[d.id]["payload"] = d.model_dump()
+        else:
+            self._g.add_node(d.id, node_type="Decision", payload=d.model_dump())
 
     def add_constraint(self, c: Constraint) -> None:
-        self._g.add_node(c.id, node_type="Constraint", payload=c.model_dump())
+        if c.id in self._g:
+            existing_type = self._g.nodes[c.id].get("node_type")
+            if existing_type and existing_type != "Constraint":
+                raise ValueError(
+                    f"Node {c.id} already exists as {existing_type}, "
+                    f"refusing to overwrite as Constraint"
+                )
+            self._g.nodes[c.id]["node_type"] = "Constraint"
+            self._g.nodes[c.id]["payload"] = c.model_dump()
+        else:
+            self._g.add_node(c.id, node_type="Constraint", payload=c.model_dump())
 
     def add_code_entity(self, e: CodeEntity) -> None:
-        self._g.add_node(e.id, node_type="CodeEntity", payload=e.model_dump())
+        if e.id in self._g:
+            existing_type = self._g.nodes[e.id].get("node_type")
+            if existing_type and existing_type != "CodeEntity":
+                raise ValueError(
+                    f"Node {e.id} already exists as {existing_type}, "
+                    f"refusing to overwrite as CodeEntity"
+                )
+            self._g.nodes[e.id]["node_type"] = "CodeEntity"
+            self._g.nodes[e.id]["payload"] = e.model_dump()
+        else:
+            self._g.add_node(e.id, node_type="CodeEntity", payload=e.model_dump())
 
     def link(self, source_id: str, target_id: str, relation: str) -> None:
         self._g.add_edge(source_id, target_id, relation=relation)
