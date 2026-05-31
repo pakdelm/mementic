@@ -26,7 +26,7 @@ def generate_html_graph(
     Returns:
         A complete HTML document string ready to write to a .html file.
     """
-    from pyvis.network import Network
+    from pyvis.network import Network  # type: ignore[import-untyped]
 
     net = Network(
         height="100%",
