@@ -56,11 +56,3 @@ detector flags them. If capture reports flagged items, run
 **If you skip these steps, you are violating project constraints.**
 A graph with no new decisions after a sprint of development is evidence
 of a broken enforcement loop. Fix the instructions, not the agent.
-
-## Spec Writing
-
-When writing specs (`.opencode/specs/`), do **not** include full code listings
-or verbose Pydantic model definitions inline. Describe data models by their
-fields and purpose — not by copy-pasting source code. Specs document *what*
-to build and *why*, not *how* it's typed. Reserve code for illustrative CLI
-output examples and minimal pseudocode where structure is the point.
