@@ -13,6 +13,7 @@ build/
 # Mementic runtime
 .mementic/
 __pycache__/
+audit.jsonl
 
 # IDE
 .vscode/
