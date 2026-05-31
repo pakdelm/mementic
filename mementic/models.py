@@ -12,6 +12,8 @@ class DecisionStatus(str, Enum):
     PROPOSED = "proposed"
     ACCEPTED = "accepted"
     SUPERSEDED = "superseded"
+    DEPRECATED = "deprecated"
+    REJECTED = "rejected"
 
 
 class EntityType(str, Enum):

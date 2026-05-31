@@ -159,7 +159,7 @@ def _mock_adr_deprecated_result() -> ExtractionResult:
                 title="Old REST API approach",
                 rationale="We initially used raw REST endpoints. Switch to GraphQL for the API layer in src/api/graphql.py.",
                 source="adr:0003-deprecated.md",
-                status=DecisionStatus.SUPERSEDED,
+                status=DecisionStatus.DEPRECATED,
                 timestamp="2024-01-01T00:00:00Z",
             )
         ],
@@ -247,7 +247,7 @@ class TestRunInitWithAdr:
         assert len(decisions) == 2
         statuses = {d.title: d.status for d in decisions}
         assert statuses["Introduce Redis caching"] == DecisionStatus.PROPOSED
-        assert statuses["Old REST API approach"] == DecisionStatus.SUPERSEDED
+        assert statuses["Old REST API approach"] == DecisionStatus.DEPRECATED
 
     def test_creates_code_entities_from_file_paths(self, tmp_path: Path) -> None:
         adr_dir = tmp_path / "adrs"

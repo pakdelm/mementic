@@ -142,6 +142,31 @@ class TestSlugify:
     def test_only_special_chars(self) -> None:
         assert slugify("!@#$%") == ""
 
+    def test_max_length_truncates_at_word_boundary(self) -> None:
+        result = slugify(
+            "capture command must run conflict detection before saving",
+            max_length=30,
+        )
+        # Should truncate at last hyphen within 30 chars
+        assert len(result) <= 30
+        assert result == "capture-command-must-run"
+
+    def test_max_length_no_truncation_when_short(self) -> None:
+        result = slugify("short-title", max_length=80)
+        assert result == "short-title"
+
+    def test_max_length_single_word_exceeds_limit(self) -> None:
+        # Single long word with no hyphens — rsplit("-", 1)[0] returns the whole thing
+        # truncated at max_length, minus trailing hyphens
+        result = slugify("supercalifragilisticexpialidocious", max_length=10)
+        assert len(result) <= 10
+        assert result == "supercalif"
+
+    def test_max_length_none_no_truncation(self) -> None:
+        long_text = "a" * 200
+        result = slugify(long_text)
+        assert len(result) == 200
+
 
 class TestTimestamp:
     ISO_8601_RE = re.compile(

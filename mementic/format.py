@@ -6,12 +6,21 @@ from datetime import datetime, timezone
 from mementic.models import Constraint, Decision
 
 
-def slugify(text: str) -> str:
-    """Convert text to URL-friendly ID. Lowercase, hyphens, strip special chars."""
+def slugify(text: str, max_length: int | None = None) -> str:
+    """Convert text to URL-friendly ID. Lowercase, hyphens, strip special chars.
+
+    Args:
+        text: The text to slugify.
+        max_length: If set, truncate the slug to this length at a word boundary.
+    """
     text = text.lower().strip()
     text = re.sub(r"[^\w\s-]", "", text)
     text = re.sub(r"[\s_]+", "-", text)
-    return text.strip("-")
+    text = text.strip("-")
+    if max_length is not None and len(text) > max_length:
+        # Truncate at word boundary (last hyphen within the limit)
+        text = text[:max_length].rsplit("-", 1)[0].strip("-")
+    return text
 
 
 def timestamp() -> str:

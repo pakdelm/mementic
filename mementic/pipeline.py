@@ -31,7 +31,7 @@ def _status_from_adr(status: str) -> DecisionStatus:
     if s == "proposed":
         return DecisionStatus.PROPOSED
     if s in ("deprecated", "superseded"):
-        return DecisionStatus.SUPERSEDED
+        return DecisionStatus.DEPRECATED
     return DecisionStatus.ACCEPTED
 
 

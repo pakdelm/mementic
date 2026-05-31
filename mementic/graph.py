@@ -240,6 +240,12 @@ class GraphStore:
         except StopIteration:
             return False
 
+    def get_predecessors(self, node_id: str) -> list[str]:
+        """Return all predecessor node IDs for the given node."""
+        if node_id not in self._g:
+            return []
+        return list(self._g.predecessors(node_id))
+
     def stats(self) -> dict[str, int]:
         decisions = 0
         constraints = 0

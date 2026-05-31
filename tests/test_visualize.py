@@ -165,21 +165,21 @@ class TestGenerateHtmlGraph:
         # Decision title text should not appear (filtered out)
         assert "Use async everywhere" not in html
 
-    def test_superseded_nodes_get_muted_color(self) -> None:
-        """Superseded nodes render with grey color."""
+    def test_deprecated_nodes_get_muted_color(self) -> None:
+        """Deprecated nodes should get a muted gray color."""
         gs = GraphStore()
         d = Decision(
-            id="old-decision",
-            title="Deprecated choice",
-            rationale="Was good at the time",
-            source="ADR-OLD",
-            status=DecisionStatus.SUPERSEDED,
+            id="d-deprecated",
+            title="Old Decision",
+            rationale="No longer used",
+            source="test",
+            status=DecisionStatus.DEPRECATED,
             timestamp="2020-01-01T00:00:00Z",
         )
         gs.add_decision(d)
         html = generate_html_graph(gs)
 
-        assert "old-decision" in html
+        assert "d-deprecated" in html
 
     def test_empty_graph_produces_valid_html(self) -> None:
         """An empty graph still produces valid HTML output."""
