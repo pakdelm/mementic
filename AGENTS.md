@@ -32,8 +32,9 @@ decisions relevant to the files you are about to touch.
 
 **After completing a task:**
 Run `mementic capture` in the terminal to extract decisions from the
-session log + git diff. Then `mementic review` to inspect any
-conflict-flagged items.
+session log + git diff. Decisions are auto-accepted unless the conflict
+detector flags them. If capture reports flagged items, run
+`mementic review` to resolve them.
 
 **If you skip these steps, you are violating project constraints.**
 A graph with no new decisions after a sprint of development is evidence

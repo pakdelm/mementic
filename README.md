@@ -99,10 +99,11 @@ mementic capture --session /path/to/session.log --notes "Migrated Redis to Valke
 ```
 
 Extracts architectural decisions from the agent session log + git diff.
-All decisions and constraints are auto-accepted and written to the graph.
-Use `mementic review` to inspect or deprecate entries. Tracks the last
-captured commit so subsequent captures only diff new changes. Runs without
-git (warns and uses notes only).
+Decisions are auto-accepted unless the conflict detector flags them
+(slug collision or overlapping entities with divergent rationale).
+Flagged items are set to `proposed` — run `mementic review` to resolve them.
+Tracks the last captured commit so subsequent captures only diff new changes.
+Runs without git (warns and uses notes only).
 
 ### 5. Review and accept proposals
 
@@ -169,7 +170,8 @@ to every task, every session.
 2. Call `mementic_propose_constraint` for any new rules.
 
 **After the task:**
-Run `mementic capture` then `mementic review` in the terminal.
+Run `mementic capture` in the terminal. If capture reports flagged
+conflicts, run `mementic review` to resolve them.
 ```
 
 ## CLI reference
@@ -177,11 +179,15 @@ Run `mementic capture` then `mementic review` in the terminal.
 | Command | Description |
 |---|---|
 | `mementic init [--config PATH] [--interactive] [--force]` | Auto-bootstrap config and initialize graph |
-| `mementic capture [--session PATH] [--notes TEXT]` | Extract decisions from session |
+| `mementic capture [--session PATH] [--notes TEXT]` | Extract decisions from session (auto-accepts, flags conflicts) |
 | `mementic enforce --task TEXT --files FILE...` | Generate context pack for task |
 | `mementic query [--entity PATH] [--search TERM] [--depth N]` | Search graph |
+| `mementic list [decisions\|constraints\|entities] [--status] [-n N]` | Browse graph in scannable format |
+| `mementic deprecate <id> [--reason TEXT]` | Retire a decision (don't edit history) |
+| `mementic lint [--fix]` | Check graph health (5 deterministic rules, zero LLM cost) |
+| `mementic review` | Resolve conflict-flagged proposals |
+| `mementic graph [-o PATH] [-O] [--filter TYPE]` | Generate interactive HTML visualization |
 | `mementic status` | Show graph statistics |
-| `mementic review` | Review pending proposals |
 | `mementic log` | Show recent graph mutations |
 | `mementic server` | Start MCP server (stdio) |
 
@@ -189,7 +195,7 @@ Run `mementic capture` then `mementic review` in the terminal.
 
 ```bash
 uv sync                           # install dependencies
-uv run pytest                     # run tests (165 tests)
+uv run pytest                     # run tests
 uv run ruff check .               # lint
 uv run mypy .                     # type check
 ```
