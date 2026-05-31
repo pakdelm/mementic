@@ -226,6 +226,13 @@ class GraphStore:
             for nid, attrs in self._g.nodes(data=True)
         ]
 
+    def iter_edges(self) -> list[tuple[str, str, str]]:
+        """Return list of (source_id, target_id, relation) for all edges."""
+        return [
+            (u, v, attrs.get("relation", ""))
+            for u, v, attrs in self._g.edges(data=True)
+        ]
+
     def has_outgoing_edges(self, node_id: str) -> bool:
         try:
             next(self._g.successors(node_id))

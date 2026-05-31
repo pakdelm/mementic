@@ -377,6 +377,57 @@ def status() -> None:
 
 
 @app.command()
+def graph(
+    output: str = typer.Option(
+        ".mementic/mementic_graph.html", "--output", "-o",
+        help="Output HTML file path",
+    ),
+    open_browser: bool = typer.Option(
+        False, "--open", "-O",
+        help="Open the generated file in the default browser",
+    ),
+    filter_type: str | None = typer.Option(
+        None, "--filter", "-f",
+        help="Filter nodes by type: decision, constraint, entity",
+    ),
+) -> None:
+    """Generate an interactive HTML visualization of the knowledge graph.
+
+    Produces a self-contained HTML file with a force-directed graph.
+    No server or external dependencies required for viewing.
+    """
+    import webbrowser
+
+    from mementic.visualize import generate_html_graph
+
+    cfg = load_config()
+    g = _load_graph_safe(cfg.output.graph_path)
+
+    valid_filters = {"decision", "constraint", "entity"}
+    ft = filter_type.lower() if filter_type else None
+    if ft and ft not in valid_filters:
+        typer.echo(
+            f"Invalid filter '{filter_type}'. "
+            f"Valid options: {', '.join(sorted(valid_filters))}",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+    typer.echo(f"Generating graph visualization ({g.stats()['decisions']} decisions, "
+               f"{g.stats()['constraints']} constraints, "
+               f"{g.stats()['edges']} edges)...")
+
+    html = generate_html_graph(g, filter_type=ft)
+
+    Path(output).parent.mkdir(parents=True, exist_ok=True)
+    Path(output).write_text(html, encoding="utf-8")
+    typer.echo(f"Written to {output} ({len(html):,} bytes)")
+
+    if open_browser:
+        webbrowser.open(Path(output).resolve().as_uri())
+
+
+@app.command()
 def review() -> None:
     """Review pending proposed decisions."""
     cfg = load_config()
