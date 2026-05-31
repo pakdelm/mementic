@@ -72,7 +72,7 @@ class TestDetectConflicts:
             )
         ]
 
-        conflicts = detect_conflicts(graph, proposed, [])
+        conflicts = detect_conflicts(graph, proposed, None)
         assert len(conflicts) == 1
         assert conflicts[0].id == "use-jwt-auth"
 
@@ -95,7 +95,7 @@ class TestDetectConflicts:
             )
         ]
 
-        conflicts = detect_conflicts(graph, proposed, [])
+        conflicts = detect_conflicts(graph, proposed, None)
         assert len(conflicts) == 0
 
     def test_entity_overlap_with_divergent_rationale(self) -> None:
@@ -192,7 +192,7 @@ class TestDetectConflicts:
             )
         ]
 
-        conflicts = detect_conflicts(graph, proposed, [])
+        conflicts = detect_conflicts(graph, proposed, None)
         assert len(conflicts) == 0
 
     def test_empty_graph_no_conflicts(self) -> None:
@@ -205,7 +205,7 @@ class TestDetectConflicts:
                 status=DecisionStatus.PROPOSED,
             )
         ]
-        conflicts = detect_conflicts(graph, proposed, [])
+        conflicts = detect_conflicts(graph, proposed, None)
         assert len(conflicts) == 0
 
     def test_multiple_proposed_with_mixed_conflicts(self) -> None:
@@ -233,6 +233,6 @@ class TestDetectConflicts:
             ),
         ]
 
-        conflicts = detect_conflicts(graph, proposed, [])
+        conflicts = detect_conflicts(graph, proposed, None)
         assert len(conflicts) == 1
         assert conflicts[0].id == "use-jwt"
