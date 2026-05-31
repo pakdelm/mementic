@@ -288,3 +288,108 @@ class TestAuditLog:
             assert entry["constraints"] == 2
             assert entry["entities"] == 4
             assert entry["edges"] == 6
+
+
+class TestIdempotentAdd:
+    def test_add_decision_twice_updates_payload(self) -> None:
+        gs = GraphStore()
+        d1 = Decision(
+            id="d-update", title="Original", rationale="First",
+            source="test", status=DecisionStatus.PROPOSED,
+            timestamp="2024-01-01T00:00:00Z",
+        )
+        d2 = Decision(
+            id="d-update", title="Updated", rationale="Second",
+            source="test", status=DecisionStatus.ACCEPTED,
+            timestamp="2024-01-02T00:00:00Z",
+        )
+        gs.add_decision(d1)
+        gs.add_decision(d2)
+        payload = gs.get_node_payload("d-update")
+        assert payload["title"] == "Updated"
+        assert payload["rationale"] == "Second"
+        assert payload["status"] == "accepted"
+
+    def test_add_decision_keeps_node_type_on_merge(self) -> None:
+        gs = GraphStore()
+        d1 = Decision(
+            id="d-type", title="Test", rationale="...",
+            source="test", status=DecisionStatus.PROPOSED,
+            timestamp="2024-01-01T00:00:00Z",
+        )
+        d2 = Decision(
+            id="d-type", title="Updated", rationale="...",
+            source="test", status=DecisionStatus.ACCEPTED,
+            timestamp="2024-01-02T00:00:00Z",
+        )
+        gs.add_decision(d1)
+        gs.add_decision(d2)
+        decisions = gs.get_all_decisions()
+        assert any(d.id == "d-type" for d in decisions)
+
+    def test_add_decision_on_code_entity_raises(self) -> None:
+        gs = GraphStore()
+        gs.add_code_entity(CodeEntity(
+            id="collision", type=EntityType.FILE, repo="",
+        ))
+        d = Decision(
+            id="collision", title="Collision", rationale="...",
+            source="test", status=DecisionStatus.PROPOSED,
+            timestamp="2024-01-01T00:00:00Z",
+        )
+        with pytest.raises(ValueError, match="already exists as CodeEntity"):
+            gs.add_decision(d)
+
+    def test_add_constraint_on_decision_raises(self) -> None:
+        gs = GraphStore()
+        gs.add_decision(Decision(
+            id="col", title="Existing", rationale="...",
+            source="test", status=DecisionStatus.ACCEPTED,
+            timestamp="2024-01-01T00:00:00Z",
+        ))
+        c = Constraint(
+            id="col", description="New constraint",
+            source="test", status="proposed",
+            timestamp="2024-01-01T00:00:00Z",
+        )
+        with pytest.raises(ValueError, match="already exists as Decision"):
+            gs.add_constraint(c)
+
+    def test_add_code_entity_on_decision_raises(self) -> None:
+        gs = GraphStore()
+        gs.add_decision(Decision(
+            id="ent-col", title="Exists", rationale="...",
+            source="test", status=DecisionStatus.ACCEPTED,
+            timestamp="2024-01-01T00:00:00Z",
+        ))
+        e = CodeEntity(id="ent-col", type=EntityType.FILE, repo="")
+        with pytest.raises(ValueError, match="already exists as Decision"):
+            gs.add_code_entity(e)
+
+    def test_add_code_entity_twice_updates_payload(self) -> None:
+        gs = GraphStore()
+        e1 = CodeEntity(id="e-update", type=EntityType.FILE, repo="a")
+        e2 = CodeEntity(id="e-update", type=EntityType.CLASS, repo="b")
+        gs.add_code_entity(e1)
+        gs.add_code_entity(e2)
+        payload = gs.get_node_payload("e-update")
+        assert payload["type"] == "class"
+        assert payload["repo"] == "b"
+
+    def test_add_constraint_twice_updates_payload(self) -> None:
+        gs = GraphStore()
+        c1 = Constraint(
+            id="c-update", description="Old rule",
+            source="test", status="proposed",
+            timestamp="2024-01-01T00:00:00Z",
+        )
+        c2 = Constraint(
+            id="c-update", description="New rule", bound_entities=["src/x.py"],
+            source="test", status="active",
+            timestamp="2024-01-02T00:00:00Z",
+        )
+        gs.add_constraint(c1)
+        gs.add_constraint(c2)
+        payload = gs.get_node_payload("c-update")
+        assert payload["description"] == "New rule"
+        assert payload["status"] == "active"

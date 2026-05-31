@@ -35,7 +35,6 @@ def _load_graph() -> tuple[GraphStore, MementicConfig]:
 
 def _save_graph(graph: GraphStore, cfg: MementicConfig) -> None:
     """Thread-safe save of the graph to its configured path."""
-    Path(cfg.output.graph_path).parent.mkdir(parents=True, exist_ok=True)
     graph.save(cfg.output.graph_path)
 
 
@@ -95,6 +94,8 @@ async def propose_decision(
         graph.add_decision(decision)
 
         for entity_path in affected_entities or []:
+            if entity_path == decision.id or not entity_path:
+                continue
             entity = CodeEntity(id=entity_path, type=EntityType.FILE, repo="")
             graph.add_code_entity(entity)
             graph.link(decision.id, entity_path, "affects")
@@ -135,6 +136,8 @@ async def propose_constraint(
         graph.add_constraint(constraint)
 
         for entity_path in bound_entities:
+            entity = CodeEntity(id=entity_path, type=EntityType.FILE, repo="")
+            graph.add_code_entity(entity)
             graph.link(constraint.id, entity_path, "binds_to")
 
         _save_graph(graph, cfg)
