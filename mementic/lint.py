@@ -1,10 +1,9 @@
 """Graph linting — deterministic rules for graph health checks.
 
-Six rules, zero API cost:
+Five rules, zero API cost:
 - orphaned-constraint: Constraint with no enforcing decision.
 - unlinked-decision: Decision with no affected entities.
 - stale-entity: Entity referencing a deleted file.
-- duplicate-slug: Two decisions with same ID.
 - status-inconsistency: Deprecated decision with active constraints.
 - orphaned-entity: Entity with no incoming edges.
 """
@@ -131,7 +130,6 @@ def lint(graph: GraphStore) -> LintResult:
     # Decision with no affected entities (no outgoing edges)
     for nid in decision_ids:
         if not graph.has_outgoing_edges(nid):
-            payload = graph.get_node_payload(nid)
             findings.append(LintFinding(
                 rule="unlinked-decision",
                 severity="warning",
@@ -152,24 +150,6 @@ def lint(graph: GraphStore) -> LintResult:
                 message=f"Entity '{eid}' references a file that no longer exists",
                 node_id=eid,
             ))
-
-    # ── Rule: duplicate-slug (error) ──
-    # Two decisions with same ID
-    # This is caught by idempotent add; check all decisions for duplicates
-    seen_ids: dict[str, str] = {}
-    for nid, ntype, payload in graph.iter_nodes():
-        if ntype != "Decision":
-            continue
-        if nid in seen_ids:
-            findings.append(LintFinding(
-                rule="duplicate-slug",
-                severity="error",
-                message=f"Duplicate decision ID '{nid}'",
-                node_id=nid,
-                related_id=seen_ids[nid],
-            ))
-        else:
-            seen_ids[nid] = nid
 
     # ── Rule: status-inconsistency (warning) ──
     # Deprecated decision with active constraints

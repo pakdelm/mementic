@@ -30,14 +30,17 @@ def _word_overlap(text_a: str, text_b: str) -> float:
 def detect_conflicts(
     graph: GraphStore,
     proposed: list[Decision],
-    affected_entities: list[str],
+    affected_entities: dict[str, list[str]] | None = None,
 ) -> list[Decision]:
     """Detect conflicts between proposed decisions and existing accepted ones.
 
     Args:
         graph: The current knowledge graph.
         proposed: Newly extracted decisions to check for conflicts.
-        affected_entities: File paths affected by the proposed decisions.
+        affected_entities: Optional mapping of decision ID → its affected file paths.
+            When provided, each proposed decision is only checked against its own
+            entities. When None (legacy), all decisions share the same entity set
+            which may produce false positives.
 
     Returns:
         List of existing accepted Decision objects that conflict with
@@ -56,6 +59,7 @@ def detect_conflicts(
 
     for p in proposed:
         p_slug = slugify(p.title, max_length=80)
+        p_entities = (affected_entities or {}).get(p.id, [])
 
         for existing_d in accepted:
             # Rule 1: Slug collision
@@ -64,13 +68,12 @@ def detect_conflicts(
                 continue
 
             # Rule 2: Entity overlap + rationale divergence
-            # Get the entities the existing decision affects by following its edges
+            # Get the entities the existing decision affects
             existing_entities: set[str] = set()
             for _nid, ntype, _payload in graph.iter_nodes():
                 if ntype != "CodeEntity":
                     continue
-                # Check if this entity node has an incoming edge from the existing decision
-                for pred in graph._g.predecessors(_nid):
+                for pred in graph.get_predecessors(_nid):
                     if pred == existing_d.id:
                         existing_entities.add(_nid)
 
@@ -78,7 +81,7 @@ def detect_conflicts(
             if not existing_entities:
                 continue
 
-            proposed_set = set(affected_entities)
+            proposed_set = set(p_entities)
             overlap = existing_entities & proposed_set
             if not overlap:
                 continue

@@ -119,7 +119,7 @@ class TestDetectConflicts:
             )
         ]
 
-        conflicts = detect_conflicts(graph, proposed, ["src/db.py"])
+        conflicts = detect_conflicts(graph, proposed, {"new-1": ["src/db.py"]})
         assert len(conflicts) == 1
         assert conflicts[0].id == "use-sqlite"
 
@@ -144,7 +144,7 @@ class TestDetectConflicts:
             )
         ]
 
-        conflicts = detect_conflicts(graph, proposed, ["src/db.py"])
+        conflicts = detect_conflicts(graph, proposed, {"new-1": ["src/db.py"]})
         # Rationales are very similar (>50% overlap), so no conflict
         assert len(conflicts) == 0
 
@@ -169,7 +169,7 @@ class TestDetectConflicts:
             )
         ]
 
-        conflicts = detect_conflicts(graph, proposed, ["src/auth.py"])
+        conflicts = detect_conflicts(graph, proposed, {"new-1": ["src/auth.py"]})
         assert len(conflicts) == 0
 
     def test_only_accepted_decisions_checked(self) -> None:

@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import subprocess
 from pathlib import Path
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 import typer
 from dotenv import load_dotenv
@@ -17,6 +17,10 @@ from mementic.format import format_context_pack  # noqa: E402
 from mementic.graph import GraphStore  # noqa: E402
 from mementic.models import CodeEntity, Decision, DecisionStatus, EntityType  # noqa: E402
 from mementic.pipeline import run_init  # noqa: E402
+from mementic.conflict import detect_conflicts  # noqa: E402
+
+if TYPE_CHECKING:
+    from mementic.lint import LintFinding  # noqa: F401
 
 app = typer.Typer(help="Mementic — semantic memory for engineering teams and AI agents")
 
@@ -231,10 +235,14 @@ def capture(
         graph = GraphStore()
 
     # ── Conflict detection ──
-    from mementic.conflict import detect_conflicts
     from mementic.format import slugify
 
-    conflicts = detect_conflicts(graph, extraction.decisions, extraction.affected_entities)
+    conflicts = detect_conflicts(
+        graph,
+        extraction.decisions,
+        # Flat entity list shared across all decisions (extraction limitation)
+        {d.id: extraction.affected_entities for d in extraction.decisions},
+    )
     conflicting_existing_slugs = {c.id for c in conflicts}
 
     auto_accepted = 0
@@ -491,12 +499,10 @@ def review() -> None:
             typer.echo(f"  Rejected: {', '.join(d.rejected_alternatives)}")
 
         # Show potential conflicts
-        from mementic.conflict import detect_conflicts
         conflicts = detect_conflicts(
             graph,
             [d],
-            # Try to find bound entities via constraints linked to this decision
-            _get_entities_for_decision(graph, d.id),
+            {d.id: _get_entities_for_decision(graph, d.id)},
         )
         if conflicts:
             typer.echo("  Conflicts with:")
@@ -508,7 +514,7 @@ def review() -> None:
             d.status = DecisionStatus.ACCEPTED
             graph.add_decision(d)
         else:
-            d.status = DecisionStatus.DEPRECATED
+            d.status = DecisionStatus.REJECTED
             graph.add_decision(d)
 
     for c in pending_c:
@@ -531,7 +537,7 @@ def _get_entities_for_decision(graph: GraphStore, decision_id: str) -> list[str]
     for _nid, ntype, _payload in graph.iter_nodes():
         if ntype != "CodeEntity":
             continue
-        for pred in graph._g.predecessors(_nid):
+        for pred in graph.get_predecessors(_nid):
             if pred == decision_id:
                 entities.append(_nid)
     return entities
@@ -543,6 +549,7 @@ def _status_icon(status: str) -> str:
         "accepted": "+",
         "proposed": "?",
         "deprecated": "-",
+        "rejected": "x",
         "active": "+",
     }
     return icons.get(status, " ")
@@ -556,7 +563,7 @@ def list_cmd(
     ),
     status: str | None = typer.Option(
         None, "--status",
-        help="Filter by status: proposed, accepted, deprecated, active, superseded",
+        help="Filter by status: proposed, accepted, deprecated, rejected, active",
     ),
     n: int = typer.Option(
         0, "-n",
@@ -588,7 +595,7 @@ def list_cmd(
         )
         raise typer.Exit(code=1)
 
-    valid_statuses = {"proposed", "accepted", "deprecated", "active", "superseded"}
+    valid_statuses = {"proposed", "accepted", "deprecated", "rejected", "active", "superseded"}
     if status and status not in valid_statuses:
         typer.echo(
             f"Invalid status '{status}'. Valid: {', '.join(sorted(valid_statuses))}",
@@ -645,7 +652,7 @@ def list_cmd(
             typer.echo(f"     {c.description}")
 
     elif entity_type == "entities":
-        entities: list[tuple[str, dict]] = []
+        entities: list[tuple[str, dict[str, Any]]] = []
         for nid, ntype, payload in graph.iter_nodes():
             if ntype == "CodeEntity":
                 entities.append((nid, payload))
@@ -700,28 +707,21 @@ def deprecate(
         )
         raise typer.Exit(code=1)
 
-    # Determine actual node type by checking iter_nodes
-    actual_type = ""
-    for nid, ntype, _p in graph.iter_nodes():
+    # Find the node and its payload in one pass
+    target_payload: dict | None = None
+    for nid, ntype, payload in graph.iter_nodes():
         if nid == id:
-            actual_type = ntype
+            if ntype != "Decision":
+                typer.echo(f"'{id}' is a {ntype}, not a Decision.", err=True)
+                raise typer.Exit(code=1)
+            target_payload = payload
             break
 
-    if actual_type != "Decision":
-        typer.echo(f"'{id}' is a {actual_type}, not a Decision.", err=True)
-        raise typer.Exit(code=1)
-
-    # Read decision from graph
-    decisions = graph.get_all_decisions()
-    target: Decision | None = None
-    for d in decisions:
-        if d.id == id:
-            target = d
-            break
-
-    if target is None:
+    if target_payload is None:
         typer.echo(f"Decision '{id}' could not be loaded.", err=True)
         raise typer.Exit(code=1)
+
+    target = Decision(**target_payload)
 
     if target.status == DecisionStatus.DEPRECATED:
         typer.echo(f"Decision '{id}' is already deprecated.")
@@ -745,7 +745,7 @@ def lint_cmd(
 ) -> None:
     """Run rules-based graph health checks.
 
-    Checks 7 deterministic rules for graph integrity. No LLM cost.
+    Checks 5 deterministic rules for graph integrity. No LLM cost.
     `mementic lint` shows issues grouped by actionability.
     `mementic lint --fix` auto-resolves everything that can be fixed safely.
     """
@@ -799,7 +799,7 @@ def lint_cmd(
             _print_findings(needs_review)
 
 
-def _print_findings(findings: list) -> None:
+def _print_findings(findings: list[LintFinding]) -> None:
     """Print a compact list of lint findings."""
     markers = {"error": "ERR", "warning": "WARN", "info": "INFO"}
     for f in findings:
