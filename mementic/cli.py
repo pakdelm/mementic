@@ -7,6 +7,7 @@ from typing import Any
 
 import typer
 from dotenv import load_dotenv
+from pydantic import ValidationError
 
 load_dotenv()
 
@@ -38,10 +39,10 @@ def _load_graph_safe(graph_path: str) -> GraphStore:
         return GraphStore.load(graph_path)
     except FileNotFoundError:
         typer.echo(
-            f"No graph found. Run 'mementic init' first.", err=True
+            "No graph found. Run 'mementic init' first.", err=True
         )
         raise typer.Exit(code=1)
-    except (json.JSONDecodeError, TypeError, ValueError, KeyError):
+    except (json.JSONDecodeError, TypeError, ValueError, KeyError, ValidationError):
         typer.echo(
             f"Graph file at {graph_path} is corrupt. "
             f"Run 'mementic init' to rebuild.",

@@ -88,10 +88,11 @@ mementic capture
 mementic capture --session /path/to/session.log --notes "Migrated Redis to Valkey"
 ```
 
-Extracts architectural decisions from the agent session log + git diff. Shows
-each decision and constraint individually for per-item review (`[Y]es / [n]o`).
-Tracks the last captured commit so subsequent captures only diff new changes.
-Runs without git (warns and uses notes only).
+Extracts architectural decisions from the agent session log + git diff.
+All decisions and constraints are auto-accepted and written to the graph.
+Use `mementic review` to inspect or deprecate entries. Tracks the last
+captured commit so subsequent captures only diff new changes. Runs without
+git (warns and uses notes only).
 
 ### 5. Review and accept proposals
 
