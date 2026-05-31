@@ -132,6 +132,21 @@ def test_adr_file_without_heading(tmp_path: Path) -> None:
     assert "body text" in results[0].context
 
 
+def test_adr_directory_with_subdirectory(tmp_path: Path) -> None:
+    """Subdirectories among .md files should be skipped."""
+    (tmp_path / "adr-1.md").write_text(ADR_WITH_SECTIONS)
+    (tmp_path / "subdir").mkdir()
+
+    results = scan_adr_dir(str(tmp_path))
+    assert len(results) == 1
+
+
+def test_adr_nonexistent_directory(tmp_path: Path) -> None:
+    """Scanning a directory that does not exist should return empty list."""
+    results = scan_adr_dir(str(tmp_path / "nonexistent"))
+    assert results == []
+
+
 # ---------------------------------------------------------------------------
 # OpenCode tests
 # ---------------------------------------------------------------------------
@@ -196,3 +211,18 @@ def test_opencode_no_heading(tmp_path: Path) -> None:
     assert len(results) == 1
     assert results[0].title == ""
     assert results[0].content == "Just some text without a heading."
+
+
+def test_opencode_directory_with_subdirectory(tmp_path: Path) -> None:
+    """Subdirectories among .md files should be skipped."""
+    (tmp_path / "style.md").write_text("# Style\nContent.")
+    (tmp_path / "subdir").mkdir()
+
+    results = scan_opencode_instructions(str(tmp_path))
+    assert len(results) == 1
+
+
+def test_opencode_nonexistent_directory(tmp_path: Path) -> None:
+    """Scanning a directory that does not exist should return empty list."""
+    results = scan_opencode_instructions(str(tmp_path / "nonexistent"))
+    assert results == []

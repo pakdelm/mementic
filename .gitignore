@@ -11,7 +11,9 @@ build/
 .env
 
 # Mementic runtime
-.mementic/graph.json
+.mementic/
+__pycache__/
+audit.jsonl
 
 # IDE
 .vscode/
@@ -20,3 +22,6 @@ build/
 # OS
 .DS_Store
 Thumbs.db
+
+# Tests
+.coverage

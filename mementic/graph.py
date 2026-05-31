@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -140,6 +141,24 @@ class GraphStore:
         tmp.write_text(json.dumps(payload.model_dump(mode="json"), indent=2))
         tmp.replace(p)
 
+        audit_path = p.parent / "audit.jsonl"
+        entry = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "action": "save",
+            "decisions": sum(
+                1 for _, a in self._g.nodes(data=True) if a.get("node_type") == "Decision"
+            ),
+            "constraints": sum(
+                1 for _, a in self._g.nodes(data=True) if a.get("node_type") == "Constraint"
+            ),
+            "entities": sum(
+                1 for _, a in self._g.nodes(data=True) if a.get("node_type") == "CodeEntity"
+            ),
+            "edges": self._g.number_of_edges(),
+        }
+        with audit_path.open("a") as f:
+            f.write(json.dumps(entry) + "\n")
+
     @classmethod
     def load(cls, path: str) -> GraphStore:
         data = json.loads(Path(path).read_text())
@@ -160,6 +179,29 @@ class GraphStore:
                 relation=edge_data.get("relation", ""),
             )
         return gs
+
+    def has_node(self, node_id: str) -> bool:
+        return node_id in self._g
+
+    def get_node_payload(self, node_id: str) -> dict[str, Any]:
+        return dict(self._g.nodes[node_id].get("payload", {}))
+
+    def set_node_payload(self, node_id: str, payload: dict[str, Any]) -> None:
+        self._g.nodes[node_id]["payload"] = payload
+
+    def iter_nodes(self) -> list[tuple[str, str, dict[str, Any]]]:
+        """Return list of (node_id, node_type, payload) for all nodes."""
+        return [
+            (nid, attrs.get("node_type", ""), attrs.get("payload", {}))
+            for nid, attrs in self._g.nodes(data=True)
+        ]
+
+    def has_outgoing_edges(self, node_id: str) -> bool:
+        try:
+            next(self._g.successors(node_id))
+            return True
+        except StopIteration:
+            return False
 
     def stats(self) -> dict[str, int]:
         decisions = 0

@@ -39,6 +39,14 @@ class TestExpandPath:
             result = expand_path("%NONEXISTENT%/file.txt")
         assert result == "/file.txt"
 
+    def test_expands_bare_tilde(self) -> None:
+        result = expand_path("~")
+        assert result == str(Path.home())
+
+    def test_tilde_with_text_no_slash_is_literal(self) -> None:
+        result = expand_path("~something")
+        assert result == "~something"
+
 
 class TestFindLatestSession:
     def test_returns_none_when_no_dirs_exist(self) -> None:
@@ -62,9 +70,10 @@ class TestFindLatestSession:
         older.write_text("old")
         newer.write_text("new")
 
-        # Ensure newer has a later mtime
-        newer.touch()
-        older.touch()
+        # Set explicit mtimes so newer is always later
+        import os
+        os.utime(str(older), (1000, 1000))
+        os.utime(str(newer), (2000, 2000))
 
         fake_paths = {"linux": [str(tmp_path)]}
         with patch.dict("mementic.session.DEFAULT_SESSION_PATHS", fake_paths, clear=True):

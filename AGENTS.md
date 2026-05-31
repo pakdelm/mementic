@@ -43,9 +43,17 @@ For detailed guidelines, read the instruction files configured in opencode.json:
 ## Mementic Memory
 
 This project uses Mementic as its own architectural memory layer.
-Before starting any implementation task that touches existing modules,
-call `get_context_pack` with the task description and the affected file
-paths. Load the returned constraints and validate your plan against them
-before writing code. Do not write code that violates an active constraint.
-When you make an architecturally significant decision during a task, call
-`propose_decision` to record it for review.
+**You MUST use the following MCP tools as part of your workflow:**
+
+- **Before any implementation task** that touches existing modules:
+  call `mementic_get_context_pack` with the task description and affected
+  file paths. Load the returned constraints and validate your plan against
+  them. Do not write code that violates an active constraint.
+
+- **During a task**, when you make an architecturally significant decision:
+  call `mementic_propose_decision` with the title, rationale, rejected
+  alternatives, and affected entities. Call `mementic_propose_constraint`
+  for any new rules that future agents must enforce.
+
+- **After completing a task**, remind the user to run `mementic review`
+  to accept the proposed decisions into permanent memory.

@@ -2,10 +2,18 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 
 from dotenv import load_dotenv
-from openai import OpenAI
-from pydantic import BaseModel
+from openai import (
+    APIConnectionError,
+    APIError,
+    APITimeoutError,
+    AuthenticationError,
+    OpenAI,
+    RateLimitError,
+)
+from pydantic import BaseModel, ValidationError
 
 load_dotenv()
 
@@ -55,6 +63,8 @@ class _ConstraintListResponse(BaseModel):
 def get_client(config: LLMConfig) -> OpenAI:  # pragma: no cover
     """Create OpenAI client pointed at DeepSeek. Reads key from DEEPSEEK_API_KEY env var."""
     api_key = os.environ.get("DEEPSEEK_API_KEY", "")
+    if not api_key:
+        sys.stderr.write("WARNING: DEEPSEEK_API_KEY is not set. LLM calls will fail.\n")
     return OpenAI(api_key=api_key, base_url="https://api.deepseek.com")
 
 
@@ -79,23 +89,39 @@ def extract_from_freeform(
     extraction_schema = json.dumps(ExtractionResult.model_json_schema(), indent=2)
     system_prompt = FREE_FORM_SYSTEM_PROMPT.format(extraction_schema=extraction_schema)
 
-    response = client.chat.completions.create(
-        model=config.extraction_model,
-        temperature=0.1,
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": f"Source: {source_label}\n\nText:\n{text}"},
-        ],
-        response_format={"type": "json_object"},
-    )
+    try:
+        response = client.chat.completions.create(
+            model=config.extraction_model,
+            temperature=0.1,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": f"Source: {source_label}\n\nText:\n{text}"},
+            ],
+            response_format={"type": "json_object"},
+        )
+    except AuthenticationError:
+        sys.stderr.write("WARNING: DeepSeek API key is invalid. Check DEEPSEEK_API_KEY.\n")
+        return ExtractionResult()
+    except RateLimitError:
+        sys.stderr.write("WARNING: DeepSeek rate limit hit. Skipping this source.\n")
+        return ExtractionResult()
+    except (APITimeoutError, APIConnectionError):
+        sys.stderr.write("WARNING: DeepSeek API unreachable. Skipping this source.\n")
+        return ExtractionResult()
+    except APIError as e:
+        sys.stderr.write(f"WARNING: DeepSeek API error: {e}. Skipping this source.\n")
+        return ExtractionResult()
 
     content = response.choices[0].message.content
     if content is None:
         return ExtractionResult()
 
-    data = json.loads(content)
-    result = ExtractionResult.model_validate(data)
-    return result
+    try:
+        data = json.loads(content)
+        return ExtractionResult.model_validate(data)
+    except (json.JSONDecodeError, ValidationError):
+        sys.stderr.write("WARNING: LLM returned invalid JSON. Skipping.\n")
+        return ExtractionResult()
 
 
 def extract_from_session(
@@ -127,23 +153,39 @@ def extract_from_session(
     extraction_schema = json.dumps(ExtractionResult.model_json_schema(), indent=2)
     system_prompt = SESSION_SYSTEM_PROMPT.format(extraction_schema=extraction_schema)
 
-    response = client.chat.completions.create(
-        model=config.extraction_model,
-        temperature=0.1,
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": combined},
-        ],
-        response_format={"type": "json_object"},
-    )
+    try:
+        response = client.chat.completions.create(
+            model=config.extraction_model,
+            temperature=0.1,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": combined},
+            ],
+            response_format={"type": "json_object"},
+        )
+    except AuthenticationError:
+        sys.stderr.write("WARNING: DeepSeek API key is invalid. Check DEEPSEEK_API_KEY.\n")
+        return ExtractionResult()
+    except RateLimitError:
+        sys.stderr.write("WARNING: DeepSeek rate limit hit. Skipping this source.\n")
+        return ExtractionResult()
+    except (APITimeoutError, APIConnectionError):
+        sys.stderr.write("WARNING: DeepSeek API unreachable. Skipping this source.\n")
+        return ExtractionResult()
+    except APIError as e:
+        sys.stderr.write(f"WARNING: DeepSeek API error: {e}. Skipping this source.\n")
+        return ExtractionResult()
 
     content = response.choices[0].message.content
     if content is None:
         return ExtractionResult()
 
-    data = json.loads(content)
-    result = ExtractionResult.model_validate(data)
-    return result
+    try:
+        data = json.loads(content)
+        return ExtractionResult.model_validate(data)
+    except (json.JSONDecodeError, ValidationError):
+        sys.stderr.write("WARNING: LLM returned invalid JSON. Skipping.\n")
+        return ExtractionResult()
 
 
 def extract_from_adr_consequences(
@@ -162,20 +204,37 @@ def extract_from_adr_consequences(
     constraints_schema = json.dumps(_ConstraintListResponse.model_json_schema(), indent=2)
     system_prompt = ADR_CONSEQUENCES_SYSTEM_PROMPT.format(constraints_schema=constraints_schema)
 
-    response = client.chat.completions.create(
-        model=config.extraction_model,
-        temperature=0.1,
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": consequences_text},
-        ],
-        response_format={"type": "json_object"},
-    )
+    try:
+        response = client.chat.completions.create(
+            model=config.extraction_model,
+            temperature=0.1,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": consequences_text},
+            ],
+            response_format={"type": "json_object"},
+        )
+    except AuthenticationError:
+        sys.stderr.write("WARNING: DeepSeek API key is invalid. Check DEEPSEEK_API_KEY.\n")
+        return []
+    except RateLimitError:
+        sys.stderr.write("WARNING: DeepSeek rate limit hit. Skipping this source.\n")
+        return []
+    except (APITimeoutError, APIConnectionError):
+        sys.stderr.write("WARNING: DeepSeek API unreachable. Skipping this source.\n")
+        return []
+    except APIError as e:
+        sys.stderr.write(f"WARNING: DeepSeek API error: {e}. Skipping this source.\n")
+        return []
 
     content = response.choices[0].message.content
     if content is None:
         return []
 
-    data = json.loads(content)
-    parsed = _ConstraintListResponse.model_validate(data)
-    return parsed.constraints
+    try:
+        data = json.loads(content)
+        parsed = _ConstraintListResponse.model_validate(data)
+        return parsed.constraints
+    except (json.JSONDecodeError, ValidationError):
+        sys.stderr.write("WARNING: LLM returned invalid JSON. Skipping.\n")
+        return []

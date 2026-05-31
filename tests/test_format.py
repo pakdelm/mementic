@@ -54,13 +54,13 @@ class TestFormatContextPack:
 
         assert output.startswith("## Architectural Context for: Add async support")
         assert "### Constraints (MUST follow)" in output
-        assert "⛓  c-001" in output
+        assert "[C] c-001" in output
         assert '"All I/O must be async"' in output
         assert "Established by: d-001" in output
         assert "### Relevant Decisions" in output
-        assert "• Use async (2024-01-01T00:00:00Z)" in output
+        assert "* Use async (2024-01-01T00:00:00Z)" in output
         assert "  Better performance" in output
-        assert "  Rejected: []" in output
+        assert "  Rejected:" not in output  # [] means empty, skip line
 
     def test_with_empty_lists(self) -> None:
         output = format_context_pack("Empty task", [], [])
@@ -75,7 +75,7 @@ class TestFormatContextPack:
 
         assert "### Constraints" not in output
         assert "### Relevant Decisions" in output
-        assert "• Use pydantic" in output
+        assert "* Use pydantic" in output
 
     def test_with_only_constraints(self) -> None:
         constraints = [make_constraint(description="Must use type hints")]
@@ -94,7 +94,7 @@ class TestFormatContextPack:
         ]
         output = format_context_pack("Storage choice", decisions, [])
 
-        assert "Rejected: ['SQLite', 'PostgreSQL', 'MongoDB']" in output
+        assert "Rejected: SQLite, PostgreSQL, MongoDB" in output
 
     def test_enforced_by_unknown_fallback(self) -> None:
         constraints = [make_constraint(enforced_by="")]
@@ -113,8 +113,8 @@ class TestFormatContextPack:
         ]
         output = format_context_pack("Multi", decisions, constraints)
 
-        assert output.count("⛓") == 2
-        assert output.count("•") == 2
+        assert output.count("[C]") == 2
+        assert output.count("* ") == 2  # bullet starts line, but first * is in title
 
 
 class TestSlugify:
@@ -156,8 +156,9 @@ class TestTimestamp:
         ts = timestamp()
         assert ts.endswith("+00:00") or ts.endswith("Z")
 
-    def test_two_calls_produce_different_values(self) -> None:
+    def test_two_calls_structure_identical(self) -> None:
         ts1 = timestamp()
         ts2 = timestamp()
-        # May be same if called fast enough, but format should be identical structure
         assert len(ts1) == len(ts2)
+        assert self.ISO_8601_RE.match(ts1)
+        assert self.ISO_8601_RE.match(ts2)
