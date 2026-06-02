@@ -190,6 +190,10 @@ def capture(
     session: str | None = None,
     notes: str | None = None,
     agent: str | None = None,
+    tail: int = typer.Option(
+        100, "--tail",
+        help="Max messages from session tail (0 = skip session, use diff+notes only)",
+    ),
 ) -> None:
     """Extract architectural decisions from an agent session.
 
@@ -265,7 +269,9 @@ def capture(
             typer.echo("No checkpoint found — using HEAD~1 as baseline.")
 
     try:
-        extraction, _usage = extract_from_session(session_text, git_diff, notes or "", cfg.llm)
+        extraction, _usage = extract_from_session(
+            session_text, git_diff, notes or "", cfg.llm, max_messages=tail
+        )
     except RuntimeError as e:
         typer.echo(str(e), err=True)
         raise typer.Exit(code=1)
@@ -369,6 +375,9 @@ def context(
     benchmark: bool = typer.Option(
         False, "--benchmark", help="Measure token savings vs. raw source docs"
     ),
+    prefix: bool = typer.Option(
+        False, "--prefix", help="Enable prefix matching for namespace queries (e.g. 'mementic/')"
+    ),
 ) -> None:
     """Load constraints and produce a context pack for a given task.
 
@@ -379,7 +388,7 @@ def context(
 
     graph = _load_graph_safe(cfg.output.graph_path)
 
-    constraints = graph.get_constraints_for_entities(files)
+    constraints = graph.get_constraints_for_entities(files, prefix_match=prefix)
     decisions = graph.get_decisions_for_entities(files)
 
     output = format_context_pack(task, decisions, constraints)
@@ -409,16 +418,15 @@ def context(
 
         baseline_tokens = count_tokens(all_source_text)
         context_pack_tokens = count_tokens(output)
-        savings = baseline_tokens - context_pack_tokens
-        ratio = savings / baseline_tokens if baseline_tokens > 0 else 0.0
 
         typer.echo()
         typer.echo("Benchmark")
         typer.echo(f"  Raw source size:   {baseline_tokens:,} tokens")
         typer.echo(f"  Context pack:      {context_pack_tokens:,} tokens")
-        typer.echo(f"  Savings:           {savings:,} tokens ({ratio:.0%})")
+        typer.echo(f"  Delta:             {context_pack_tokens - baseline_tokens:+,} tokens")
+        typer.echo("  (context pack vs. all ADRs + instructions on disk)")
 
-        # Log benchmark metrics
+        # Log benchmark metrics (honest fields only)
         metrics_store = UsageStore()
         entry = MetricsEntry(
             timestamp=timestamp(),
@@ -426,12 +434,12 @@ def context(
             source_label=task,
             input_tokens=0,
             output_tokens=0,
-            total_tokens=0,
+            total_tokens=context_pack_tokens,
             model="",
             status="success",
             baseline_tokens=baseline_tokens,
             context_pack_tokens=context_pack_tokens,
-            savings_ratio=ratio,
+            savings_ratio=0.0,  # deprecated — Spec 10c bans dishonest ratio
         )
         metrics_store.append(entry)
 
@@ -842,61 +850,100 @@ def metrics(
     if json_output:
         typer.echo(json.dumps(summary, indent=2, default=str))
     else:
-        typer.echo("Token Usage Since Inception")
-        typer.echo("─" * 50)
-        typer.echo(f"  LLM calls made:      {summary['total_calls']}")
-        typer.echo(f"  Input tokens sent:   {summary['total_input_tokens']:,}")
-        typer.echo(f"  Output tokens:        {summary['total_output_tokens']:,}")
-        typer.echo(f"  Total tokens:         {summary['total_tokens']:,}")
+        # -- Section 1: Extraction Cost --
+        typer.echo("Token Economics")
+        typer.echo("-" * 50)
+        typer.echo("  Extraction cost (lifetime)")
+        init_calls = summary["extraction_init_calls"]
+        init_tokens = summary["extraction_init_tokens"]
+        capture_calls = summary["extraction_capture_calls"]
+        capture_tokens = summary["extraction_capture_tokens"]
+        typer.echo(
+            f"    init:       {init_calls:>4} calls   {init_tokens:>10,} tokens"
+            f"   (one-time graph build)"
+        )
+        typer.echo(
+            f"    capture:    {capture_calls:>4} calls   {capture_tokens:>10,} tokens"
+            f"   (per-session extraction)"
+        )
+        typer.echo(
+            f"    subtotal:              {summary['extraction_total_tokens']:>10,} tokens"
+        )
 
+        # ── Section 2: Context Pack Usage ──
         typer.echo()
-        typer.echo("Breakdown by Activity")
-        typer.echo("─" * 50)
+        typer.echo("  Context pack usage (lifetime)")
+        cp_queries = summary["context_pack_queries"]
+        cp_total = summary["context_pack_total_tokens"]
+        cp_avg = summary["context_pack_avg_tokens"]
+        cp_avg_c = summary["context_pack_avg_constraints"]
+        cp_avg_d = summary["context_pack_avg_decisions"]
+        typer.echo(
+            f"    queries:     {cp_queries:>4} calls   {cp_total:>10,} tokens"
+        )
+        typer.echo(
+            f"    avg pack:    {cp_avg:>10,.0f} tokens/query"
+        )
+        typer.echo(
+            f"    avg constraints:  {cp_avg_c:,.0f}"
+        )
+        typer.echo(
+            f"    avg decisions:    {cp_avg_d:,.0f}"
+        )
 
-        # Human-friendly labels for known operations
-        operation_labels: dict[str, str] = {
-            "init": "one-time setup cost",
-            "capture": "decision extraction",
-            "enforce_benchmark": "benchmark runs",
-            "mcp_context_pack": "agent context packs",
-        }
-
-        by_operation = summary.get("by_operation", {})
-        if by_operation:
-            for op, data in sorted(by_operation.items()):
-                label = operation_labels.get(op, op)
-                typer.echo(
-                    f"  {op:<22} {data['calls']:>5} calls   "
-                    f"{data['total_tokens']:>10,} tokens   ({label})"
-                )
-        else:
-            typer.echo("  (no activity yet)")
-
+        # ── Section 3: Breakeven Analysis ──
         typer.echo()
-        typer.echo("Agent Context Savings (benchmarks)")
-        typer.echo("─" * 50)
-
-        benchmark_tasks = summary.get("benchmark_tasks", 0)
-        if benchmark_tasks > 0:
-            avg_baseline = summary["avg_baseline_tokens"]
-            avg_context_pack = summary["avg_context_pack_tokens"]
-            avg_savings = avg_baseline - avg_context_pack
-            avg_ratio = summary["avg_savings_ratio"]
-            breakeven = summary.get("tasks_to_breakeven")
-            typer.echo(f"  Tasks benchmarked:   {benchmark_tasks}")
-            typer.echo(f"  Avg. raw source size: {avg_baseline:,.0f} tokens")
-            typer.echo(f"  Avg. context pack:    {avg_context_pack:,.0f} tokens")
+        typer.echo("  Breakeven analysis")
+        raw_src = summary["raw_source_tokens"]
+        breakeven_ratio = summary.get("breakeven_ratio")
+        breakeven_note = summary.get("breakeven_note", "")
+        typer.echo(
+            f"    raw source size:     {raw_src:>6,} tokens"
+            f"   (all ADRs + instructions on disk)"
+        )
+        typer.echo(
+            f"    context pack size:   {cp_avg:>6,.0f} tokens"
+            f"   (avg per query)"
+        )
+        if breakeven_ratio is not None:
             typer.echo(
-                f"  Avg. savings:         {avg_savings:,.0f} tokens"
-                f" ({avg_ratio:.0%})"
+                f"    breakeven ratio:     {breakeven_ratio:>6.1f}x"
+                f"   (raw sources / context pack)"
             )
-            if breakeven is not None:
-                typer.echo(f"  Tasks to breakeven:   ~{breakeven:.0f} tasks")
         else:
             typer.echo(
-                "  No benchmarks run yet. "
-                "Use `mementic context --benchmark` to measure savings."
+                "    breakeven ratio:     N/A"
+                "   (need context pack data)"
             )
+        if breakeven_note:
+            typer.echo(f"    -> {breakeven_note}")
+
+        # ── Recommendations ──
+        typer.echo()
+        typer.echo("  Recommendations")
+        if capture_tokens > 500_000:
+            typer.echo(
+                "    - Session truncation (--tail) would reduce capture cost by ~97%"
+            )
+        if cp_avg > 1_000:
+            typer.echo(
+                "    - Context pack relevance fix (exact-match) would"
+                " reduce query size by ~95%"
+            )
+        if raw_src < cp_total and cp_queries > 0:
+            typer.echo(
+                "    - Graph is larger than raw sources."
+                " Breakeven requires more source docs."
+            )
+        if cp_queries == 0:
+            typer.echo(
+                "    - No context pack queries yet."
+                " Run 'mementic context --benchmark' to measure savings."
+            )
+        typer.echo(
+            "    - Run `mementic metrics` again after applying"
+            " Spec 10a + 10b"
+        )
 
     if reset:
         if typer.confirm("Delete all metrics?"):

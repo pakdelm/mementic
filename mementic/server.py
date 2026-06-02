@@ -12,7 +12,14 @@ from mementic.config import MementicConfig, load_config
 from mementic.format import count_tokens, format_context_pack, slugify, timestamp
 from mementic.graph import GraphStore
 from mementic.metrics import UsageStore
-from mementic.models import CodeEntity, Constraint, Decision, DecisionStatus, EntityType, MetricsEntry
+from mementic.models import (
+    CodeEntity,
+    Constraint,
+    Decision,
+    DecisionStatus,
+    EntityType,
+    MetricsEntry,
+)
 
 mcp = FastMCP("Mementic")
 
@@ -80,22 +87,20 @@ async def get_context_pack(
 
     if benchmark:
         baseline_tokens = _count_raw_source_tokens(cfg)
-        if baseline_tokens > 0:
-            ratio = (baseline_tokens - pack_tokens) / baseline_tokens
-            benchmark_entry = MetricsEntry(
-                timestamp=timestamp(),
-                operation="enforce_benchmark",
-                source_label=task_description[:80],
-                input_tokens=0,
-                output_tokens=0,
-                total_tokens=0,
-                model="",
-                status="success",
-                baseline_tokens=baseline_tokens,
-                context_pack_tokens=pack_tokens,
-                savings_ratio=ratio,
-            )
-            _metrics_store.append(benchmark_entry)
+        benchmark_entry = MetricsEntry(
+            timestamp=timestamp(),
+            operation="enforce_benchmark",
+            source_label=task_description[:80],
+            input_tokens=0,
+            output_tokens=0,
+            total_tokens=pack_tokens,
+            model="",
+            status="success",
+            baseline_tokens=baseline_tokens,
+            context_pack_tokens=pack_tokens,
+            savings_ratio=0.0,  # deprecated — summary() no longer uses this
+        )
+        _metrics_store.append(benchmark_entry)
 
     return pack_text
 
@@ -172,7 +177,9 @@ async def propose_decision(
             graph.link(decision.id, entity_path, "affects")
 
         _save_graph(graph, cfg)
-    return f"Decision '{title}' saved for review (status: proposed). Use `mementic review` to accept."
+    return (
+        f"Decision '{title}' saved for review (status: proposed). Use `mementic review` to accept."
+    )
 
 
 @mcp.tool()

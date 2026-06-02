@@ -56,13 +56,11 @@ class TestFormatContextPack:
 
         assert output.startswith("## Architectural Context for: Add async support")
         assert "### Constraints (MUST follow)" in output
-        assert "[C] c-001" in output
-        assert '"All I/O must be async"' in output
-        assert "Established by: d-001" in output
+        assert "- [C] c-001: All I/O must be async (enforced by: d-001)" in output
         assert "### Relevant Decisions" in output
         assert "* Use async (2024-01-01T00:00:00Z)" in output
         assert "  Better performance" in output
-        assert "  Rejected:" not in output  # [] means empty, skip line
+        assert "  Rejected:" not in output
 
     def test_with_empty_lists(self) -> None:
         output = format_context_pack("Empty task", [], [])
@@ -84,7 +82,7 @@ class TestFormatContextPack:
         output = format_context_pack("Task", [], constraints)
 
         assert "### Constraints (MUST follow)" in output
-        assert '"Must use type hints"' in output
+        assert "- [C] c-001: Must use type hints (enforced by: d-001)" in output
         assert "### Relevant Decisions" not in output
 
     def test_rejected_alternatives_rendered(self) -> None:
@@ -102,7 +100,7 @@ class TestFormatContextPack:
         constraints = [make_constraint(enforced_by="")]
         output = format_context_pack("Task", [], constraints)
 
-        assert "Established by: unknown" in output
+        assert "(enforced by: unknown)" in output
 
     def test_multiple_decisions_and_constraints(self) -> None:
         decisions = [
@@ -115,8 +113,65 @@ class TestFormatContextPack:
         ]
         output = format_context_pack("Multi", decisions, constraints)
 
-        assert output.count("[C]") == 2
-        assert output.count("* ") == 2  # bullet starts line, but first * is in title
+        assert output.count("- [C]") == 2
+
+    def test_format_truncates_at_max(self) -> None:
+        constraints = [
+            make_constraint(
+                id=f"c-{i}", description=f"Constraint {i}", enforced_by=""
+            )
+            for i in range(1, 6)
+        ]
+        decisions = [
+            make_decision(
+                id=f"d-{i}", title=f"Decision {i}", rationale=f"Rationale {i}"
+            )
+            for i in range(1, 6)
+        ]
+        output = format_context_pack(
+            "Task", decisions, constraints, max_constraints=2, max_decisions=2
+        )
+
+        assert output.count("- [C]") == 2
+        assert "... and 3 more constraints" in output
+
+        assert output.count("* Decision") == 2
+        assert "... and 3 more decisions" in output
+
+    def test_format_shows_remaining_count(self) -> None:
+        constraints = [
+            make_constraint(
+                id=f"c-{i}", description=f"Constraint {i}", enforced_by=""
+            )
+            for i in range(1, 8)
+        ]
+        output = format_context_pack(
+            "Task", [], constraints, max_constraints=3
+        )
+        assert "... and 4 more constraints" in output
+
+    def test_compact_format_output(self) -> None:
+        constraints = [make_constraint(description="Must use double quotes")]
+        output = format_context_pack("Task", [], constraints)
+
+        assert (
+            "- [C] c-001: Must use double quotes (enforced by: d-001)"
+            in output
+        )
+        assert "Established by:" not in output
+        assert '\n   "' not in output
+
+    def test_compact_format_preserves_info(self) -> None:
+        constraints = [
+            make_constraint(
+                id="test-id", description="A test rule", enforced_by="dec-42"
+            )
+        ]
+        output = format_context_pack("Task", [], constraints)
+
+        assert "- [C] test-id:" in output
+        assert "A test rule" in output
+        assert "(enforced by: dec-42)" in output
 
 
 class TestSlugify:

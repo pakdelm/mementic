@@ -7,13 +7,76 @@ import os
 from collections import Counter, defaultdict
 from pathlib import Path
 
+from mementic.config import MementicConfig
+from mementic.format import count_tokens
 from mementic.models import MetricsEntry
+
+
+def _empty_summary() -> dict:
+    """Return an empty summary dict with honest zero/default values."""
+    return {
+        "total_calls": 0,
+        "total_input_tokens": 0,
+        "total_output_tokens": 0,
+        "total_tokens": 0,
+        "by_operation": {},
+        "model": "",
+        "status": {},
+        "extraction_init_calls": 0,
+        "extraction_init_tokens": 0,
+        "extraction_capture_calls": 0,
+        "extraction_capture_tokens": 0,
+        "extraction_total_tokens": 0,
+        "context_pack_queries": 0,
+        "context_pack_total_tokens": 0,
+        "context_pack_avg_tokens": 0.0,
+        "context_pack_avg_constraints": 0.0,
+        "context_pack_avg_decisions": 0.0,
+        "raw_source_tokens": 0,
+        "breakeven_ratio": None,
+        "breakeven_note": "Need benchmark data.",
+    }
+
+
+def snapshot_raw_sources(cfg: MementicConfig) -> int:
+    """Count tokens in all configured source directories (ADRs + instructions).
+
+    Reads every ``*.md`` file in each configured source directory and sums
+    their token counts. Cache-free (called when metrics is displayed).
+    Returns 0 if no sources configured or directories missing.
+
+    Args:
+        cfg: The MementicConfig instance.
+
+    Returns:
+        Total token count across all ``*.md`` source files.
+    """
+    total = 0
+    for adr in cfg.sources.adr_dirs:
+        dir_path = Path(adr.path)
+        if dir_path.is_dir():
+            for f in dir_path.rglob("*.md"):
+                if f.is_file():
+                    total += count_tokens(f.read_text(encoding="utf-8"))
+    for oc_src in cfg.sources.opencode_instructions:
+        dir_path = Path(oc_src.path)
+        if dir_path.is_dir():
+            for f in dir_path.rglob("*.md"):
+                if f.is_file():
+                    total += count_tokens(f.read_text(encoding="utf-8"))
+    for claude_src in cfg.sources.claude_instructions:
+        dir_path = Path(claude_src.path)
+        if dir_path.is_dir():
+            for f in dir_path.rglob("*.md"):
+                if f.is_file():
+                    total += count_tokens(f.read_text(encoding="utf-8"))
+    return total
 
 
 class UsageStore:
     """Manages append-only JSONL storage for mementic operational metrics.
 
-    The underlying file lives at `.mementic/metrics.jsonl` by default.
+    The underlying file lives at ``.mementic/metrics.jsonl`` by default.
     """
 
     def __init__(self, path: str = ".mementic/metrics.jsonl") -> None:
@@ -54,48 +117,26 @@ class UsageStore:
                 entries.append(MetricsEntry.model_validate(json.loads(stripped)))
         return entries
 
-    def summary(self) -> dict:
+    def summary(self, cfg: MementicConfig | None = None) -> dict:
         """Return an aggregated summary of all stored metrics.
 
-        Returns:
-            A dict with keys:
+        Args:
+            cfg: Optional MementicConfig for counting raw source tokens.
 
-            - total_calls: Total number of entries.
-            - total_input_tokens: Sum of input tokens across all entries.
-            - total_output_tokens: Sum of output tokens across all entries.
-            - total_tokens: Sum of total tokens across all entries.
-            - by_operation: Dict mapping operation name to a dict with
-              ``calls`` (int) and ``total_tokens`` (int).
-            - model: Most common model identifier (empty string if none).
-            - status: Dict mapping status label to count (e.g. ``success``).
-            - benchmark_tasks: Count of ``enforce_benchmark`` entries.
-            - avg_baseline_tokens: Average baseline tokens for benchmark
-              entries (0.0 if none).
-            - avg_context_pack_tokens: Average context-pack tokens for
-              benchmark entries (0.0 if none).
-            - avg_savings_ratio: Average savings ratio for benchmark entries
-              (0.0 if none).
-            - tasks_to_breakeven: ``total_tokens / avg_savings`` when
-              benchmark data is available and ``avg_savings > 0``,
-              otherwise ``None``. ``avg_savings`` is computed as
-              ``avg_baseline_tokens - avg_context_pack_tokens``.
+        Returns:
+            A dict with keys for honest cost accounting:
+            total_calls, total_input_tokens, total_output_tokens,
+            total_tokens, by_operation, model, status,
+            extraction_init_calls, extraction_init_tokens,
+            extraction_capture_calls, extraction_capture_tokens,
+            extraction_total_tokens, context_pack_queries,
+            context_pack_total_tokens, context_pack_avg_tokens,
+            context_pack_avg_constraints, context_pack_avg_decisions,
+            raw_source_tokens, breakeven_ratio, breakeven_note.
         """
         entries = self.read_all()
         if not entries:
-            return {
-                "total_calls": 0,
-                "total_input_tokens": 0,
-                "total_output_tokens": 0,
-                "total_tokens": 0,
-                "by_operation": {},
-                "model": "",
-                "status": {},
-                "benchmark_tasks": 0,
-                "avg_baseline_tokens": 0.0,
-                "avg_context_pack_tokens": 0.0,
-                "avg_savings_ratio": 0.0,
-                "tasks_to_breakeven": None,
-            }
+            return _empty_summary()
 
         total_calls = len(entries)
         total_input = sum(e.input_tokens for e in entries)
@@ -108,10 +149,13 @@ class UsageStore:
         model_counter: Counter[str] = Counter()
         status_counter: Counter[str] = Counter()
 
-        benchmark_entries: list[MetricsEntry] = []
-        avg_baseline = 0.0
-        avg_context_pack = 0.0
-        avg_savings_ratio = 0.0
+        extraction_init_calls = 0
+        extraction_init_tokens = 0
+        extraction_capture_calls = 0
+        extraction_capture_tokens = 0
+
+        context_pack_queries = 0
+        context_pack_total_tokens = 0
 
         for e in entries:
             by_operation[e.operation]["calls"] += 1  # type: ignore[index]
@@ -121,31 +165,36 @@ class UsageStore:
                 model_counter[e.model] += 1
             status_counter[e.status] += 1
 
-            if e.operation == "enforce_benchmark":
-                benchmark_entries.append(e)
+            if e.operation in ("init_adr", "init_freeform"):
+                extraction_init_calls += 1
+                extraction_init_tokens += e.total_tokens
+            elif e.operation == "capture":
+                extraction_capture_calls += 1
+                extraction_capture_tokens += e.total_tokens
+
+            if e.operation == "mcp_context_pack":
+                context_pack_queries += 1
+                context_pack_total_tokens += e.total_tokens
 
         model = model_counter.most_common(1)[0][0] if model_counter else ""
 
-        benchmark_tasks = len(benchmark_entries)
-        tasks_to_breakeven: float | None = None
+        extraction_total_tokens = extraction_init_tokens + extraction_capture_tokens
 
-        if benchmark_tasks > 0:
-            avg_baseline = (
-                sum(be.baseline_tokens or 0 for be in benchmark_entries)
-                / benchmark_tasks
-            )
-            avg_context_pack = (
-                sum(be.context_pack_tokens or 0 for be in benchmark_entries)
-                / benchmark_tasks
-            )
-            avg_savings_ratio = (
-                sum(be.savings_ratio or 0.0 for be in benchmark_entries)
-                / benchmark_tasks
-            )
+        context_pack_avg_tokens = (
+            context_pack_total_tokens / context_pack_queries if context_pack_queries > 0 else 0.0
+        )
 
-            avg_savings = avg_baseline - avg_context_pack
-            if avg_savings > 0:
-                tasks_to_breakeven = total_tokens / avg_savings
+        raw_source_tokens = snapshot_raw_sources(cfg) if cfg is not None else 0
+
+        if context_pack_queries > 0 and raw_source_tokens > 0:
+            breakeven_ratio: float | None = raw_source_tokens / context_pack_avg_tokens
+            breakeven_note = (
+                f"Context pack is {context_pack_avg_tokens:.0f} tokens. "
+                f"Raw sources: {raw_source_tokens} tokens."
+            )
+        else:
+            breakeven_ratio = None
+            breakeven_note = "Need benchmark data."
 
         return {
             "total_calls": total_calls,
@@ -155,11 +204,19 @@ class UsageStore:
             "by_operation": dict(by_operation),
             "model": model,
             "status": dict(status_counter),
-            "benchmark_tasks": benchmark_tasks,
-            "avg_baseline_tokens": avg_baseline,
-            "avg_context_pack_tokens": avg_context_pack,
-            "avg_savings_ratio": avg_savings_ratio,
-            "tasks_to_breakeven": tasks_to_breakeven,
+            "extraction_init_calls": extraction_init_calls,
+            "extraction_init_tokens": extraction_init_tokens,
+            "extraction_capture_calls": extraction_capture_calls,
+            "extraction_capture_tokens": extraction_capture_tokens,
+            "extraction_total_tokens": extraction_total_tokens,
+            "context_pack_queries": context_pack_queries,
+            "context_pack_total_tokens": context_pack_total_tokens,
+            "context_pack_avg_tokens": context_pack_avg_tokens,
+            "context_pack_avg_constraints": 0.0,
+            "context_pack_avg_decisions": 0.0,
+            "raw_source_tokens": raw_source_tokens,
+            "breakeven_ratio": breakeven_ratio,
+            "breakeven_note": breakeven_note,
         }
 
     def reset(self) -> None:

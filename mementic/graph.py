@@ -61,56 +61,59 @@ class GraphStore:
     def link(self, source_id: str, target_id: str, relation: str) -> None:
         self._g.add_edge(source_id, target_id, relation=relation)
 
-    def get_constraints_for_entities(self, paths: list[str]) -> list[Constraint]:
+    def get_constraints_for_entities(
+        self, paths: list[str], prefix_match: bool = False
+    ) -> list[Constraint]:
+        seen: set[str] = set()
         result: list[Constraint] = []
         for _node_id, attrs in self._g.nodes(data=True):
             if attrs.get("node_type") != "Constraint":
                 continue
             bound_entities: list[str] = attrs["payload"].get("bound_entities", [])
-            if any(
-                any(be == p or be.startswith(p) or p.startswith(be) for p in paths)
-                for be in bound_entities
-            ):
-                result.append(Constraint(**attrs["payload"]))
+            for be in bound_entities:
+                for p in paths:
+                    if be == p or (prefix_match and be.startswith(p)):
+                        if attrs["payload"]["id"] not in seen:
+                            seen.add(attrs["payload"]["id"])
+                            result.append(Constraint(**attrs["payload"]))
         return result
 
     def get_decisions_for_entities(self, paths: list[str]) -> list[Decision]:
         decisions: dict[str, Decision] = {}
-
-        constraints = self.get_constraints_for_entities(paths)
-        for c in constraints:
-            for pred in self._g.predecessors(c.id):
-                attrs = self._g.nodes[pred]
-                if attrs.get("node_type") == "Decision":
-                    decisions[pred] = Decision(**attrs["payload"])
-
         for node_id, attrs in self._g.nodes(data=True):
             if attrs.get("node_type") != "CodeEntity":
                 continue
-            if not any(node_id == p or node_id.startswith(p) for p in paths):
+            if not any(node_id == p for p in paths):
                 continue
-            for pred in self._g.predecessors(node_id):
+            for pred in self.get_predecessors(node_id):
                 pred_attrs = self._g.nodes[pred]
                 if pred_attrs.get("node_type") == "Decision":
                     decisions[pred] = Decision(**pred_attrs["payload"])
-
         return list(decisions.values())
 
     def get_evolution(self, entity_path: str) -> list[Decision]:
         decisions: dict[str, Decision] = {}
 
-        constraints = self.get_constraints_for_entities([entity_path])
-        for c in constraints:
-            for pred in self._g.predecessors(c.id):
-                attrs = self._g.nodes[pred]
-                if attrs.get("node_type") == "Decision":
-                    decisions[pred] = Decision(**attrs["payload"])
+        for _node_id, attrs in self._g.nodes(data=True):
+            if attrs.get("node_type") != "Constraint":
+                continue
+            bound_entities: list[str] = attrs["payload"].get("bound_entities", [])
+            if any(
+                be == entity_path
+                or be.startswith(entity_path)
+                or entity_path.startswith(be)
+                for be in bound_entities
+            ):
+                for pred in self.get_predecessors(attrs["payload"]["id"]):
+                    pred_attrs = self._g.nodes[pred]
+                    if pred_attrs.get("node_type") == "Decision":
+                        decisions[pred] = Decision(**pred_attrs["payload"])
 
         for node_id, attrs in self._g.nodes(data=True):
             if attrs.get("node_type") != "CodeEntity":
                 continue
             if node_id == entity_path or node_id.startswith(entity_path):
-                for pred in self._g.predecessors(node_id):
+                for pred in self.get_predecessors(node_id):
                     pred_attrs = self._g.nodes[pred]
                     if pred_attrs.get("node_type") == "Decision":
                         decisions[pred] = Decision(**pred_attrs["payload"])
