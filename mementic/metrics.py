@@ -188,9 +188,10 @@ class UsageStore:
         raw_source_tokens = snapshot_raw_sources(cfg) if cfg is not None else 0
 
         if context_pack_queries > 0 and raw_source_tokens > 0:
-            size_ratio: float | None = context_pack_avg_tokens / raw_source_tokens
-            if size_ratio < 1.0:
-                savings_pct = (1.0 - size_ratio) * 100
+            ratio: float = context_pack_avg_tokens / raw_source_tokens
+            size_ratio: float | None = ratio
+            if ratio < 1.0:
+                savings_pct = (1.0 - ratio) * 100
                 breakeven_note = (
                     f"Context pack is {savings_pct:.0f}% smaller than raw sources "
                     f"({context_pack_avg_tokens:.0f} vs {raw_source_tokens} tokens). "
@@ -198,7 +199,7 @@ class UsageStore:
                 )
             else:
                 breakeven_note = (
-                    f"Context pack is {size_ratio:.1f}x larger than raw sources "
+                    f"Context pack is {ratio:.1f}x larger than raw sources "
                     f"({context_pack_avg_tokens:.0f} vs {raw_source_tokens} tokens). "
                     f"Not yet saving."
                 )
