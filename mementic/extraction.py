@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sys
 
 from dotenv import load_dotenv
@@ -18,6 +19,123 @@ load_dotenv()
 
 from mementic.config import LLMConfig  # noqa: E402
 from mementic.models import Constraint, ExtractionResult, UsageStats  # noqa: E402
+
+
+# ── Session truncation (Spec 10a) ────────────────────────────────────
+
+ARCHITECTURE_KEYWORDS: list[str] = [
+    "propose_decision", "propose_constraint",  # MCP tool calls (strongest signal)
+    "rejected", "instead of",                  # tradeoff/explicit rejection
+    "ADR", "tradeoff", "trade-off",             # formal constructs
+    "design decision", "design choice",          # explicit design talk
+    "migrate", "migration",                      # structural changes
+    "deprecate", "alternatively",                # lifecycle + tradeoff discussion
+]
+# NOTE: "architecture", "architectural", "constraint", "pattern", "refactor",
+# "library", "dependency", "implement" were removed — they match nearly every
+# message in architecture-focused sessions, producing massive merged windows.
+
+_MESSAGE_BOUNDARY_PREFIXES = (
+    "## ", "[user]", "[agent]", "[assistant]", "[system]", "---"
+)
+
+_KEYWORD_PATTERN = re.compile(
+    "|".join(re.escape(kw) for kw in ARCHITECTURE_KEYWORDS),
+    re.IGNORECASE,
+)
+
+
+def _extract_architecture_windows(
+    session_log: str, keywords: list[str], context_messages: int = 20
+) -> str:
+    """Scan session log for architecture keywords and extract context windows.
+
+    Splits the session log into lines, searches case-insensitive for each
+    keyword, and creates windows of ±context_messages lines around each match.
+    Overlapping windows are merged, and non-contiguous windows are joined
+    with "\\n...\\n" separators.
+
+    Args:
+        session_log: The full session log text.
+        keywords: Architecture keywords to search for.
+        context_messages: Number of lines of context before and after a match.
+
+    Returns:
+        Extracted windows joined as a single string, or empty string if no
+        keywords matched.
+    """
+    if not session_log.strip():
+        return ""
+
+    lines = session_log.split("\n")
+
+    match_indices: set[int] = set()
+    for i, line in enumerate(lines):
+        line_lower = line.lower()
+        for kw in keywords:
+            if kw.lower() in line_lower:
+                match_indices.add(i)
+                break
+
+    if not match_indices:
+        return ""
+
+    windows: list[tuple[int, int]] = []
+    for idx in sorted(match_indices):
+        start = max(0, idx - context_messages)
+        end = min(len(lines), idx + context_messages + 1)
+        windows.append((start, end))
+
+    merged: list[tuple[int, int]] = []
+    for start, end in windows:
+        if merged and start <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+        else:
+            merged.append((start, end))
+
+    parts = ["\n".join(lines[s:e]) for s, e in merged]
+    return "\n...\n".join(parts)
+
+
+def _truncate_tail(session_log: str, max_messages: int = 100) -> str:
+    """Truncate session log to the last N messages.
+
+    A message boundary is a line starting with one of the recognized prefixes
+    (``## `` for opencode, ``[user]``/``[agent]``/``[assistant]``/``[system]``
+    for Claude-style, ``---`` horizontal rules). If no recognized boundaries
+    are found, falls back to the last N lines.
+
+    Args:
+        session_log: The full session log text.
+        max_messages: Maximum number of messages (or lines) to keep.
+
+    Returns:
+        Truncated session log, or the full log if shorter than max_messages.
+        Returns empty string when max_messages is 0.
+    """
+    if max_messages == 0:
+        return ""
+
+    if not session_log.strip():
+        return session_log
+
+    lines = session_log.split("\n")
+
+    boundary_indices: list[int] = []
+    for i, line in enumerate(lines):
+        if line.startswith(_MESSAGE_BOUNDARY_PREFIXES):
+            boundary_indices.append(i)
+
+    if not boundary_indices:
+        if len(lines) <= max_messages:
+            return session_log
+        return "\n".join(lines[-(max_messages):])
+
+    if len(boundary_indices) <= max_messages:
+        return session_log
+
+    start_idx = boundary_indices[len(boundary_indices) - max_messages]
+    return "\n".join(lines[start_idx:])
 
 
 FREE_FORM_SYSTEM_PROMPT = """You are a software architecture analyst. Given text from an engineering document, identify architectural decisions and constraints.
@@ -192,14 +310,41 @@ def extract_from_session(
     git_diff: str,
     user_notes: str,
     config: LLMConfig,
+    max_messages: int = 100,
 ) -> tuple[ExtractionResult, UsageStats]:
     """
     Extract decisions from an agent session (log + diff + human notes).
     Similar to extract_from_freeform but with a session-specific system prompt.
 
+    Applies Spec 10a session truncation: smart windowing via architecture
+    keyword scan with tail fallback.
+
+    Args:
+        session_log: Raw agent session log.
+        git_diff: Git diff from the session.
+        user_notes: Optional human-provided notes.
+        config: LLM configuration.
+        max_messages: Max tail messages when no architecture keywords match.
+
     Returns:
         A tuple of (ExtractionResult, UsageStats).
     """
+    # Spec 10a: truncate session_log before building the prompt
+    if session_log.strip():
+        windows = _extract_architecture_windows(
+            session_log, ARCHITECTURE_KEYWORDS, context_messages=20
+        )
+        # Cap: if windowing produces too much, fall back to tail.
+        # 120K chars ≈ 30K tokens. More than that means the keywords
+        # saturated (every message matched), defeating the purpose.
+        if windows and len(windows) < 120_000:
+            session_log = windows
+        elif windows:
+            # Windows are too large — keywords saturated. Tail is better.
+            session_log = _truncate_tail(session_log, max_messages)
+        else:
+            session_log = _truncate_tail(session_log, max_messages)
+
     combined = ""
 
     if session_log.strip():

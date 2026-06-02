@@ -156,9 +156,9 @@ class TestConstraintQuerying:
         assert len(result) == 1
         assert result[0].id == "c1"
 
-    def test_prefix_match(self, populated_graph: GraphStore) -> None:
+    def test_prefix_match_opt_in(self, populated_graph: GraphStore) -> None:
         result = populated_graph.get_constraints_for_entities(
-            ["src/services/"]
+            ["src/services/"], prefix_match=True
         )
         assert len(result) == 1
         assert result[0].id == "c1"
@@ -170,20 +170,55 @@ class TestConstraintQuerying:
         assert len(result) == 2
 
 
+class TestConstraintExactMatch:
+    def test_constraints_exact_match_only(
+        self, populated_graph: GraphStore
+    ) -> None:
+        result = populated_graph.get_constraints_for_entities(["src/services/"])
+        assert len(result) == 0
+
+        result = populated_graph.get_constraints_for_entities(
+            ["src/services/io.py"]
+        )
+        assert len(result) == 1
+        assert result[0].id == "c1"
+
+    def test_constraints_prefix_mode(
+        self, populated_graph: GraphStore
+    ) -> None:
+        result = populated_graph.get_constraints_for_entities(
+            ["src/services/"], prefix_match=True
+        )
+        assert len(result) == 1
+        assert result[0].id == "c1"
+
+    def test_constraints_no_fuzzy_fallback(
+        self, populated_graph: GraphStore
+    ) -> None:
+        result = populated_graph.get_constraints_for_entities(
+            ["src/models/base.py.method"]
+        )
+        assert len(result) == 0
+
+        result = populated_graph.get_constraints_for_entities(
+            ["src/models/base.py.method"], prefix_match=True
+        )
+        assert len(result) == 0
+
+
 class TestTraversal:
     def test_get_decisions_for_entities(self, populated_graph: GraphStore) -> None:
         decisions = populated_graph.get_decisions_for_entities(
-            ["src/services/io.py"]
+            ["src/models/base.py"]
         )
         ids = {d.id for d in decisions}
-        assert "d1" in ids
+        assert "d3" in ids
 
     def test_get_decisions_direct_link(self, populated_graph: GraphStore) -> None:
         decisions = populated_graph.get_decisions_for_entities(
             ["src/models/base.py"]
         )
         ids = {d.id for d in decisions}
-        assert "d2" in ids
         assert "d3" in ids
 
     def test_get_evolution(self, populated_graph: GraphStore) -> None:
@@ -196,6 +231,24 @@ class TestTraversal:
         ids = {d.id for d in evolution}
         assert "d2" in ids
         assert "d3" in ids
+
+    def test_decisions_direct_only(
+        self, populated_graph: GraphStore
+    ) -> None:
+        decisions = populated_graph.get_decisions_for_entities(
+            ["src/models/base.py"]
+        )
+        ids = {d.id for d in decisions}
+        assert "d3" in ids
+
+    def test_decisions_no_transitive(
+        self, populated_graph: GraphStore
+    ) -> None:
+        decisions = populated_graph.get_decisions_for_entities(
+            ["src/services/io.py"]
+        )
+        ids = {d.id for d in decisions}
+        assert "d1" not in ids
 
     def test_get_evolution_prefix(self, populated_graph: GraphStore) -> None:
         evolution = populated_graph.get_evolution("src/models/base.py:BaseModel")

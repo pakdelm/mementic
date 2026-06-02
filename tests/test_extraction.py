@@ -7,6 +7,9 @@ import pytest
 
 from mementic.config import LLMConfig
 from mementic.extraction import (
+    _extract_architecture_windows,
+    _truncate_tail,
+    ARCHITECTURE_KEYWORDS,
     extract_from_adr_consequences,
     extract_from_freeform,
     extract_from_session,
@@ -487,4 +490,246 @@ class TestMissingApiKey:
         ):
             with pytest.raises(RuntimeError, match="openai"):
                 extract_from_session("log", "diff", "notes", config)
+
+
+# ── Spec 10a: Session Truncation Tests ─────────────────────────────
+
+
+def _build_session(num_messages: int, keyword_line: int | None = None) -> str:
+    """Build a synthetic session log with ``## User`` / ``## Assistant`` messages.
+
+    Args:
+        num_messages: Total number of messages (pairs of User/Assistant = 2*N).
+        keyword_line: If set, insert ``rejected`` at this 0-based line index.
+    """
+    lines: list[str] = []
+    for i in range(num_messages):
+        lines.append("## User")
+        lines.append(f"User message {i}")
+        lines.append("## Assistant")
+        lines.append(f"Assistant message {i}")
+    if keyword_line is not None and 0 <= keyword_line < len(lines):
+        lines[keyword_line] = lines[keyword_line] + " rejected"
+    return "\n".join(lines)
+
+
+class TestArchitectureWindows:
+    """Tests for _extract_architecture_windows keyword-scanning logic."""
+
+    def test_windows_keyword_match(self) -> None:
+        """Session containing 'architecture' and 'rejected' returns windowed output."""
+        log = _build_session(50, keyword_line=100)
+        # Also add a second keyword on another line
+        lines = log.split("\n")
+        lines[80] = lines[80] + " architecture"
+        log = "\n".join(lines)
+
+        result = _extract_architecture_windows(
+            log, ARCHITECTURE_KEYWORDS, context_messages=20
+        )
+        assert result != ""
+        # Should contain the keyword lines and their context
+        assert "rejected" in result.lower()
+        assert "architecture" in result.lower()
+
+    def test_windows_no_match_returns_empty(self) -> None:
+        """Session log with no keywords returns empty string."""
+        log = _build_session(50)
+        result = _extract_architecture_windows(
+            log, ARCHITECTURE_KEYWORDS, context_messages=20
+        )
+        assert result == ""
+
+    def test_windows_merges_overlapping(self) -> None:
+        """Two keywords close together produce one merged window, not two."""
+        lines = []
+        for i in range(100):
+            lines.append("## User")
+            lines.append(f"Message {i}")
+            lines.append("## Assistant")
+            lines.append(f"Reply {i}")
+        # Place keywords close together
+        lines[380] = lines[380] + " architecture"
+        lines[390] = lines[390] + " rejected"
+        log = "\n".join(lines)
+
+        result = _extract_architecture_windows(
+            log, ARCHITECTURE_KEYWORDS, context_messages=20
+        )
+        # Should be one merged window (no "\n...\n" separator)
+        assert result != ""
+        assert "...\n" not in result
+
+    def test_windows_mid_session_match(self) -> None:
+        """Keyword in the middle of a large session is captured with surrounding context."""
+        lines = []
+        for i in range(200):
+            lines.append("## User")
+            lines.append(f"User {i}")
+            lines.append("## Assistant")
+            lines.append(f"Assistant {i}")
+        # Place keyword near the middle
+        lines[400] = lines[400] + " propose_decision here"
+        log = "\n".join(lines)
+
+        result = _extract_architecture_windows(
+            log, ARCHITECTURE_KEYWORDS, context_messages=20
+        )
+        assert result != ""
+        assert "propose_decision" in result.lower()
+        # Should include lines around the match, not the full session
+        assert len(result.split("\n")) < len(lines)
+
+    def test_windows_multiple_keywords(self) -> None:
+        """Multiple different keywords all get captured."""
+        lines = []
+        for i in range(150):
+            lines.append("## User")
+            lines.append(f"U {i}")
+            lines.append("## Assistant")
+            lines.append(f"A {i}")
+        # Scatter keywords far apart
+        lines[100] = lines[100] + " migration"
+        lines[300] = lines[300] + " tradeoff"
+        lines[500] = lines[500] + " ADR"
+        log = "\n".join(lines)
+
+        result = _extract_architecture_windows(
+            log, ARCHITECTURE_KEYWORDS, context_messages=5
+        )
+        assert result != ""
+        assert "migration" in result.lower()
+        assert "tradeoff" in result.lower()
+        assert "adr" in result.lower()
+        # Three non-overlapping windows joined by separators
+        assert result.count("\n...\n") == 2
+
+
+class TestTailTruncation:
+    """Tests for _truncate_tail message-counting logic."""
+
+    def test_tail_fewer_than_n(self) -> None:
+        """Session with fewer messages than max_messages returns all messages."""
+        log = _build_session(5)
+        result = _truncate_tail(log, max_messages=100)
+        assert result == log
+
+    def test_tail_zero(self) -> None:
+        """max_messages=0 returns empty string."""
+        log = _build_session(10)
+        result = _truncate_tail(log, max_messages=0)
+        assert result == ""
+
+    def test_tail_truncates_to_n_messages(self) -> None:
+        """Session with more messages than max_messages returns only the last N."""
+        log = _build_session(50)
+        result = _truncate_tail(log, max_messages=20)
+        assert result != log
+        # 50 pairs = 100 boundary lines; last 20 boundaries = 10 pairs
+        result_lines = result.split("\n")
+        assert result_lines[0].startswith("## ")
+        assert "User message 40" in result_lines[1]
+
+    def test_tail_empty_input(self) -> None:
+        """Empty session log returns empty string."""
+        result = _truncate_tail("", max_messages=100)
+        assert result == ""
+
+    def test_tail_no_recognized_boundaries_falls_back_to_lines(self) -> None:
+        """Unrecognized format falls back to last N lines."""
+        lines = [f"Line {i}" for i in range(200)]
+        log = "\n".join(lines)
+        result = _truncate_tail(log, max_messages=10)
+        expected = "\n".join(lines[-10:])
+        assert result == expected
+
+
+class TestExtractFromSessionTruncation:
+    """Tests that extract_from_session applies truncation before LLM call."""
+
+    def _get_user_content(self, client_mock: MagicMock) -> str:
+        """Extract the user message content from the mocked LLM call."""
+        call_args = client_mock.chat.completions.create.call_args
+        messages = call_args.kwargs["messages"]
+        for msg in messages:
+            if msg["role"] == "user":
+                return str(msg["content"])
+        return ""
+
+    def test_extract_uses_windows_when_match(self) -> None:
+        """extract_from_session with keyword-rich input uses windows for session_log."""
+        config = LLMConfig()
+        # Build session with keyword early on
+        lines = []
+        for i in range(200):
+            lines.append("## User")
+            lines.append(f"U {i}")
+            lines.append("## Assistant")
+            lines.append(f"A {i}")
+        lines[50] = lines[50] + " architecture tradeoff"
+        log = "\n".join(lines)
+
+        result_obj = ExtractionResult()
+        client = _mock_client(result_obj)
+
+        with patch("mementic.extraction.get_client", return_value=client):
+            extract_from_session(
+                session_log=log,
+                git_diff="",
+                user_notes="",
+                config=config,
+            )
+
+        user_content = self._get_user_content(client)
+        # Windows should contain early content, not just the tail
+        assert "architecture" in user_content.lower()
+        # Should NOT contain the full session — windowed output is shorter
+        assert len(user_content) < len(log)
+
+    def test_extract_falls_back_to_tail(self) -> None:
+        """extract_from_session with no keywords falls back to tail truncation."""
+        config = LLMConfig()
+        log = _build_session(200)
+        assert "architecture" not in log.lower()
+
+        result_obj = ExtractionResult()
+        client = _mock_client(result_obj)
+
+        with patch("mementic.extraction.get_client", return_value=client):
+            extract_from_session(
+                session_log=log,
+                git_diff="",
+                user_notes="",
+                config=config,
+                max_messages=40,
+            )
+
+        user_content = self._get_user_content(client)
+        # 200 pairs = 400 boundaries; max_messages=40 => last 40 boundaries = 20 pairs
+        # Those should be pairs 180-199
+        assert "User message 180" in user_content
+        # Should NOT contain early messages
+        assert "User message 0" not in user_content
+
+    def test_extract_tail_zero_no_match(self) -> None:
+        """extract_from_session with max_messages=0 and no keywords passes no session to LLM."""
+        config = LLMConfig()
+        log = "Some text without any special terms\n## User\nnothing here\n## Assistant\nno keywords"
+
+        result_obj = ExtractionResult()
+        client = _mock_client(result_obj)
+
+        with patch("mementic.extraction.get_client", return_value=client):
+            extract_from_session(
+                session_log=log,
+                git_diff="+import os",
+                user_notes="",
+                config=config,
+                max_messages=0,
+            )
+
+        user_content = self._get_user_content(client)
+        # Session log section should be absent; only git diff should be present
+        assert "Agent Session Log" not in user_content
+        assert "Git Diff" in user_content
 

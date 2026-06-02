@@ -53,6 +53,8 @@ def format_context_pack(
     task: str,
     decisions: list[Decision],
     constraints: list[Constraint],
+    max_constraints: int = 10,
+    max_decisions: int = 10,
 ) -> str:
     """Produces structured markdown for agent context injection."""
     lines = [f"## Architectural Context for: {task}"]
@@ -60,19 +62,27 @@ def format_context_pack(
     if constraints:
         lines.append("")
         lines.append("### Constraints (MUST follow)")
-        for c in constraints:
-            lines.append(f"[C] {c.id}")
-            lines.append(f'   "{c.description}"')
+        shown = constraints[:max_constraints]
+        for c in shown:
             enforced = c.enforced_by if c.enforced_by else "unknown"
-            lines.append(f"   Established by: {enforced}")
+            lines.append(
+                f"- [C] {c.id}: {c.description} (enforced by: {enforced})"
+            )
+        remaining = len(constraints) - len(shown)
+        if remaining > 0:
+            lines.append(f"... and {remaining} more constraints")
 
     if decisions:
         lines.append("")
         lines.append("### Relevant Decisions")
-        for d in decisions:
+        shown_d = decisions[:max_decisions]
+        for d in shown_d:
             lines.append(f"* {d.title} ({d.timestamp})")
             lines.append(f"  {d.rationale}")
             if d.rejected_alternatives:
                 lines.append(f"  Rejected: {', '.join(d.rejected_alternatives)}")
+        remaining = len(decisions) - len(shown_d)
+        if remaining > 0:
+            lines.append(f"... and {remaining} more decisions")
 
     return "\n".join(lines)
