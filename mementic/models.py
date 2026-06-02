@@ -80,20 +80,13 @@ class UsageStats(BaseModel):
 
 
 class MetricsEntry(BaseModel):
-    """One row in the metrics log, representing a single mementic operation.
-
-    Benchmark fields (baseline_tokens, context_pack_tokens, savings_ratio) are
-    only populated for 'enforce_benchmark' entries.
-    """
+    """One row in the metrics log, representing a single mementic operation."""
 
     timestamp: str
-    operation: str  # init_freeform / init_adr / capture / enforce_benchmark / mcp_context_pack
+    operation: str  # init_freeform / init_adr / capture / mcp_context_pack
     source_label: str = ""
     input_tokens: int = 0
     output_tokens: int = 0
     total_tokens: int = 0
     model: str = ""
     status: str = "success"
-    baseline_tokens: int | None = None
-    context_pack_tokens: int | None = None
-    savings_ratio: float | None = None

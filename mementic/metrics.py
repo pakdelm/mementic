@@ -7,14 +7,11 @@ import os
 from collections import Counter, defaultdict
 from pathlib import Path
 
-from mementic.config import MementicConfig
-from mementic.format import count_tokens
 from mementic.models import MetricsEntry
 
 
-def _empty_summary(cfg: MementicConfig | None = None) -> dict:
+def _empty_summary() -> dict:
     """Return an empty summary dict with honest zero/default values."""
-    raw_src = snapshot_raw_sources(cfg) if cfg is not None else 0
     return {
         "total_calls": 0,
         "total_input_tokens": 0,
@@ -33,45 +30,7 @@ def _empty_summary(cfg: MementicConfig | None = None) -> dict:
         "context_pack_avg_tokens": 0.0,
         "context_pack_avg_constraints": 0.0,
         "context_pack_avg_decisions": 0.0,
-        "raw_source_tokens": raw_src,
-        "size_ratio": None,
-        "breakeven_note": "Need benchmark data. Run `mementic context --benchmark`.",
     }
-
-
-def snapshot_raw_sources(cfg: MementicConfig) -> int:
-    """Count tokens in all configured source directories (ADRs + instructions).
-
-    Reads every ``*.md`` file in each configured source directory and sums
-    their token counts. Cache-free (called when metrics is displayed).
-    Returns 0 if no sources configured or directories missing.
-
-    Args:
-        cfg: The MementicConfig instance.
-
-    Returns:
-        Total token count across all ``*.md`` source files.
-    """
-    total = 0
-    for adr in cfg.sources.adr_dirs:
-        dir_path = Path(adr.path)
-        if dir_path.is_dir():
-            for f in dir_path.rglob("*.md"):
-                if f.is_file():
-                    total += count_tokens(f.read_text(encoding="utf-8"))
-    for oc_src in cfg.sources.opencode_instructions:
-        dir_path = Path(oc_src.path)
-        if dir_path.is_dir():
-            for f in dir_path.rglob("*.md"):
-                if f.is_file():
-                    total += count_tokens(f.read_text(encoding="utf-8"))
-    for claude_src in cfg.sources.claude_instructions:
-        dir_path = Path(claude_src.path)
-        if dir_path.is_dir():
-            for f in dir_path.rglob("*.md"):
-                if f.is_file():
-                    total += count_tokens(f.read_text(encoding="utf-8"))
-    return total
 
 
 class UsageStore:
@@ -118,26 +77,22 @@ class UsageStore:
                 entries.append(MetricsEntry.model_validate(json.loads(stripped)))
         return entries
 
-    def summary(self, cfg: MementicConfig | None = None) -> dict:
+    def summary(self) -> dict:
         """Return an aggregated summary of all stored metrics.
 
-        Args:
-            cfg: Optional MementicConfig for counting raw source tokens.
-
         Returns:
-            A dict with keys for honest cost accounting:
+            A dict with honest cost accounting:
             total_calls, total_input_tokens, total_output_tokens,
             total_tokens, by_operation, model, status,
             extraction_init_calls, extraction_init_tokens,
             extraction_capture_calls, extraction_capture_tokens,
             extraction_total_tokens, context_pack_queries,
             context_pack_total_tokens, context_pack_avg_tokens,
-            context_pack_avg_constraints, context_pack_avg_decisions,
-            raw_source_tokens, size_ratio, breakeven_note.
+            context_pack_avg_constraints, context_pack_avg_decisions.
         """
         entries = self.read_all()
         if not entries:
-            return _empty_summary(cfg)
+            return _empty_summary()
 
         total_calls = len(entries)
         total_input = sum(e.input_tokens for e in entries)
@@ -185,28 +140,6 @@ class UsageStore:
             context_pack_total_tokens / context_pack_queries if context_pack_queries > 0 else 0.0
         )
 
-        raw_source_tokens = snapshot_raw_sources(cfg) if cfg is not None else 0
-
-        if context_pack_queries > 0 and raw_source_tokens > 0:
-            ratio: float = context_pack_avg_tokens / raw_source_tokens
-            size_ratio: float | None = ratio
-            if ratio < 1.0:
-                savings_pct = (1.0 - ratio) * 100
-                breakeven_note = (
-                    f"Context pack is {savings_pct:.0f}% smaller than raw sources "
-                    f"({context_pack_avg_tokens:.0f} vs {raw_source_tokens} tokens). "
-                    f"Saving tokens per query."
-                )
-            else:
-                breakeven_note = (
-                    f"Context pack is {ratio:.1f}x larger than raw sources "
-                    f"({context_pack_avg_tokens:.0f} vs {raw_source_tokens} tokens). "
-                    f"Not yet saving."
-                )
-        else:
-            size_ratio = None
-            breakeven_note = "Need benchmark data. Run `mementic context --benchmark`."
-
         return {
             "total_calls": total_calls,
             "total_input_tokens": total_input,
@@ -225,9 +158,6 @@ class UsageStore:
             "context_pack_avg_tokens": context_pack_avg_tokens,
             "context_pack_avg_constraints": 0.0,
             "context_pack_avg_decisions": 0.0,
-            "raw_source_tokens": raw_source_tokens,
-            "size_ratio": size_ratio,
-            "breakeven_note": breakeven_note,
         }
 
     def reset(self) -> None:
