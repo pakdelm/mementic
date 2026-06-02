@@ -29,6 +29,7 @@ ARCHITECTURE_KEYWORDS: list[str] = [
     "ADR", "tradeoff", "trade-off",             # formal constructs
     "design decision", "design choice",          # explicit design talk
     "migrate", "migration",                      # structural changes
+    "deprecate", "alternatively",                # lifecycle + tradeoff discussion
 ]
 # NOTE: "architecture", "architectural", "constraint", "pattern", "refactor",
 # "library", "dependency", "implement" were removed — they match nearly every
