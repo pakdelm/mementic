@@ -844,8 +844,9 @@ def metrics(
     ),
 ) -> None:
     """Display aggregated token usage metrics."""
+    cfg = load_config()
     store = UsageStore()
-    summary = store.summary()
+    summary = store.summary(cfg)
 
     if json_output:
         typer.echo(json.dumps(summary, indent=2, default=str))
@@ -876,26 +877,18 @@ def metrics(
         cp_queries = summary["context_pack_queries"]
         cp_total = summary["context_pack_total_tokens"]
         cp_avg = summary["context_pack_avg_tokens"]
-        cp_avg_c = summary["context_pack_avg_constraints"]
-        cp_avg_d = summary["context_pack_avg_decisions"]
         typer.echo(
             f"    queries:     {cp_queries:>4} calls   {cp_total:>10,} tokens"
         )
         typer.echo(
             f"    avg pack:    {cp_avg:>10,.0f} tokens/query"
         )
-        typer.echo(
-            f"    avg constraints:  {cp_avg_c:,.0f}"
-        )
-        typer.echo(
-            f"    avg decisions:    {cp_avg_d:,.0f}"
-        )
 
-        # ── Section 3: Breakeven Analysis ──
+        # -- Section 3: Breakeven Analysis --
         typer.echo()
         typer.echo("  Breakeven analysis")
         raw_src = summary["raw_source_tokens"]
-        breakeven_ratio = summary.get("breakeven_ratio")
+        size_ratio = summary.get("size_ratio")
         breakeven_note = summary.get("breakeven_note", "")
         typer.echo(
             f"    raw source size:     {raw_src:>6,} tokens"
@@ -905,45 +898,15 @@ def metrics(
             f"    context pack size:   {cp_avg:>6,.0f} tokens"
             f"   (avg per query)"
         )
-        if breakeven_ratio is not None:
+        if size_ratio is not None:
             typer.echo(
-                f"    breakeven ratio:     {breakeven_ratio:>6.1f}x"
-                f"   (raw sources / context pack)"
+                f"    size ratio:          {size_ratio:>6.1f}x"
+                f"   (context pack / raw sources)"
             )
         else:
-            typer.echo(
-                "    breakeven ratio:     N/A"
-                "   (need context pack data)"
-            )
+            typer.echo("    size ratio:          N/A   (need data)")
         if breakeven_note:
             typer.echo(f"    -> {breakeven_note}")
-
-        # ── Recommendations ──
-        typer.echo()
-        typer.echo("  Recommendations")
-        if capture_tokens > 500_000:
-            typer.echo(
-                "    - Session truncation (--tail) would reduce capture cost by ~97%"
-            )
-        if cp_avg > 1_000:
-            typer.echo(
-                "    - Context pack relevance fix (exact-match) would"
-                " reduce query size by ~95%"
-            )
-        if raw_src < cp_total and cp_queries > 0:
-            typer.echo(
-                "    - Graph is larger than raw sources."
-                " Breakeven requires more source docs."
-            )
-        if cp_queries == 0:
-            typer.echo(
-                "    - No context pack queries yet."
-                " Run 'mementic context --benchmark' to measure savings."
-            )
-        typer.echo(
-            "    - Run `mementic metrics` again after applying"
-            " Spec 10a + 10b"
-        )
 
     if reset:
         if typer.confirm("Delete all metrics?"):

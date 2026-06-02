@@ -108,8 +108,8 @@ class TestSummary:
         assert result["context_pack_avg_constraints"] == 0.0
         assert result["context_pack_avg_decisions"] == 0.0
         assert result["raw_source_tokens"] == 0
-        assert result["breakeven_ratio"] is None
-        assert result["breakeven_note"] == "Need benchmark data."
+        assert result["size_ratio"] is None
+        assert "Need benchmark data" in result["breakeven_note"]
 
     def test_summary_aggregates_tokens(self, tmp_path: Path) -> None:
         """summary() correctly aggregates token counts across entries."""
@@ -223,7 +223,7 @@ class TestSummary:
         assert "avg_context_pack_tokens" not in result
 
         # Honest fields exist
-        assert result["breakeven_note"] == "Need benchmark data."
+        assert "Need benchmark data" in result["breakeven_note"]
 
     def test_summary_breakeven_requires_data(self, tmp_path: Path) -> None:
         """When no context packs are logged, breakeven_note indicates need for data."""
@@ -236,8 +236,8 @@ class TestSummary:
         assert result["context_pack_queries"] == 0
         assert result["context_pack_total_tokens"] == 0
         assert result["context_pack_avg_tokens"] == 0.0
-        assert result["breakeven_ratio"] is None
-        assert result["breakeven_note"] == "Need benchmark data."
+        assert result["size_ratio"] is None
+        assert "Need benchmark data" in result["breakeven_note"]
 
     def test_summary_context_pack_aggregation(self, tmp_path: Path) -> None:
         """summary() correctly aggregates context pack query metrics."""

@@ -12,8 +12,9 @@ from mementic.format import count_tokens
 from mementic.models import MetricsEntry
 
 
-def _empty_summary() -> dict:
+def _empty_summary(cfg: MementicConfig | None = None) -> dict:
     """Return an empty summary dict with honest zero/default values."""
+    raw_src = snapshot_raw_sources(cfg) if cfg is not None else 0
     return {
         "total_calls": 0,
         "total_input_tokens": 0,
@@ -32,9 +33,9 @@ def _empty_summary() -> dict:
         "context_pack_avg_tokens": 0.0,
         "context_pack_avg_constraints": 0.0,
         "context_pack_avg_decisions": 0.0,
-        "raw_source_tokens": 0,
-        "breakeven_ratio": None,
-        "breakeven_note": "Need benchmark data.",
+        "raw_source_tokens": raw_src,
+        "size_ratio": None,
+        "breakeven_note": "Need benchmark data. Run `mementic context --benchmark`.",
     }
 
 
@@ -132,11 +133,11 @@ class UsageStore:
             extraction_total_tokens, context_pack_queries,
             context_pack_total_tokens, context_pack_avg_tokens,
             context_pack_avg_constraints, context_pack_avg_decisions,
-            raw_source_tokens, breakeven_ratio, breakeven_note.
+            raw_source_tokens, size_ratio, breakeven_note.
         """
         entries = self.read_all()
         if not entries:
-            return _empty_summary()
+            return _empty_summary(cfg)
 
         total_calls = len(entries)
         total_input = sum(e.input_tokens for e in entries)
@@ -187,14 +188,23 @@ class UsageStore:
         raw_source_tokens = snapshot_raw_sources(cfg) if cfg is not None else 0
 
         if context_pack_queries > 0 and raw_source_tokens > 0:
-            breakeven_ratio: float | None = raw_source_tokens / context_pack_avg_tokens
-            breakeven_note = (
-                f"Context pack is {context_pack_avg_tokens:.0f} tokens. "
-                f"Raw sources: {raw_source_tokens} tokens."
-            )
+            size_ratio: float | None = context_pack_avg_tokens / raw_source_tokens
+            if size_ratio < 1.0:
+                savings_pct = (1.0 - size_ratio) * 100
+                breakeven_note = (
+                    f"Context pack is {savings_pct:.0f}% smaller than raw sources "
+                    f"({context_pack_avg_tokens:.0f} vs {raw_source_tokens} tokens). "
+                    f"Saving tokens per query."
+                )
+            else:
+                breakeven_note = (
+                    f"Context pack is {size_ratio:.1f}x larger than raw sources "
+                    f"({context_pack_avg_tokens:.0f} vs {raw_source_tokens} tokens). "
+                    f"Not yet saving."
+                )
         else:
-            breakeven_ratio = None
-            breakeven_note = "Need benchmark data."
+            size_ratio = None
+            breakeven_note = "Need benchmark data. Run `mementic context --benchmark`."
 
         return {
             "total_calls": total_calls,
@@ -215,7 +225,7 @@ class UsageStore:
             "context_pack_avg_constraints": 0.0,
             "context_pack_avg_decisions": 0.0,
             "raw_source_tokens": raw_source_tokens,
-            "breakeven_ratio": breakeven_ratio,
+            "size_ratio": size_ratio,
             "breakeven_note": breakeven_note,
         }
 
