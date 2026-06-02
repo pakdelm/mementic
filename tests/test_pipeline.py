@@ -934,3 +934,122 @@ class TestRunInitCombinedCursorWindsurf:
         assert any(s.startswith("cursor:") for s in sources)
         assert any(s.startswith("windsurf:") for s in sources)
         assert len(all_usage) == 2
+
+
+# ── Spec 12a: Codebase Scanner Pipeline Integration ────────────────
+
+
+class TestRunInitWithRepoScan:
+    """Tests for run_init codebase scanning (Spec 12a)."""
+
+    def test_init_with_repo_scans_codebase(self, tmp_path: Path) -> None:
+        """run_init with repo_path scans the codebase and extracts decisions."""
+        # Create a pyproject.toml and Python file for the scanner to find
+        (tmp_path / "pyproject.toml").write_text(
+            "[project]\nname = \"test-project\"\n"
+        )
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "app.py").write_text(
+            "import fastapi\nfrom pydantic import BaseModel\n"
+        )
+
+        config_path = tmp_path / ".mementic.json"
+        config_data = {
+            "sources": {},
+            "output": {"graph_path": str(tmp_path / ".mementic" / "graph.json")},
+        }
+        config_path.write_text(json.dumps(config_data))
+
+        mock_decisions = [
+            Decision(
+                id="d-fastapi",
+                title="Use FastAPI",
+                rationale="FastAPI is used as web framework",
+                source="detected:codebase",
+                status=DecisionStatus.PROPOSED,
+                timestamp="2024-01-01T00:00:00Z",
+            )
+        ]
+        mock_result = ExtractionResult(
+            decisions=mock_decisions,
+            constraints=[],
+            affected_entities=["src/app.py"],
+            edges_to_create=[],
+        )
+
+        with patch(
+            "mementic.pipeline.extract_from_codebase_summary",
+            return_value=(mock_result, UsageStats(model="test-model", status="success")),
+        ):
+            gs, all_usage = run_init(
+                str(config_path), repo_path=str(tmp_path)
+            )
+
+        # Check that a decision was ingested from the codebase scan
+        decisions = gs.get_all_decisions()
+        assert len(decisions) >= 1
+        assert any(d.id == "d-fastapi" for d in decisions)
+
+    def test_init_with_no_scan_skips_scanner(self, tmp_path: Path) -> None:
+        """run_init with no_scan=True skips the codebase scanner entirely."""
+        (tmp_path / "pyproject.toml").write_text(
+            "[project]\nname = \"test\"\n"
+        )
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "app.py").write_text("import fastapi\n")
+
+        config_path = tmp_path / ".mementic.json"
+        config_data = {
+            "sources": {},
+            "output": {"graph_path": str(tmp_path / ".mementic" / "graph.json")},
+        }
+        config_path.write_text(json.dumps(config_data))
+
+        with patch(
+            "mementic.pipeline.extract_from_codebase_summary"
+        ) as mock_extract:
+            gs, all_usage = run_init(
+                str(config_path), repo_path=str(tmp_path), no_scan=True
+            )
+
+        # The extraction function should never be called
+        mock_extract.assert_not_called()
+        assert len(all_usage) == 0
+
+    def test_init_repo_path_none_skips_scanner(self, tmp_path: Path) -> None:
+        """run_init without repo_path does not call the scanner."""
+        config_path = tmp_path / ".mementic.json"
+        config_data = {
+            "sources": {},
+            "output": {"graph_path": str(tmp_path / ".mementic" / "graph.json")},
+        }
+        config_path.write_text(json.dumps(config_data))
+
+        with patch(
+            "mementic.pipeline.extract_from_codebase_summary"
+        ) as mock_extract:
+            gs, all_usage = run_init(str(config_path))
+
+        mock_extract.assert_not_called()
+        assert len(all_usage) == 0
+
+    def test_init_with_repo_scanner_empty_summary(self, tmp_path: Path) -> None:
+        """When codebase scan produces empty summary, no LLM call is made."""
+        config_path = tmp_path / ".mementic.json"
+        config_data = {
+            "sources": {},
+            "output": {"graph_path": str(tmp_path / ".mementic" / "graph.json")},
+        }
+        config_path.write_text(json.dumps(config_data))
+
+        # Empty tmp_path — scanner returns empty string
+        with patch(
+            "mementic.pipeline.extract_from_codebase_summary"
+        ) as mock_extract:
+            gs, all_usage = run_init(
+                str(config_path), repo_path=str(tmp_path)
+            )
+
+        # The extraction should not be called for an empty summary
+        mock_extract.assert_not_called()
+        assert len(all_usage) == 0

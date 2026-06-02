@@ -1246,3 +1246,67 @@ class TestCaptureNoGit:
         output = result.stdout + result.stderr
         assert result.exit_code == 0
         assert "no changes" in output.lower()
+
+
+# ── Spec 12a: Codebase Scanner CLI Tests ────────────────────────────
+
+
+class TestInitRepoFlag:
+    """Tests for mementic init --repo and --no-scan flags (Spec 12a)."""
+
+    def test_init_repo_flag_passed_to_pipeline(self, tmp_path: Path) -> None:
+        """mementic init --repo passes repo_path to run_init."""
+        old_cwd = os.getcwd()
+        try:
+            os.chdir(tmp_path)
+            config_path = tmp_path / ".mementic.json"
+            config_path.write_text(json.dumps({
+                "sources": {},
+                "output": {"graph_path": str(tmp_path / ".mementic" / "graph.json")},
+                "llm": {"provider": "deepseek", "model": "deepseek-chat"},
+            }))
+
+            with patch("mementic.cli.run_init", return_value=(MagicMock(), [])) as mock_run_init:
+                result = runner.invoke(
+                    app, ["init", "--config-path", str(config_path), "--repo", "/some/path"],
+                )
+
+            assert result.exit_code == 0
+            mock_run_init.assert_called_once()
+            call_kwargs = mock_run_init.call_args.kwargs
+            assert call_kwargs["repo_path"] == "/some/path"
+        finally:
+            os.chdir(old_cwd)
+
+    def test_init_no_scan_flag_passed_to_pipeline(self, tmp_path: Path) -> None:
+        """mementic init --no-scan passes no_scan=True to run_init."""
+        old_cwd = os.getcwd()
+        try:
+            os.chdir(tmp_path)
+            config_path = tmp_path / ".mementic.json"
+            config_path.write_text(json.dumps({
+                "sources": {},
+                "output": {"graph_path": str(tmp_path / ".mementic" / "graph.json")},
+                "llm": {"provider": "deepseek", "model": "deepseek-chat"},
+            }))
+
+            with patch("mementic.cli.run_init", return_value=(MagicMock(), [])) as mock_run_init:
+                result = runner.invoke(
+                    app, ["init", "--config-path", str(config_path), "--no-scan"],
+                )
+
+            assert result.exit_code == 0
+            mock_run_init.assert_called_once()
+            call_kwargs = mock_run_init.call_args.kwargs
+            assert call_kwargs["no_scan"] is True
+        finally:
+            os.chdir(old_cwd)
+
+    def test_init_help_shows_repo_and_no_scan(self) -> None:
+        """mementic init --help shows --repo and --no-scan options."""
+        result = runner.invoke(app, ["init", "--help"])
+
+        assert result.exit_code == 0
+        output = result.stdout
+        assert "--repo" in output
+        assert "--no-scan" in output

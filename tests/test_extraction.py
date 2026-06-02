@@ -11,6 +11,7 @@ from mementic.extraction import (
     _truncate_tail,
     ARCHITECTURE_KEYWORDS,
     extract_from_adr_consequences,
+    extract_from_codebase_summary,
     extract_from_freeform,
     extract_from_session,
 )
@@ -889,4 +890,174 @@ class TestLLMRetry:
         assert mock_sleep.call_args_list[0].args == (1,)
         assert mock_sleep.call_args_list[1].args == (2,)
         assert mock_sleep.call_args_list[2].args == (4,)
+
+# ── Spec 12a: Codebase Summary Extraction Tests ─────────────────────
+
+
+class TestExtractFromCodebaseSummary:
+    """Tests for extract_from_codebase_summary codebase cold-start extraction."""
+
+    def _make_codebase_mock_response(
+        self, decisions: list | None = None
+    ) -> MagicMock:
+        """Build a mock LLM response with decisions."""
+        result = ExtractionResult(
+            decisions=decisions or [],
+            constraints=[],
+            affected_entities=["src/main.py"],
+            edges_to_create=[],
+        )
+        choice = MagicMock()
+        choice.message.content = result.model_dump_json()
+        response = MagicMock()
+        response.choices = [choice]
+        return response
+
+    def test_extracts_decisions_with_proposed_status(self) -> None:
+        """LLM-returned decisions are forced to proposed status with codebase source."""
+        config = LLMConfig()
+        decision = Decision(
+            id="d-fastapi",
+            title="Use FastAPI",
+            rationale="FastAPI is the web framework",
+            source="freeform",
+            status=DecisionStatus.ACCEPTED,
+            timestamp="2024-01-01T00:00:00Z",
+        )
+        client = MagicMock()
+        response = self._make_codebase_mock_response(decisions=[decision])
+        client.chat.completions.create.return_value = response
+
+        with patch("mementic.extraction.get_client", return_value=client):
+            output, usage = extract_from_codebase_summary(
+                "## Repository Structure\nsrc/app.py (imports: fastapi)",
+                config,
+            )
+
+        assert isinstance(output, ExtractionResult)
+        assert len(output.decisions) == 1
+        d = output.decisions[0]
+        assert d.title == "Use FastAPI"
+        assert d.status == DecisionStatus.PROPOSED
+        assert d.source == "detected:codebase"
+
+    def test_empty_summary_returns_empty_result(self) -> None:
+        """Empty summary string returns empty ExtractionResult with zero tokens."""
+        config = LLMConfig()
+        output, usage = extract_from_codebase_summary("", config)
+
+        assert isinstance(output, ExtractionResult)
+        assert output.decisions == []
+        assert output.constraints == []
+        assert usage.total_tokens == 0
+        assert usage.status == "success"
+
+    def test_whitespace_only_summary_returns_empty_result(self) -> None:
+        """Whitespace-only summary returns empty ExtractionResult."""
+        config = LLMConfig()
+        output, usage = extract_from_codebase_summary("   \n  \t  ", config)
+
+        assert isinstance(output, ExtractionResult)
+        assert output.decisions == []
+        assert output.constraints == []
+
+    def test_llm_returns_invalid_json(self) -> None:
+        """LLM returning invalid JSON is handled gracefully with error status."""
+        config = LLMConfig()
+        client = MagicMock()
+        choice = MagicMock()
+        choice.message.content = "not valid json {{"
+        response = MagicMock()
+        response.choices = [choice]
+        client.chat.completions.create.return_value = response
+
+        with patch("mementic.extraction.get_client", return_value=client):
+            output, usage = extract_from_codebase_summary(
+                "## Repository Structure\nsome info",
+                config,
+            )
+
+        assert isinstance(output, ExtractionResult)
+        assert output.decisions == []
+        assert usage.status == "error"
+
+    def test_llm_returns_validation_error(self) -> None:
+        """LLM returning valid JSON but wrong schema is handled gracefully."""
+        config = LLMConfig()
+        client = MagicMock()
+        choice = MagicMock()
+        choice.message.content = '{"decisions": "not_a_list"}'
+        response = MagicMock()
+        response.choices = [choice]
+        client.chat.completions.create.return_value = response
+
+        with patch("mementic.extraction.get_client", return_value=client):
+            output, usage = extract_from_codebase_summary(
+                "## Repository Structure\nsome info",
+                config,
+            )
+
+        assert isinstance(output, ExtractionResult)
+        assert output.decisions == []
+        assert usage.status == "error"
+
+    def test_none_content_returns_empty_result(self) -> None:
+        """LLM returning None content is handled gracefully."""
+        config = LLMConfig()
+        client = MagicMock()
+        choice = MagicMock()
+        choice.message.content = None
+        response = MagicMock()
+        response.choices = [choice]
+        client.chat.completions.create.return_value = response
+
+        with patch("mementic.extraction.get_client", return_value=client):
+            output, usage = extract_from_codebase_summary(
+                "## Repository Structure\nsome info",
+                config,
+            )
+
+        assert isinstance(output, ExtractionResult)
+        assert output.decisions == []
+
+    def test_auth_error_raises(self) -> None:
+        """AuthenticationError is re-raised as RuntimeError."""
+        config = LLMConfig()
+        auth_err = AuthenticationError(
+            message="bad key", response=MagicMock(), body=None
+        )
+        client = MagicMock()
+        client.chat.completions.create.side_effect = auth_err
+
+        with patch("mementic.extraction.get_client", return_value=client):
+            with pytest.raises(RuntimeError, match="Authentication failed"):
+                extract_from_codebase_summary("summary", config)
+
+    def test_rate_limit_returns_empty(self) -> None:
+        """RateLimitError returns empty result with rate_limited status."""
+        config = LLMConfig()
+        client = MagicMock()
+        client.chat.completions.create.side_effect = RateLimitError(
+            message="limit", response=MagicMock(), body=None
+        )
+
+        with patch("mementic.extraction.get_client", return_value=client):
+            output, usage = extract_from_codebase_summary("summary", config)
+
+        assert output == ExtractionResult()
+        assert usage.status == "rate_limited"
+
+    def test_timeout_returns_empty(self) -> None:
+        """APITimeoutError returns empty result with error status."""
+        config = LLMConfig()
+        client = MagicMock()
+        client.chat.completions.create.side_effect = APITimeoutError(
+            request=MagicMock()
+        )
+
+        with patch("mementic.extraction.get_client", return_value=client):
+            output, usage = extract_from_codebase_summary("summary", config)
+
+        assert output == ExtractionResult()
+        assert usage.status == "error"
 
