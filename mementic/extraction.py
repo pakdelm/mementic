@@ -24,16 +24,15 @@ from mementic.models import Constraint, ExtractionResult, UsageStats  # noqa: E4
 # ── Session truncation (Spec 10a) ────────────────────────────────────
 
 ARCHITECTURE_KEYWORDS: list[str] = [
-    "propose_decision", "propose_constraint",
-    "architecture", "architectural",
-    "design decision", "design choice",
-    "chose", "chosen", "picked",
-    "rejected", "alternative", "instead of",
-    "pattern", "constraint", "ADR",
-    "tradeoff", "trade-off", "pros and cons",
-    "migrate", "migration", "refactor",
-    "library", "dependency", "introduce",
+    "propose_decision", "propose_constraint",  # MCP tool calls (strongest signal)
+    "rejected", "instead of",                  # tradeoff/explicit rejection
+    "ADR", "tradeoff", "trade-off",             # formal constructs
+    "design decision", "design choice",          # explicit design talk
+    "migrate", "migration",                      # structural changes
 ]
+# NOTE: "architecture", "architectural", "constraint", "pattern", "refactor",
+# "library", "dependency", "implement" were removed — they match nearly every
+# message in architecture-focused sessions, producing massive merged windows.
 
 _MESSAGE_BOUNDARY_PREFIXES = (
     "## ", "[user]", "[agent]", "[assistant]", "[system]", "---"
@@ -73,7 +72,7 @@ def _extract_architecture_windows(
     for i, line in enumerate(lines):
         line_lower = line.lower()
         for kw in keywords:
-            if kw in line_lower:
+            if kw.lower() in line_lower:
                 match_indices.add(i)
                 break
 
@@ -334,8 +333,14 @@ def extract_from_session(
         windows = _extract_architecture_windows(
             session_log, ARCHITECTURE_KEYWORDS, context_messages=20
         )
-        if windows:
+        # Cap: if windowing produces too much, fall back to tail.
+        # 120K chars ≈ 30K tokens. More than that means the keywords
+        # saturated (every message matched), defeating the purpose.
+        if windows and len(windows) < 120_000:
             session_log = windows
+        elif windows:
+            # Windows are too large — keywords saturated. Tail is better.
+            session_log = _truncate_tail(session_log, max_messages)
         else:
             session_log = _truncate_tail(session_log, max_messages)
 

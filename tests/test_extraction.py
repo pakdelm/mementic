@@ -569,14 +569,14 @@ class TestArchitectureWindows:
             lines.append("## Assistant")
             lines.append(f"Assistant {i}")
         # Place keyword near the middle
-        lines[400] = lines[400] + " chose this pattern"
+        lines[400] = lines[400] + " propose_decision here"
         log = "\n".join(lines)
 
         result = _extract_architecture_windows(
             log, ARCHITECTURE_KEYWORDS, context_messages=20
         )
         assert result != ""
-        assert "chose" in result.lower()
+        assert "propose_decision" in result.lower()
         # Should include lines around the match, not the full session
         assert len(result.split("\n")) < len(lines)
 
@@ -590,8 +590,8 @@ class TestArchitectureWindows:
             lines.append(f"A {i}")
         # Scatter keywords far apart
         lines[100] = lines[100] + " migration"
-        lines[300] = lines[300] + " refactor"
-        lines[500] = lines[500] + " library"
+        lines[300] = lines[300] + " tradeoff"
+        lines[500] = lines[500] + " ADR"
         log = "\n".join(lines)
 
         result = _extract_architecture_windows(
@@ -599,8 +599,8 @@ class TestArchitectureWindows:
         )
         assert result != ""
         assert "migration" in result.lower()
-        assert "refactor" in result.lower()
-        assert "library" in result.lower()
+        assert "tradeoff" in result.lower()
+        assert "adr" in result.lower()
         # Three non-overlapping windows joined by separators
         assert result.count("\n...\n") == 2
 
