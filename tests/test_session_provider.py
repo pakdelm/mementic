@@ -19,11 +19,13 @@ from mementic.session.claude_code import (
     DEFAULT_CLAUDECODE_PATHS,
     ClaudeCodeSessionProvider,
 )
+from mementic.session.cursor import CursorSessionProvider
 from mementic.session.generic import GenericSessionProvider
 from mementic.session.opencode import (
     DEFAULT_SESSION_PATHS,
     OpenCodeSessionProvider,
 )
+from mementic.session.windsurf import WindsurfSessionProvider
 
 
 # ── Registry Tests ────────────────────────────────────────────────────
@@ -32,12 +34,14 @@ from mementic.session.opencode import (
 class TestRegistry:
     """Tests for SessionProviderRegistry and auto-registration."""
 
-    def test_registry_has_three_builtin_providers(self) -> None:
-        """Verify 'opencode', 'claude-code', 'generic' are auto-registered."""
+    def test_registry_has_five_builtin_providers(self) -> None:
+        """Verify 'opencode', 'claude-code', 'generic', 'cursor', 'windsurf' are auto-registered."""
         registry = get_registry()
         assert registry.get("opencode") is not None
         assert registry.get("claude-code") is not None
         assert registry.get("generic") is not None
+        assert registry.get("cursor") is not None
+        assert registry.get("windsurf") is not None
 
     def test_registry_get_returns_instance(self) -> None:
         """get('opencode') returns an OpenCodeSessionProvider."""
@@ -45,6 +49,22 @@ class TestRegistry:
         provider = registry.get("opencode")
         assert provider is not None
         assert isinstance(provider, OpenCodeSessionProvider)
+
+    def test_registry_includes_cursor(self) -> None:
+        """get('cursor') returns a CursorSessionProvider."""
+        registry = get_registry()
+        provider = registry.get("cursor")
+        assert provider is not None
+        assert isinstance(provider, CursorSessionProvider)
+        assert provider.agent_name == "cursor"
+
+    def test_registry_includes_windsurf(self) -> None:
+        """get('windsurf') returns a WindsurfSessionProvider."""
+        registry = get_registry()
+        provider = registry.get("windsurf")
+        assert provider is not None
+        assert isinstance(provider, WindsurfSessionProvider)
+        assert provider.agent_name == "windsurf"
 
     def test_registry_get_unknown_returns_none(self) -> None:
         """get('nonexistent') returns None."""
@@ -526,6 +546,10 @@ class TestRegistryDetectEdgeCases:
             patch.object(registry.get("claude-code"), "read_session_log",
                          side_effect=OSError("cannot read")),
             patch.object(registry.get("generic"), "read_session_log",
+                         side_effect=OSError("cannot read")),
+            patch.object(registry.get("cursor"), "read_session_log",
+                         side_effect=OSError("cannot read")),
+            patch.object(registry.get("windsurf"), "read_session_log",
                          side_effect=OSError("cannot read")),
         ):
             provider, found = registry.detect(session_path=str(session_file))

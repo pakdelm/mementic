@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import re
 import sys
+import time
+from typing import Any
 
 from dotenv import load_dotenv
 from openai import (
@@ -206,6 +208,69 @@ def _provider_prefix(config: LLMConfig) -> str:
     return provider
 
 
+def _call_llm_with_retry(
+    client: OpenAI,
+    messages: list[dict[str, str]],
+    model: str,
+    response_format: dict | None = None,
+    max_retries: int = 3,
+) -> Any:
+    """Call the LLM API with exponential backoff on transient errors.
+
+    Retries on RateLimitError and server errors (5xx).
+    Fails immediately on AuthenticationError and other permanent errors.
+
+    Args:
+        client: The OpenAI client.
+        messages: The message list for the API call.
+        model: The model name.
+        response_format: Optional response format dict.
+        max_retries: Maximum number of retries (default 3).
+
+    Returns:
+        The ChatCompletion response.
+
+    Raises:
+        AuthenticationError: Immediately re-raised (fatal).
+        RateLimitError: Re-raised after exhausting retries.
+        APITimeoutError, APIConnectionError: Re-raised after exhausting retries.
+    """
+    last_exception: Exception | None = None
+
+    for attempt in range(max_retries + 1):
+        try:
+            kwargs: dict[str, Any] = {
+                "model": model,
+                "temperature": 0.1,
+                "messages": messages,
+            }
+            if response_format is not None:
+                kwargs["response_format"] = response_format
+
+            return client.chat.completions.create(**kwargs)
+        except AuthenticationError:
+            raise  # Fatal — no retry
+        except RateLimitError as e:
+            last_exception = e
+            if attempt < max_retries:
+                delay = 2**attempt  # 1, 2, 4, ...
+                time.sleep(delay)
+        except (APITimeoutError, APIConnectionError) as e:
+            last_exception = e
+            if attempt < max_retries:
+                time.sleep(1)
+        except APIError as e:
+            last_exception = e
+            if attempt < max_retries:
+                time.sleep(1)
+
+    # Exhausted retries
+    if last_exception is not None:
+        raise last_exception
+    # Should never reach here but satisfy type checker
+    raise RuntimeError("Unexpected: retry loop exhausted with no exception")
+
+
 def extract_from_freeform(
     text: str,
     source_label: str,
@@ -231,14 +296,14 @@ def extract_from_freeform(
     system_prompt = FREE_FORM_SYSTEM_PROMPT.format(extraction_schema=extraction_schema)
     prefix = _provider_prefix(config)
 
+    messages: list[dict[str, str]] = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": f"Source: {source_label}\n\nText:\n{text}"},
+    ]
+
     try:
-        response = client.chat.completions.create(
-            model=config.extraction_model,
-            temperature=0.1,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": f"Source: {source_label}\n\nText:\n{text}"},
-            ],
+        response = _call_llm_with_retry(
+            client, messages, config.extraction_model,
             response_format={"type": "json_object"},
         )
     except AuthenticationError:
@@ -365,14 +430,14 @@ def extract_from_session(
     system_prompt = SESSION_SYSTEM_PROMPT.format(extraction_schema=extraction_schema)
     prefix = _provider_prefix(config)
 
+    session_messages: list[dict[str, str]] = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": combined},
+    ]
+
     try:
-        response = client.chat.completions.create(
-            model=config.extraction_model,
-            temperature=0.1,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": combined},
-            ],
+        response = _call_llm_with_retry(
+            client, session_messages, config.extraction_model,
             response_format={"type": "json_object"},
         )
     except AuthenticationError:
@@ -459,14 +524,14 @@ def extract_from_adr_consequences(
     system_prompt = ADR_CONSEQUENCES_SYSTEM_PROMPT.format(constraints_schema=constraints_schema)
     prefix = _provider_prefix(config)
 
+    adr_messages: list[dict[str, str]] = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": consequences_text},
+    ]
+
     try:
-        response = client.chat.completions.create(
-            model=config.extraction_model,
-            temperature=0.1,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": consequences_text},
-            ],
+        response = _call_llm_with_retry(
+            client, adr_messages, config.extraction_model,
             response_format={"type": "json_object"},
         )
     except AuthenticationError:

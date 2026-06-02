@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from pathlib import Path
 
 from pydantic import BaseModel, Field, model_validator
@@ -13,6 +14,7 @@ __all__ = [
     "AdrDirSource",
     "AgentSessionConfig",
     "ClaudeSource",
+    "CursorSource",
     "LLMConfig",
     "MementicConfig",
     "OpenCodeSource",
@@ -20,6 +22,7 @@ __all__ = [
     "PROVIDER_CONFIGS",
     "SessionsConfig",
     "Sources",
+    "WindsurfSource",
     "get_provider_config",
     "load_config",
 ]
@@ -92,12 +95,26 @@ class ClaudeSource(BaseModel):
     path: str
 
 
+class CursorSource(BaseModel):
+    """A path to Cursor IDE instruction files."""
+
+    path: str
+
+
+class WindsurfSource(BaseModel):
+    """A path to Windsurf IDE instruction files."""
+
+    path: str
+
+
 class Sources(BaseModel):
     """Configuration for knowledge sources."""
 
     adr_dirs: list[AdrDirSource] = Field(default_factory=list)
     opencode_instructions: list[OpenCodeSource] = Field(default_factory=list)
     claude_instructions: list[ClaudeSource] = Field(default_factory=list)
+    cursor_instructions: list[CursorSource] = Field(default_factory=list)
+    windsurf_instructions: list[WindsurfSource] = Field(default_factory=list)
 
 
 class AgentSessionConfig(BaseModel):
@@ -109,9 +126,9 @@ class AgentSessionConfig(BaseModel):
 class SessionsConfig(BaseModel):
     """Session discovery configuration for all supported agents.
 
-    Each key maps to an agent name (e.g. 'opencode', 'claude-code', 'generic').
-    The JSON file may use hyphenated names (e.g. ``claude-code``) which are
-    aliased to the snake_case field names.
+    Each key maps to an agent name (e.g. 'opencode', 'claude-code', 'generic',
+    'cursor', 'windsurf'). The JSON file may use hyphenated names
+    (e.g. ``claude-code``) which are aliased to the snake_case field names.
     """
 
     opencode: AgentSessionConfig = Field(default_factory=AgentSessionConfig)
@@ -120,6 +137,8 @@ class SessionsConfig(BaseModel):
         validation_alias="claude-code",
     )
     generic: AgentSessionConfig = Field(default_factory=AgentSessionConfig)
+    cursor: AgentSessionConfig = Field(default_factory=AgentSessionConfig)
+    windsurf: AgentSessionConfig = Field(default_factory=AgentSessionConfig)
 
 
 class OutputConfig(BaseModel):
@@ -232,6 +251,10 @@ def load_config(path: str = ".mementic.json") -> MementicConfig:
     try:
         data = json.loads(config_file.read_text(encoding="utf-8"))
     except json.JSONDecodeError:
+        sys.stderr.write(
+            f"Config file {config_file} is corrupt. "
+            "Run 'mementic init' to regenerate.\n"
+        )
         return MementicConfig()
 
     return MementicConfig.model_validate(data)

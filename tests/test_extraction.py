@@ -733,3 +733,160 @@ class TestExtractFromSessionTruncation:
         assert "Agent Session Log" not in user_content
         assert "Git Diff" in user_content
 
+
+# ── Spec 09b B1: LLM Retry Tests ────────────────────────────────────
+
+
+class TestLLMRetry:
+    """Tests for _call_llm_with_retry exponential backoff behaviour."""
+
+    def _mock_response(self) -> MagicMock:
+        choice = MagicMock()
+        choice.message.content = "{}"
+        response = MagicMock()
+        response.choices = [choice]
+        return response
+
+    def _make_raising_client(self, exceptions: list[Exception]) -> MagicMock:
+        """Return a mock client that raises each exception in sequence.
+
+        The last call succeeds by returning a valid response.
+        """
+        client = MagicMock()
+        side_effects: list[Exception | MagicMock] = list(exceptions)
+        side_effects.append(self._mock_response())
+        client.chat.completions.create.side_effect = side_effects
+        return client
+
+    def _make_always_raising_client(self, exception: Exception) -> MagicMock:
+        """Return a mock client that always raises the given exception."""
+        client = MagicMock()
+        client.chat.completions.create.side_effect = exception
+        return client
+
+    def test_retry_on_rate_limit_succeeds(self) -> None:
+        """RateLimitError twice then succeed on 3rd attempt — verifies retry."""
+        from mementic.extraction import _call_llm_with_retry
+
+        rate_err = RateLimitError(message="rate", response=MagicMock(), body=None)
+        client = self._make_raising_client([rate_err, rate_err])
+
+        with patch("time.sleep", return_value=None) as mock_sleep:
+            response = _call_llm_with_retry(
+                client,
+                messages=[{"role": "user", "content": "hello"}],
+                model="test-model",
+            )
+
+        assert response is not None
+        # 3 total calls (2 failures + 1 success)
+        assert client.chat.completions.create.call_count == 3
+        # Sleep called twice with 2^0=1s and 2^1=2s
+        assert mock_sleep.call_count == 2
+        mock_sleep.assert_any_call(1)
+        mock_sleep.assert_any_call(2)
+
+    def test_retry_on_rate_limit_exhausted(self) -> None:
+        """Always RateLimitError — raises after 4 attempts (max_retries=3)."""
+        from mementic.extraction import _call_llm_with_retry
+
+        rate_err = RateLimitError(message="rate", response=MagicMock(), body=None)
+        client = self._make_always_raising_client(rate_err)
+
+        with patch("time.sleep", return_value=None):
+            with pytest.raises(RateLimitError):
+                _call_llm_with_retry(
+                    client,
+                    messages=[{"role": "user", "content": "hello"}],
+                    model="test-model",
+                    max_retries=2,
+                )
+
+        # 3 attempts (max_retries + 1)
+        assert client.chat.completions.create.call_count == 3
+
+    def test_no_retry_on_auth_error(self) -> None:
+        """AuthenticationError raises immediately — no retry."""
+        from mementic.extraction import _call_llm_with_retry
+
+        auth_err = AuthenticationError(
+            message="bad key", response=MagicMock(), body=None
+        )
+        client = self._make_always_raising_client(auth_err)
+
+        with patch("time.sleep", return_value=None) as mock_sleep:
+            with pytest.raises(AuthenticationError):
+                _call_llm_with_retry(
+                    client,
+                    messages=[{"role": "user", "content": "hello"}],
+                    model="test-model",
+                )
+
+        # Only 1 attempt — no retry
+        assert client.chat.completions.create.call_count == 1
+        # No sleep calls
+        assert mock_sleep.call_count == 0
+
+    def test_retry_on_connection_error(self) -> None:
+        """APIConnectionError once then succeed — verifies retry with 1s delay."""
+        from mementic.extraction import _call_llm_with_retry
+
+        conn_err = APIConnectionError(request=MagicMock())
+        client = self._make_raising_client([conn_err])
+
+        with patch("time.sleep", return_value=None) as mock_sleep:
+            response = _call_llm_with_retry(
+                client,
+                messages=[{"role": "user", "content": "hello"}],
+                model="test-model",
+            )
+
+        assert response is not None
+        # 2 calls (1 failure + 1 success)
+        assert client.chat.completions.create.call_count == 2
+        # Sleep called once with 1s
+        assert mock_sleep.call_count == 1
+        mock_sleep.assert_called_once_with(1)
+
+    def test_retry_on_timeout_error(self) -> None:
+        """APITimeoutError once then succeed — verifies retry with 1s delay."""
+        from mementic.extraction import _call_llm_with_retry
+
+        timeout_err = APITimeoutError(request=MagicMock())
+        client = self._make_raising_client([timeout_err])
+
+        with patch("time.sleep", return_value=None) as mock_sleep:
+            response = _call_llm_with_retry(
+                client,
+                messages=[{"role": "user", "content": "hello"}],
+                model="test-model",
+            )
+
+        assert response is not None
+        assert client.chat.completions.create.call_count == 2
+        mock_sleep.assert_called_once_with(1)
+
+    def test_rate_limit_sleep_intervals_exponential(self) -> None:
+        """RateLimitError 3 times — sleep intervals are 1, 2, 4 seconds."""
+        from mementic.extraction import _call_llm_with_retry
+
+        rate_err = RateLimitError(message="rate", response=MagicMock(), body=None)
+        client = self._make_always_raising_client(rate_err)
+
+        with patch("time.sleep", return_value=None) as mock_sleep:
+            with pytest.raises(RateLimitError):
+                _call_llm_with_retry(
+                    client,
+                    messages=[{"role": "user", "content": "hello"}],
+                    model="test-model",
+                    max_retries=3,
+                )
+
+        # 4 attempts (max_retries=3 + initial call)
+        assert client.chat.completions.create.call_count == 4
+        # Sleep called 3 times with 1, 2, 4
+        assert mock_sleep.call_count == 3
+        assert mock_sleep.call_args_list[0].args == (1,)
+        assert mock_sleep.call_args_list[1].args == (2,)
+        assert mock_sleep.call_args_list[2].args == (4,)
+

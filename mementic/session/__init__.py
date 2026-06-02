@@ -1,9 +1,9 @@
 """Session provider protocol, registry, and backward-compat re-exports.
 
-Provides the SessionProvider protocol for agent session discovery. Three built-in
-providers are auto-registered: OpenCode, Claude Code, and Generic. The registry
-auto-detects which provider to use based on explicit flags, session path, or the
-most recently modified session across all providers.
+Provides the SessionProvider protocol for agent session discovery. Five built-in
+providers are auto-registered: OpenCode, Claude Code, Generic, Cursor, and Windsurf.
+The registry auto-detects which provider to use based on explicit flags, session
+path, or the most recently modified session across all providers.
 """
 
 from __future__ import annotations
@@ -247,15 +247,19 @@ def read_session_log(path: str) -> str:
 
 
 def _register_builtin_providers() -> None:
-    """Register the three built-in session providers with the global registry."""
+    """Register the five built-in session providers with the global registry."""
     from mementic.session.opencode import OpenCodeSessionProvider
     from mementic.session.claude_code import ClaudeCodeSessionProvider
     from mementic.session.generic import GenericSessionProvider
+    from mementic.session.cursor import CursorSessionProvider
+    from mementic.session.windsurf import WindsurfSessionProvider
 
     registry = get_registry()
     registry.register(OpenCodeSessionProvider())
     registry.register(ClaudeCodeSessionProvider())
     registry.register(GenericSessionProvider())
+    registry.register(CursorSessionProvider())
+    registry.register(WindsurfSessionProvider())
 
 
 _register_builtin_providers()

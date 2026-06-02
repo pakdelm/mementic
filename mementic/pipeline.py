@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -142,6 +143,11 @@ def run_init(config_path: str = ".mementic.json") -> tuple[GraphStore, list[Usag
     all_usage: list[UsageStats] = []
 
     for adr_source in cfg.sources.adr_dirs:
+        if not Path(adr_source.path).is_dir():
+            sys.stderr.write(
+                f"Warning: Source '{adr_source.path}' not found. Skipping.\n"
+            )
+            continue
         adrs = scan_adr_dir(adr_source.path)
         for adr in adrs:
             decision_id = slugify(adr.title)
@@ -171,6 +177,11 @@ def run_init(config_path: str = ".mementic.json") -> tuple[GraphStore, list[Usag
                 graph.link(decision.id, path_, "affects")
 
     for oc_source in cfg.sources.opencode_instructions:
+        if not Path(oc_source.path).is_dir():
+            sys.stderr.write(
+                f"Warning: Source '{oc_source.path}' not found. Skipping.\n"
+            )
+            continue
         instructions = scan_opencode_instructions(oc_source.path)
         for instr in instructions:
             result, usage = extract_from_freeform(instr.content, instr.path, cfg.llm)
@@ -178,7 +189,26 @@ def run_init(config_path: str = ".mementic.json") -> tuple[GraphStore, list[Usag
             _ingest_result(graph, result, instr.path)
 
     for claude_source in cfg.sources.claude_instructions:
+        if not Path(claude_source.path).is_dir():
+            sys.stderr.write(
+                f"Warning: Source '{claude_source.path}' not found. Skipping.\n"
+            )
+            continue
         instructions = scan_opencode_instructions(claude_source.path)
+        for instr in instructions:
+            result, usage = extract_from_freeform(instr.content, instr.path, cfg.llm)
+            all_usage.append(usage)
+            _ingest_result(graph, result, instr.path)
+
+    for cursor_source in cfg.sources.cursor_instructions:
+        instructions = scan_opencode_instructions(cursor_source.path)
+        for instr in instructions:
+            result, usage = extract_from_freeform(instr.content, instr.path, cfg.llm)
+            all_usage.append(usage)
+            _ingest_result(graph, result, instr.path)
+
+    for windsurf_source in cfg.sources.windsurf_instructions:
+        instructions = scan_opencode_instructions(windsurf_source.path)
         for instr in instructions:
             result, usage = extract_from_freeform(instr.content, instr.path, cfg.llm)
             all_usage.append(usage)
@@ -188,6 +218,8 @@ def run_init(config_path: str = ".mementic.json") -> tuple[GraphStore, list[Usag
         cfg.sources.adr_dirs
         or cfg.sources.opencode_instructions
         or cfg.sources.claude_instructions
+        or cfg.sources.cursor_instructions
+        or cfg.sources.windsurf_instructions
     )
     if has_sources:
         _backfill_edges(graph)
