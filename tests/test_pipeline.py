@@ -135,6 +135,62 @@ def _mock_claude_freeform_result() -> ExtractionResult:
     )
 
 
+def _mock_cursor_freeform_result() -> ExtractionResult:
+    return ExtractionResult(
+        decisions=[
+            Decision(
+                id="d-cursor-1",
+                title="Use TypeScript strict mode",
+                rationale="Type safety",
+                source="cursor:instructions/typescript.md",
+                status=DecisionStatus.ACCEPTED,
+                timestamp="2024-01-01T00:00:00Z",
+            )
+        ],
+        constraints=[
+            Constraint(
+                id="c-cursor-1",
+                description="All TS configs must enable strict mode",
+                bound_entities=["tsconfig.json"],
+                enforced_by="d-cursor-1",
+                source="cursor:instructions/typescript.md",
+                status="active",
+                timestamp="2024-01-01T00:00:00Z",
+            )
+        ],
+        affected_entities=["tsconfig.json"],
+        edges_to_create=[],
+    )
+
+
+def _mock_windsurf_freeform_result() -> ExtractionResult:
+    return ExtractionResult(
+        decisions=[
+            Decision(
+                id="d-windsurf-1",
+                title="Use Tailwind for styling",
+                rationale="Utility-first CSS",
+                source="windsurf:instructions/styling.md",
+                status=DecisionStatus.ACCEPTED,
+                timestamp="2024-01-01T00:00:00Z",
+            )
+        ],
+        constraints=[
+            Constraint(
+                id="c-windsurf-1",
+                description="All components must use Tailwind classes",
+                bound_entities=["src/components/"],
+                enforced_by="d-windsurf-1",
+                source="windsurf:instructions/styling.md",
+                status="active",
+                timestamp="2024-01-01T00:00:00Z",
+            )
+        ],
+        affected_entities=["src/components/"],
+        edges_to_create=[],
+    )
+
+
 def _mock_adr_result() -> ExtractionResult:
     return ExtractionResult(
         decisions=[
@@ -721,3 +777,160 @@ class TestBackfill:
         count = _backfill_decision_edges(gs)
         assert count == 1
         assert gs.has_outgoing_edges("d-nopath")
+
+
+# ── C1: Cursor + Windsurf pipeline ingestion tests ──────────────────
+
+
+class TestRunInitWithCursor:
+    """Tests for Cursor instruction source ingestion via pipeline (Spec 09c C1)."""
+
+    def test_extracts_from_cursor_instructions(self, tmp_path: Path) -> None:
+        """Pipeline ingests cursor_instructions and creates decisions/constraints."""
+        cursor_dir = tmp_path / "cursor_instructions"
+        cursor_dir.mkdir()
+        (cursor_dir / "typescript.md").write_text("# TypeScript Style\nUse strict mode.")
+
+        config_path = tmp_path / ".mementic.json"
+        config_data = {
+            "sources": {"cursor_instructions": [{"path": str(cursor_dir)}]},
+            "output": {"graph_path": str(tmp_path / ".mementic" / "graph.json")},
+        }
+        config_path.write_text(json.dumps(config_data))
+
+        with patch(
+            "mementic.pipeline.extract_from_freeform",
+            return_value=(_mock_cursor_freeform_result(), UsageStats(model="test-model", status="success")),
+        ):
+            gs, _all_usage = run_init(str(config_path))
+
+        decisions = gs.get_all_decisions()
+        assert len(decisions) == 1
+        assert decisions[0].title == "Use TypeScript strict mode"
+
+        constraints = gs.get_all_constraints()
+        assert len(constraints) == 1
+        assert constraints[0].description == "All TS configs must enable strict mode"
+
+        stats = gs.stats()
+        assert stats["entities"] >= 1
+
+    def test_cursor_source_usage_tracking(self, tmp_path: Path) -> None:
+        """Pipeline tracks UsageStats from cursor instruction extraction."""
+        cursor_dir = tmp_path / "cursor_instructions"
+        cursor_dir.mkdir()
+        (cursor_dir / "style.md").write_text("# Cursor Style\nUse strict mode.")
+
+        config_path = tmp_path / ".mementic.json"
+        config_data = {
+            "sources": {"cursor_instructions": [{"path": str(cursor_dir)}]},
+            "output": {"graph_path": str(tmp_path / ".mementic" / "graph.json")},
+        }
+        config_path.write_text(json.dumps(config_data))
+
+        with patch(
+            "mementic.pipeline.extract_from_freeform",
+            return_value=(_mock_cursor_freeform_result(), UsageStats(model="test-model", status="success")),
+        ):
+            _gs, all_usage = run_init(str(config_path))
+
+        assert len(all_usage) == 1
+        assert all_usage[0].model == "test-model"
+        assert all_usage[0].status == "success"
+
+
+class TestRunInitWithWindsurf:
+    """Tests for Windsurf instruction source ingestion via pipeline (Spec 09c C1)."""
+
+    def test_extracts_from_windsurf_instructions(self, tmp_path: Path) -> None:
+        """Pipeline ingests windsurf_instructions and creates decisions/constraints."""
+        windsurf_dir = tmp_path / "windsurf_instructions"
+        windsurf_dir.mkdir()
+        (windsurf_dir / "styling.md").write_text("# Windsurf Style\nUse Tailwind.")
+
+        config_path = tmp_path / ".mementic.json"
+        config_data = {
+            "sources": {"windsurf_instructions": [{"path": str(windsurf_dir)}]},
+            "output": {"graph_path": str(tmp_path / ".mementic" / "graph.json")},
+        }
+        config_path.write_text(json.dumps(config_data))
+
+        with patch(
+            "mementic.pipeline.extract_from_freeform",
+            return_value=(_mock_windsurf_freeform_result(), UsageStats(model="test-model", status="success")),
+        ):
+            gs, _all_usage = run_init(str(config_path))
+
+        decisions = gs.get_all_decisions()
+        assert len(decisions) == 1
+        assert decisions[0].title == "Use Tailwind for styling"
+
+        constraints = gs.get_all_constraints()
+        assert len(constraints) == 1
+        assert constraints[0].description == "All components must use Tailwind classes"
+
+        stats = gs.stats()
+        assert stats["entities"] >= 1
+
+    def test_windsurf_source_usage_tracking(self, tmp_path: Path) -> None:
+        """Pipeline tracks UsageStats from windsurf instruction extraction."""
+        windsurf_dir = tmp_path / "windsurf_instructions"
+        windsurf_dir.mkdir()
+        (windsurf_dir / "style.md").write_text("# Windsurf Style\nUse Tailwind.")
+
+        config_path = tmp_path / ".mementic.json"
+        config_data = {
+            "sources": {"windsurf_instructions": [{"path": str(windsurf_dir)}]},
+            "output": {"graph_path": str(tmp_path / ".mementic" / "graph.json")},
+        }
+        config_path.write_text(json.dumps(config_data))
+
+        with patch(
+            "mementic.pipeline.extract_from_freeform",
+            return_value=(_mock_windsurf_freeform_result(), UsageStats(model="test-model", status="success")),
+        ):
+            _gs, all_usage = run_init(str(config_path))
+
+        assert len(all_usage) == 1
+        assert all_usage[0].model == "test-model"
+        assert all_usage[0].status == "success"
+
+
+class TestRunInitCombinedCursorWindsurf:
+    """Tests for combined cursor + windsurf pipeline ingestion."""
+
+    def test_cursor_and_windsurf_together(self, tmp_path: Path) -> None:
+        """Pipeline ingests both cursor and windsurf sources simultaneously."""
+        cursor_dir = tmp_path / "cursor_dir"
+        cursor_dir.mkdir()
+        (cursor_dir / "ts.md").write_text("# Cursor TS rules")
+
+        windsurf_dir = tmp_path / "windsurf_dir"
+        windsurf_dir.mkdir()
+        (windsurf_dir / "css.md").write_text("# Windsurf CSS rules")
+
+        config_path = tmp_path / ".mementic.json"
+        config_data = {
+            "sources": {
+                "cursor_instructions": [{"path": str(cursor_dir)}],
+                "windsurf_instructions": [{"path": str(windsurf_dir)}],
+            },
+            "output": {"graph_path": str(tmp_path / ".mementic" / "graph.json")},
+        }
+        config_path.write_text(json.dumps(config_data))
+
+        with patch(
+            "mementic.pipeline.extract_from_freeform",
+            side_effect=[
+                (_mock_cursor_freeform_result(), UsageStats(model="test-model", status="success")),
+                (_mock_windsurf_freeform_result(), UsageStats(model="test-model", status="success")),
+            ],
+        ):
+            gs, all_usage = run_init(str(config_path))
+
+        decisions = gs.get_all_decisions()
+        assert len(decisions) == 2
+        sources = {d.source for d in decisions}
+        assert any(s.startswith("cursor:") for s in sources)
+        assert any(s.startswith("windsurf:") for s in sources)
+        assert len(all_usage) == 2

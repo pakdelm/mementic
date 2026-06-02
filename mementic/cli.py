@@ -70,18 +70,24 @@ def _save_checkpoint() -> None:
             Path(CHECKPOINT_FILE).parent.mkdir(parents=True, exist_ok=True)
             Path(CHECKPOINT_FILE).write_text(result.stdout.strip())
     except FileNotFoundError:
-        typer.echo("git not found. Checkpoint not saved.", err=True)
+        pass  # git not found — not important at this point
 
 
 def _run_git_diff(reference: str) -> tuple[str, int]:
-    """Run git diff against a reference. Returns (diff_text, returncode)."""
+    """Run git diff against a reference. Returns (diff_text, returncode).
+    
+    Return codes:
+        0   — success
+        1   — git not found on PATH
+        2   — not a git repository (rc 128 from git)
+        3   — no new commits (reference is HEAD)
+    """
     try:
         result = subprocess.run(
             ["git", "diff", reference], capture_output=True, text=True
         )
         return result.stdout or "", result.returncode
     except FileNotFoundError:
-        typer.echo("git not found. Cannot compute diff.", err=True)
         return "", 1
 
 
@@ -116,6 +122,8 @@ def init(
         discovered: dict[str, list[dict[str, str]]] = {
             "adr_dirs": [],
             "opencode_instructions": [],
+            "cursor_instructions": [],
+            "windsurf_instructions": [],
         }
 
         if Path("./docs/adr").is_dir():
@@ -124,6 +132,12 @@ def init(
         if Path("./docs/instructions").is_dir():
             discovered["opencode_instructions"].append({"path": "./docs/instructions"})
             typer.echo("  Found: ./docs/instructions/")
+        if Path(".cursor/instructions").is_dir():
+            discovered["cursor_instructions"].append({"path": ".cursor/instructions"})
+            typer.echo("  Found: .cursor/instructions/")
+        if Path(".windsurf/instructions").is_dir():
+            discovered["windsurf_instructions"].append({"path": ".windsurf/instructions"})
+            typer.echo("  Found: .windsurf/instructions/")
 
         if not any(discovered.values()):
             typer.echo(
@@ -209,7 +223,7 @@ def capture(
     if not session and not agent:
         # Auto-detect: find most recent session across all providers
         log_dir_overrides: dict[str, list[str]] = {}
-        for name in ("opencode", "claude-code", "generic"):
+        for name in ("opencode", "claude-code", "generic", "cursor", "windsurf"):
             agent_cfg = getattr(cfg.sessions, name.replace("-", "_"))
             if agent_cfg.log_dirs:
                 log_dir_overrides[name] = agent_cfg.log_dirs
@@ -246,27 +260,52 @@ def capture(
     checkpoint = _load_checkpoint()
     got_diff = False
     if checkpoint:
-        git_diff, rc = _run_git_diff(checkpoint)
-        got_diff = rc == 0
-        if rc != 0:
-            typer.echo(
-                "Warning: Capture requires a git repository. "
-                "Run 'git init' or use --notes to capture without git diff.",
-                err=True,
+        # Check if there are new commits since last capture
+        try:
+            head_result = subprocess.run(
+                ["git", "rev-parse", "HEAD"], capture_output=True, text=True
             )
-            git_diff = ""
-    else:
-        git_diff, rc = _run_git_diff("HEAD~1")
-        got_diff = rc == 0
-        if rc != 0:
-            typer.echo(
-                "Warning: Capture requires a git repository. "
-                "Run 'git init' or use --notes to capture without git diff.",
-                err=True,
-            )
+        except FileNotFoundError:
+            head_result = subprocess.CompletedProcess(args=[], returncode=1, stdout="")
+        if head_result.returncode == 0 and checkpoint.strip() == head_result.stdout.strip():
+            typer.echo("No new commits since last capture.")
             git_diff = ""
         else:
-            typer.echo("No checkpoint found — using HEAD~1 as baseline.")
+            git_diff, rc = _run_git_diff(checkpoint)
+            if rc == 1:
+                typer.echo("git not found. Proceeding without diff.", err=True)
+                git_diff = ""
+            elif rc == 128:
+                typer.echo("Not a git repository. Skipping diff.", err=True)
+                git_diff = ""
+            elif rc == 0:
+                got_diff = True
+                if not git_diff.strip():
+                    typer.echo("No changes since last capture.")
+            else:
+                typer.echo(
+                    "Warning: git diff failed. Proceeding without diff.",
+                    err=True,
+                )
+                git_diff = ""
+    else:
+        git_diff, rc = _run_git_diff("HEAD~1")
+        if rc == 1:
+            typer.echo("git not found. Proceeding without diff.", err=True)
+            git_diff = ""
+        elif rc == 128:
+            typer.echo("Not a git repository. Skipping diff.", err=True)
+            git_diff = ""
+        elif rc == 0:
+            got_diff = True
+            if not git_diff.strip():
+                typer.echo("No changes since last capture.")
+        else:
+            typer.echo(
+                "Warning: git diff failed. Proceeding without diff.",
+                err=True,
+            )
+            git_diff = ""
 
     try:
         extraction, _usage = extract_from_session(
@@ -403,6 +442,10 @@ def context(
             source_paths.append(oc_src.path)
         for claude_src in cfg.sources.claude_instructions:
             source_paths.append(claude_src.path)
+        for cursor_src in cfg.sources.cursor_instructions:
+            source_paths.append(cursor_src.path)
+        for windsurf_src in cfg.sources.windsurf_instructions:
+            source_paths.append(windsurf_src.path)
 
         # Concatenate all *.md files from source directories
         all_source_text = ""

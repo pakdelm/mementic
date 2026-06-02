@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -163,6 +164,66 @@ class TestInitAutoBootstrap:
             assert result.exit_code == 0
             loaded = json.loads(config_path.read_text())
             assert loaded["sources"]["adr_dirs"][0]["path"] == "/custom/path"
+        finally:
+            os.chdir(old_cwd)
+
+    def test_init_discovers_cursor_instructions(
+        self, tmp_path: Path
+    ) -> None:
+        """mementic init auto-discovers .cursor/instructions/ and includes in config."""
+        old_cwd = os.getcwd()
+        try:
+            os.chdir(tmp_path)
+
+            # Create cursor instructions dir so auto-discovery finds it
+            cursor_dir = tmp_path / ".cursor" / "instructions"
+            cursor_dir.mkdir(parents=True)
+            (cursor_dir / "typescript.md").write_text("# Cursor TypeScript Rules")
+
+            config_path = tmp_path / ".mementic.json"
+
+            with patch("mementic.cli.run_init", return_value=(MagicMock(), [])):
+                result = runner.invoke(
+                    app, ["init", "--config-path", str(config_path)],
+                )
+
+            assert result.exit_code == 0
+            assert config_path.exists()
+            config_data = json.loads(config_path.read_text())
+            assert "sources" in config_data
+            assert "cursor_instructions" in config_data["sources"]
+            paths = [s["path"] for s in config_data["sources"]["cursor_instructions"]]
+            assert ".cursor/instructions" in paths
+        finally:
+            os.chdir(old_cwd)
+
+    def test_init_discovers_windsurf_instructions(
+        self, tmp_path: Path
+    ) -> None:
+        """mementic init auto-discovers .windsurf/instructions/ and includes in config."""
+        old_cwd = os.getcwd()
+        try:
+            os.chdir(tmp_path)
+
+            # Create windsurf instructions dir so auto-discovery finds it
+            windsurf_dir = tmp_path / ".windsurf" / "instructions"
+            windsurf_dir.mkdir(parents=True)
+            (windsurf_dir / "styling.md").write_text("# Windsurf Styling Rules")
+
+            config_path = tmp_path / ".mementic.json"
+
+            with patch("mementic.cli.run_init", return_value=(MagicMock(), [])):
+                result = runner.invoke(
+                    app, ["init", "--config-path", str(config_path)],
+                )
+
+            assert result.exit_code == 0
+            assert config_path.exists()
+            config_data = json.loads(config_path.read_text())
+            assert "sources" in config_data
+            assert "windsurf_instructions" in config_data["sources"]
+            paths = [s["path"] for s in config_data["sources"]["windsurf_instructions"]]
+            assert ".windsurf/instructions" in paths
         finally:
             os.chdir(old_cwd)
 
@@ -946,3 +1007,242 @@ class TestLintCommand:
         assert result.exit_code == 0
         output = result.stdout
         assert "Fixed" in output
+
+
+# ── Spec 09b B3: Graceful no-git capture ────────────────────────────
+
+
+class TestCaptureNoGit:
+    """Tests for graceful capture when git is unavailable."""
+
+    def test_capture_git_not_installed(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """capture when git is not on PATH prints warning and proceeds."""
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-fake-key")
+
+        config_path = tmp_path / ".mementic.json"
+        config_path.write_text(json.dumps({
+            "output": {"graph_path": str(tmp_path / ".mementic" / "graph.json")},
+        }))
+        monkeypatch.setenv("MEMENTIC_CONFIG", str(config_path))
+
+        session_file = tmp_path / "session.log"
+        session_file.write_text("Fake agent session log content.\n")
+
+        from mementic.models import Decision, DecisionStatus, ExtractionResult, UsageStats
+
+        mock_result = ExtractionResult(
+            decisions=[
+                Decision(
+                    id="test-d",
+                    title="Test Decision",
+                    rationale="Testing",
+                    source="session",
+                    status=DecisionStatus.ACCEPTED,
+                    timestamp="2024-01-01T00:00:00Z",
+                ),
+            ],
+        )
+        mock_usage = UsageStats(model="test", status="success")
+
+        mock_registry = MagicMock()
+        mock_provider = MagicMock()
+        mock_provider.agent_name = "opencode"
+        mock_registry.detect.return_value = (mock_provider, str(session_file))
+
+        with patch(
+            "mementic.session.get_registry", return_value=mock_registry,
+        ), patch(
+            "mementic.cli._run_git_diff",
+            return_value=("", 1),  # git not found (rc=1)
+        ), patch(
+            "mementic.cli._load_checkpoint", return_value="abc123",
+        ), patch(
+            "mementic.cli.subprocess.run",
+            side_effect=FileNotFoundError,  # git rev-parse also fails
+        ), patch(
+            "mementic.cli.extract_from_session",
+            return_value=(mock_result, mock_usage),
+        ): 
+            result = runner.invoke(
+                app, ["capture", "--session", str(session_file)],
+            )
+
+        output = result.stdout + result.stderr
+        assert result.exit_code == 0
+        assert "git not found" in output.lower()
+
+    def test_capture_not_a_repo(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """capture outside a git repo shows 'Not a git repository' warning."""
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-fake-key")
+
+        config_path = tmp_path / ".mementic.json"
+        config_path.write_text(json.dumps({
+            "output": {"graph_path": str(tmp_path / ".mementic" / "graph.json")},
+        }))
+        monkeypatch.setenv("MEMENTIC_CONFIG", str(config_path))
+
+        session_file = tmp_path / "session.log"
+        session_file.write_text("Fake agent session log content.\n")
+
+        from mementic.models import Decision, DecisionStatus, ExtractionResult, UsageStats
+
+        mock_result = ExtractionResult(
+            decisions=[
+                Decision(
+                    id="test-d",
+                    title="Test Decision",
+                    rationale="Testing",
+                    source="session",
+                    status=DecisionStatus.ACCEPTED,
+                    timestamp="2024-01-01T00:00:00Z",
+                ),
+            ],
+        )
+        mock_usage = UsageStats(model="test", status="success")
+
+        mock_registry = MagicMock()
+        mock_provider = MagicMock()
+        mock_provider.agent_name = "opencode"
+        mock_registry.detect.return_value = (mock_provider, str(session_file))
+
+        with patch(
+            "mementic.session.get_registry", return_value=mock_registry,
+        ), patch(
+            "mementic.cli._run_git_diff", return_value=("", 128),
+        ), patch(
+            "mementic.cli._load_checkpoint", return_value="abc123",
+        ), patch(
+            "mementic.cli.extract_from_session",
+            return_value=(mock_result, mock_usage),
+        ):
+            result = runner.invoke(
+                app, ["capture", "--session", str(session_file)],
+            )
+
+        output = result.stdout + result.stderr
+        assert result.exit_code == 0
+        assert "not a git repository" in output.lower()
+
+    def test_capture_no_new_commits(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """capture when checkpoint matches HEAD shows informative message."""
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-fake-key")
+
+        config_path = tmp_path / ".mementic.json"
+        config_path.write_text(json.dumps({
+            "output": {"graph_path": str(tmp_path / ".mementic" / "graph.json")},
+        }))
+        monkeypatch.setenv("MEMENTIC_CONFIG", str(config_path))
+
+        session_file = tmp_path / "session.log"
+        session_file.write_text("Fake agent session log content.\n")
+
+        from mementic.models import Decision, DecisionStatus, ExtractionResult, UsageStats
+
+        mock_result = ExtractionResult(
+            decisions=[
+                Decision(
+                    id="test-d",
+                    title="Test Decision",
+                    rationale="Testing",
+                    source="session",
+                    status=DecisionStatus.ACCEPTED,
+                    timestamp="2024-01-01T00:00:00Z",
+                ),
+            ],
+        )
+        mock_usage = UsageStats(model="test", status="success")
+
+        mock_registry = MagicMock()
+        mock_provider = MagicMock()
+        mock_provider.agent_name = "opencode"
+        mock_registry.detect.return_value = (mock_provider, str(session_file))
+
+        with patch(
+            "mementic.session.get_registry", return_value=mock_registry,
+        ), patch(
+            "mementic.cli._load_checkpoint", return_value="abc123",
+        ), patch(
+            "mementic.cli.subprocess.run",
+            return_value=subprocess.CompletedProcess(
+                args=["git", "rev-parse", "HEAD"], returncode=0, stdout="abc123\n"
+            ),
+        ), patch(
+            "mementic.cli.extract_from_session",
+            return_value=(mock_result, mock_usage),
+        ):
+            result = runner.invoke(
+                app, ["capture", "--session", str(session_file)],
+            )
+
+        output = result.stdout + result.stderr
+        assert result.exit_code == 0
+        assert "no new commits" in output.lower()
+
+    def test_capture_empty_diff(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """capture when git diff returns empty shows 'No changes' message."""
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-fake-key")
+
+        config_path = tmp_path / ".mementic.json"
+        config_path.write_text(json.dumps({
+            "output": {"graph_path": str(tmp_path / ".mementic" / "graph.json")},
+        }))
+        monkeypatch.setenv("MEMENTIC_CONFIG", str(config_path))
+
+        session_file = tmp_path / "session.log"
+        session_file.write_text("Fake agent session log content.\n")
+
+        from mementic.models import Decision, DecisionStatus, ExtractionResult, UsageStats
+
+        mock_result = ExtractionResult(
+            decisions=[
+                Decision(
+                    id="test-d",
+                    title="Test Decision",
+                    rationale="Testing",
+                    source="session",
+                    status=DecisionStatus.ACCEPTED,
+                    timestamp="2024-01-01T00:00:00Z",
+                ),
+            ],
+        )
+        mock_usage = UsageStats(model="test", status="success")
+
+        mock_registry = MagicMock()
+        mock_provider = MagicMock()
+        mock_provider.agent_name = "opencode"
+        mock_registry.detect.return_value = (mock_provider, str(session_file))
+
+        with patch(
+            "mementic.session.get_registry", return_value=mock_registry,
+        ), patch(
+            "mementic.cli._load_checkpoint", return_value="old123",
+        ), patch(
+            "mementic.cli.subprocess.run",
+            return_value=subprocess.CompletedProcess(
+                args=["git", "rev-parse", "HEAD"], returncode=0, stdout="new456\n"
+            ),
+        ), patch(
+            "mementic.cli._run_git_diff", return_value=("", 0),
+        ), patch(
+            "mementic.cli.extract_from_session",
+            return_value=(mock_result, mock_usage),
+        ):
+            result = runner.invoke(
+                app, ["capture", "--session", str(session_file)],
+            )
+
+        output = result.stdout + result.stderr
+        assert result.exit_code == 0
+        assert "no changes" in output.lower()

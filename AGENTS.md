@@ -51,10 +51,12 @@ decisions relevant to the files you are about to touch.
 3. Do not defer this — propose while the context is fresh.
 
 **After completing a task:**
-Run `mementic capture` in the terminal to extract decisions from the
-session log + git diff. Decisions are auto-accepted unless the conflict
-detector flags them. If capture reports flagged items, run
-`mementic review` to resolve them.
+Run `mementic capture --agent opencode` in the terminal to extract
+architectural decisions from this session. `--agent` prevents
+cross-agent capture — without it, the most recently modified session
+across ALL agents wins, which could silently capture a different agent's
+session. If capture reports flagged items, run `mementic review` to
+resolve them.
 
 **If you skip these steps, you are violating project constraints.**
 A graph with no new decisions after a sprint of development is evidence
