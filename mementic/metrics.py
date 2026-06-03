@@ -1,9 +1,10 @@
-"""Operational metrics storage backed by append-only JSONL."""
+"""Operational metrics storage backed by append-only JSONL and SQLite."""
 
 from __future__ import annotations
 
 import json
 import os
+import sqlite3
 from collections import Counter, defaultdict
 from pathlib import Path
 
@@ -34,38 +35,92 @@ def _empty_summary() -> dict:
 
 
 class UsageStore:
-    """Manages append-only JSONL storage for mementic operational metrics.
+    """Manages append-only storage for mementic operational metrics.
 
-    The underlying file lives at ``.mementic/metrics.jsonl`` by default.
+    When ``conn`` is provided, writes to the SQLite ``extraction_log`` table.
+    Otherwise falls back to JSONL at ``.mementic/metrics.jsonl``.
     """
 
-    def __init__(self, path: str = ".mementic/metrics.jsonl") -> None:
-        """Initialize with path to the JSONL file.
+    def __init__(
+        self,
+        path: str = ".mementic/metrics.jsonl",
+        conn: sqlite3.Connection | None = None,
+    ) -> None:
+        """Initialize with path to the JSONL file and optional SQLite connection.
 
         Args:
-            path: Filesystem path to the metrics JSONL file.
+            path: Filesystem path to the metrics JSONL file (used when conn is None).
+            conn: Optional SQLite connection. When provided, the extraction_log table
+                is used instead of the JSONL file. The table must already exist
+                (created by GraphStore's schema migration).
         """
         self._path = Path(path)
+        self._conn = conn
 
     def append(self, entry: MetricsEntry) -> None:
-        """Append a single MetricsEntry as a JSON line.
+        """Append a single MetricsEntry.
 
-        Creates the parent directory if it does not exist.
+        When ``conn`` is set, writes to the ``extraction_log`` SQLite table.
+        Otherwise appends a JSON line to the JSONL file, creating the parent
+        directory if it does not exist.
 
         Args:
             entry: The MetricsEntry instance to persist.
         """
+        if self._conn:
+            with self._conn:
+                self._conn.execute(
+                    """INSERT INTO extraction_log
+                       (operation, source_label, input_tokens, output_tokens,
+                        total_tokens, model, status, timestamp)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        entry.operation,
+                        entry.source_label,
+                        entry.input_tokens,
+                        entry.output_tokens,
+                        entry.total_tokens,
+                        entry.model,
+                        entry.status,
+                        entry.timestamp,
+                    ),
+                )
+            return
+
         self._path.parent.mkdir(parents=True, exist_ok=True)
         with open(self._path, "a", encoding="utf-8") as f:
             f.write(entry.model_dump_json() + os.linesep)
 
     def read_all(self) -> list[MetricsEntry]:
-        """Read all entries from the JSONL file.
+        """Read all entries.
+
+        When ``conn`` is set, reads from the ``extraction_log`` SQLite table.
+        Otherwise reads from the JSONL file.
 
         Returns:
-            List of MetricsEntry instances. Returns an empty list when the file
-            does not exist or is unreadable.
+            List of MetricsEntry instances. Returns an empty list when the
+            file does not exist or the table is empty.
         """
+        if self._conn:
+            rows = self._conn.execute(
+                "SELECT operation, source_label, input_tokens, output_tokens, "
+                "total_tokens, model, status, timestamp FROM extraction_log "
+                "ORDER BY id"
+            ).fetchall()
+            return [
+                MetricsEntry(
+                    operation=row[0],
+                    source_label=row[1],
+                    input_tokens=row[2],
+                    output_tokens=row[3],
+                    total_tokens=row[4],
+                    model=row[5],
+                    status=row[6],
+                    timestamp=row[7],
+                )
+                for row in rows
+            ]
+
         if not self._path.exists():
             return []
         entries: list[MetricsEntry] = []
@@ -161,10 +216,16 @@ class UsageStore:
         }
 
     def reset(self) -> None:
-        """Delete the metrics file if it exists.
+        """Delete all stored metrics.
 
-        Does nothing when the file is already absent.
+        When ``conn`` is set, deletes all rows from ``extraction_log``.
+        Otherwise deletes the JSONL file.
         """
+        if self._conn:
+            with self._conn:
+                self._conn.execute("DELETE FROM extraction_log")
+            return
+
         try:
             self._path.unlink(missing_ok=True)
         except OSError:

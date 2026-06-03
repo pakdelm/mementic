@@ -27,7 +27,8 @@ def _build_sample_graph() -> GraphStore:
         rejected_alternatives=["Threading", "Multiprocessing"],
         source="ADR-001",
         status=DecisionStatus.ACCEPTED,
-        timestamp="2024-01-01T00:00:00Z",
+        created_at="2024-01-01T00:00:00Z",
+        modified_at="2024-01-01T00:00:00Z",
         tags=["performance"],
     )
     d2 = Decision(
@@ -36,7 +37,8 @@ def _build_sample_graph() -> GraphStore:
         rationale="Standard validation",
         source="ADR-002",
         status=DecisionStatus.PROPOSED,
-        timestamp="2024-02-01T00:00:00Z",
+        created_at="2024-02-01T00:00:00Z",
+        modified_at="2024-02-01T00:00:00Z",
     )
 
     c1 = Constraint(
@@ -46,7 +48,7 @@ def _build_sample_graph() -> GraphStore:
         enforced_by="dec-001",
         source="ADR-001",
         status="active",
-        timestamp="2024-01-01T00:00:00Z",
+        created_at="2024-01-01T00:00:00Z",
     )
 
     e1 = CodeEntity(
@@ -174,7 +176,8 @@ class TestGenerateHtmlGraph:
             rationale="No longer used",
             source="test",
             status=DecisionStatus.DEPRECATED,
-            timestamp="2020-01-01T00:00:00Z",
+            created_at="2020-01-01T00:00:00Z",
+            modified_at="2020-01-01T00:00:00Z",
         )
         gs.add_decision(d)
         html = generate_html_graph(gs)
@@ -225,7 +228,8 @@ class TestGraphCommandCli:
                     rationale="For testing",
                     source="test",
                     status=DecisionStatus.ACCEPTED,
-                    timestamp="2024-01-01T00:00:00Z",
+                    created_at="2024-01-01T00:00:00Z",
+                    modified_at="2024-01-01T00:00:00Z",
                 )
             )
             gs.save(str(tmp_path / ".mementic" / "graph.json"))
@@ -274,7 +278,8 @@ class TestGraphCommandCli:
                     rationale="Test",
                     source="test",
                     status=DecisionStatus.ACCEPTED,
-                    timestamp="2024-01-01T00:00:00Z",
+                    created_at="2024-01-01T00:00:00Z",
+                    modified_at="2024-01-01T00:00:00Z",
                 )
             )
             gs.save(str(tmp_path / ".mementic" / "graph.json"))

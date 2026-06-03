@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 import tempfile
 from pathlib import Path
 
@@ -26,7 +27,8 @@ def populated_graph() -> GraphStore:
         rationale="Better performance",
         source="ADR-001",
         status=DecisionStatus.ACCEPTED,
-        timestamp="2024-01-01T00:00:00Z",
+        created_at="2024-01-01T00:00:00Z",
+        modified_at="2024-01-01T00:00:00Z",
         tags=["performance"],
     )
     d2 = Decision(
@@ -35,7 +37,8 @@ def populated_graph() -> GraphStore:
         rationale="Validation",
         source="ADR-002",
         status=DecisionStatus.PROPOSED,
-        timestamp="2024-02-01T00:00:00Z",
+        created_at="2024-02-01T00:00:00Z",
+        modified_at="2024-02-01T00:00:00Z",
         tags=["validation"],
     )
     d3 = Decision(
@@ -44,7 +47,8 @@ def populated_graph() -> GraphStore:
         rationale="Simple persistence",
         source="ADR-003",
         status=DecisionStatus.ACCEPTED,
-        timestamp="2024-03-01T00:00:00Z",
+        created_at="2024-03-01T00:00:00Z",
+        modified_at="2024-03-01T00:00:00Z",
         tags=["storage"],
     )
 
@@ -55,7 +59,7 @@ def populated_graph() -> GraphStore:
         enforced_by="d1",
         source="ADR-001",
         status="active",
-        timestamp="2024-01-01T00:00:00Z",
+        created_at="2024-01-01T00:00:00Z",
     )
     c2 = Constraint(
         id="c2",
@@ -64,7 +68,7 @@ def populated_graph() -> GraphStore:
         enforced_by="d2",
         source="ADR-002",
         status="active",
-        timestamp="2024-02-01T00:00:00Z",
+        created_at="2024-02-01T00:00:00Z",
     )
 
     e1 = CodeEntity(
@@ -128,14 +132,14 @@ class TestDecisionOperations:
             description="A constraint",
             source="src",
             status="active",
-            timestamp="2024-01-01T00:00:00Z",
+            created_at="2024-01-01T00:00:00Z",
         )
         c_pending = Constraint(
             id="c2",
             description="A pending constraint",
             source="src",
             status="proposed",
-            timestamp="2024-01-01T00:00:00Z",
+            created_at="2024-01-01T00:00:00Z",
         )
         gs.add_constraint(c_active)
         gs.add_constraint(c_pending)
@@ -319,7 +323,8 @@ class TestNodeAccessors:
         gs.add_decision(Decision(
             id="lonely", title="No edges", rationale="...",
             source="test", status=DecisionStatus.ACCEPTED,
-            timestamp="2024-01-01T00:00:00Z",
+            created_at="2024-01-01T00:00:00Z",
+            modified_at="2024-01-01T00:00:00Z",
         ))
         assert gs.has_outgoing_edges("lonely") is False
 
@@ -349,12 +354,14 @@ class TestIdempotentAdd:
         d1 = Decision(
             id="d-update", title="Original", rationale="First",
             source="test", status=DecisionStatus.PROPOSED,
-            timestamp="2024-01-01T00:00:00Z",
+            created_at="2024-01-01T00:00:00Z",
+            modified_at="2024-01-01T00:00:00Z",
         )
         d2 = Decision(
             id="d-update", title="Updated", rationale="Second",
             source="test", status=DecisionStatus.ACCEPTED,
-            timestamp="2024-01-02T00:00:00Z",
+            created_at="2024-01-02T00:00:00Z",
+            modified_at="2024-01-02T00:00:00Z",
         )
         gs.add_decision(d1)
         gs.add_decision(d2)
@@ -368,12 +375,14 @@ class TestIdempotentAdd:
         d1 = Decision(
             id="d-type", title="Test", rationale="...",
             source="test", status=DecisionStatus.PROPOSED,
-            timestamp="2024-01-01T00:00:00Z",
+            created_at="2024-01-01T00:00:00Z",
+            modified_at="2024-01-01T00:00:00Z",
         )
         d2 = Decision(
             id="d-type", title="Updated", rationale="...",
             source="test", status=DecisionStatus.ACCEPTED,
-            timestamp="2024-01-02T00:00:00Z",
+            created_at="2024-01-02T00:00:00Z",
+            modified_at="2024-01-02T00:00:00Z",
         )
         gs.add_decision(d1)
         gs.add_decision(d2)
@@ -388,7 +397,8 @@ class TestIdempotentAdd:
         d = Decision(
             id="collision", title="Collision", rationale="...",
             source="test", status=DecisionStatus.PROPOSED,
-            timestamp="2024-01-01T00:00:00Z",
+            created_at="2024-01-01T00:00:00Z",
+            modified_at="2024-01-01T00:00:00Z",
         )
         with pytest.raises(ValueError, match="already exists as CodeEntity"):
             gs.add_decision(d)
@@ -398,12 +408,13 @@ class TestIdempotentAdd:
         gs.add_decision(Decision(
             id="col", title="Existing", rationale="...",
             source="test", status=DecisionStatus.ACCEPTED,
-            timestamp="2024-01-01T00:00:00Z",
+            created_at="2024-01-01T00:00:00Z",
+            modified_at="2024-01-01T00:00:00Z",
         ))
         c = Constraint(
             id="col", description="New constraint",
             source="test", status="proposed",
-            timestamp="2024-01-01T00:00:00Z",
+            created_at="2024-01-01T00:00:00Z",
         )
         with pytest.raises(ValueError, match="already exists as Decision"):
             gs.add_constraint(c)
@@ -413,7 +424,8 @@ class TestIdempotentAdd:
         gs.add_decision(Decision(
             id="ent-col", title="Exists", rationale="...",
             source="test", status=DecisionStatus.ACCEPTED,
-            timestamp="2024-01-01T00:00:00Z",
+            created_at="2024-01-01T00:00:00Z",
+            modified_at="2024-01-01T00:00:00Z",
         ))
         e = CodeEntity(id="ent-col", type=EntityType.FILE, repo="")
         with pytest.raises(ValueError, match="already exists as Decision"):
@@ -434,15 +446,292 @@ class TestIdempotentAdd:
         c1 = Constraint(
             id="c-update", description="Old rule",
             source="test", status="proposed",
-            timestamp="2024-01-01T00:00:00Z",
+            created_at="2024-01-01T00:00:00Z",
         )
         c2 = Constraint(
             id="c-update", description="New rule", bound_entities=["src/x.py"],
             source="test", status="active",
-            timestamp="2024-01-02T00:00:00Z",
+            created_at="2024-01-02T00:00:00Z",
         )
         gs.add_constraint(c1)
         gs.add_constraint(c2)
         payload = gs.get_node_payload("c-update")
         assert payload["description"] == "New rule"
         assert payload["status"] == "active"
+
+
+# ------------------------------------------------------------------
+# SQLite-backed GraphStore tests
+# ------------------------------------------------------------------
+
+
+class TestSQLitePersistence:
+    """Tests that verify SQLite-backed GraphStore behaves identically to
+    NetworkX-only mode, plus round-tripping through database."""
+
+    @staticmethod
+    def _populate(gs: GraphStore) -> None:
+        d1 = Decision(
+            id="d1",
+            title="Use async",
+            rationale="Better performance",
+            source="ADR-001",
+            status=DecisionStatus.ACCEPTED,
+            created_at="2024-01-01T00:00:00Z",
+            modified_at="2024-01-01T00:00:00Z",
+            tags=["performance"],
+        )
+        d2 = Decision(
+            id="d2",
+            title="Adopt pydantic",
+            rationale="Validation",
+            source="ADR-002",
+            status=DecisionStatus.PROPOSED,
+            created_at="2024-02-01T00:00:00Z",
+            modified_at="2024-02-01T00:00:00Z",
+            tags=["validation"],
+        )
+        c1 = Constraint(
+            id="c1",
+            description="All I/O must be async",
+            bound_entities=["src/services/io.py"],
+            enforced_by="d1",
+            source="ADR-001",
+            status="active",
+            created_at="2024-01-01T00:00:00Z",
+        )
+        e1 = CodeEntity(
+            id="src/services/io.py",
+            type=EntityType.FILE,
+            repo="my-repo",
+        )
+
+        gs.add_decision(d1)
+        gs.add_decision(d2)
+        gs.add_constraint(c1)
+        gs.add_code_entity(e1)
+        gs.link("d1", "c1", "enforces")
+        gs.link("c1", "src/services/io.py", "binds")
+
+    def test_basic_crud_and_roundtrip(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "test.db"
+
+            # Create and populate
+            gs1 = GraphStore(db_path=str(db_path))
+            self._populate(gs1)
+
+            assert gs1.stats() == {
+                "decisions": 2, "constraints": 1,
+                "entities": 1, "edges": 2,
+            }
+            assert len(gs1.get_all_decisions()) == 2
+            assert len(gs1.get_all_constraints()) == 1
+            assert len(gs1.get_pending_decisions()) == 1
+            assert gs1.get_pending_decisions()[0].id == "d2"
+            gs1.close()
+
+            # Round-trip through re-open
+            gs2 = GraphStore(db_path=str(db_path))
+            assert gs2.stats() == {
+                "decisions": 2, "constraints": 1,
+                "entities": 1, "edges": 2,
+            }
+            assert {d.id for d in gs2.get_all_decisions()} == {
+                "d1", "d2"
+            }
+
+            # Query works after reload
+            constraints = gs2.get_constraints_for_entities(
+                ["src/services/io.py"]
+            )
+            assert len(constraints) == 1
+            assert constraints[0].id == "c1"
+
+            evolution = gs2.get_evolution("src/services/io.py")
+            assert {d.id for d in evolution} == {"d1"}
+            gs2.close()
+
+    def test_save_noop_when_db_path_set(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "test.db"
+            json_path = Path(tmpdir) / "graph.json"
+
+            gs = GraphStore(db_path=str(db_path))
+            self._populate(gs)
+
+            # save should be no-op; JSON file shouldn't be created
+            gs.save(str(json_path))
+            assert not json_path.exists()
+            gs.close()
+
+    def test_idempotent_add_persists(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "test.db"
+            gs = GraphStore(db_path=str(db_path))
+
+            d1 = Decision(
+                id="dup",
+                title="First",
+                rationale="...",
+                source="test",
+                status=DecisionStatus.PROPOSED,
+                created_at="2024-01-01T00:00:00Z",
+                modified_at="2024-01-01T00:00:00Z",
+            )
+            d2 = Decision(
+                id="dup",
+                title="Second",
+                rationale="Updated",
+                source="test",
+                status=DecisionStatus.ACCEPTED,
+                created_at="2024-01-02T00:00:00Z",
+                modified_at="2024-01-02T00:00:00Z",
+            )
+            gs.add_decision(d1)
+            gs.add_decision(d2)
+            gs.close()
+
+            # Reload and verify second write persisted
+            gs2 = GraphStore(db_path=str(db_path))
+            decisions = gs2.get_all_decisions()
+            assert len(decisions) == 1
+            assert decisions[0].title == "Second"
+            assert decisions[0].status == DecisionStatus.ACCEPTED
+            gs2.close()
+
+    def test_cross_type_collision_persists(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "test.db"
+            gs = GraphStore(db_path=str(db_path))
+
+            gs.add_code_entity(CodeEntity(
+                id="collision", type=EntityType.FILE, repo="",
+            ))
+            d = Decision(
+                id="collision", title="X", rationale="...",
+                source="t", status=DecisionStatus.PROPOSED,
+                created_at="2024-01-01T00:00:00Z",
+                modified_at="2024-01-01T00:00:00Z",
+            )
+            with pytest.raises(ValueError, match="already exists as CodeEntity"):
+                gs.add_decision(d)
+            gs.close()
+
+    def test_constraints_exact_match_sqlite(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "test.db"
+            gs = GraphStore(db_path=str(db_path))
+            self._populate(gs)
+
+            # Exact match works
+            r = gs.get_constraints_for_entities(["src/services/io.py"])
+            assert len(r) == 1
+
+            # No fuzzy matching
+            r = gs.get_constraints_for_entities(["src/services/"])
+            assert len(r) == 0
+
+            # Prefix opt-in
+            r = gs.get_constraints_for_entities(
+                ["src/services/"], prefix_match=True
+            )
+            assert len(r) == 1
+            gs.close()
+
+    def test_stats_empty_sqlite(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "test.db"
+            gs = GraphStore(db_path=str(db_path))
+            assert gs.stats() == {
+                "decisions": 0, "constraints": 0,
+                "entities": 0, "edges": 0,
+            }
+            gs.close()
+
+    def test_load_classmethod_still_works(self) -> None:
+        """JSON load classmethod works for backward compatibility."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            json_path = Path(tmpdir) / "graph.json"
+            gs = GraphStore()
+            self._populate(gs)
+            gs.save(str(json_path))
+
+            loaded = GraphStore.load(str(json_path))
+            assert loaded.stats() == {
+                "decisions": 2, "constraints": 1,
+                "entities": 1, "edges": 2,
+            }
+
+    def test_evolution_sqlite(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "test.db"
+            gs = GraphStore(db_path=str(db_path))
+            self._populate(gs)
+
+            # d1 enforces c1 which binds src/services/io.py
+            evo = gs.get_evolution("src/services/io.py")
+            assert {d.id for d in evo} == {"d1"}
+
+            # Prefix match on constraint bound_entities:
+            # src/services/io.py starts with src/services/
+            evo = gs.get_evolution("src/services/")
+            assert {d.id for d in evo} == {"d1"}
+            gs.close()
+
+    def test_decisions_for_entities_sqlite(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "test.db"
+            gs = GraphStore(db_path=str(db_path))
+
+            # Build a graph with direct decision→entity link
+            d = Decision(
+                id="d-sql",
+                title="SQL",
+                rationale="...",
+                source="t",
+                status=DecisionStatus.ACCEPTED,
+                created_at="2024-01-01T00:00:00Z",
+                modified_at="2024-01-01T00:00:00Z",
+            )
+            e = CodeEntity(
+                id="src/db.py",
+                type=EntityType.FILE,
+                repo="my-repo",
+            )
+            gs.add_decision(d)
+            gs.add_code_entity(e)
+            gs.link("d-sql", "src/db.py", "affects")
+
+            decisions = gs.get_decisions_for_entities(["src/db.py"])
+            assert {d.id for d in decisions} == {"d-sql"}
+
+            # No transitive through constraints
+            decisions = gs.get_decisions_for_entities(["nonexistent"])
+            assert len(decisions) == 0
+            gs.close()
+
+    def test_migration_creates_tables(self) -> None:
+        """Verify that _migrate_schema creates all expected tables."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "test.db"
+            conn = sqlite3.connect(str(db_path))
+            conn.row_factory = sqlite3.Row
+
+            GraphStore._migrate_schema(conn)
+
+            tables = {
+                row["name"]
+                for row in conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                )
+            }
+            expected = {
+                "decisions", "constraints", "entities", "edges",
+                "project_sources", "extraction_log",
+            }
+            assert expected.issubset(tables)
+
+            version = conn.execute("PRAGMA user_version").fetchone()[0]
+            assert version == 1
+            conn.close()

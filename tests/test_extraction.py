@@ -50,7 +50,8 @@ class TestExtractFromFreeform:
                     rationale="Better performance",
                     source="freeform",
                     status=DecisionStatus.ACCEPTED,
-                    timestamp="2024-01-01T00:00:00Z",
+                    created_at="2024-01-01T00:00:00Z",
+                    modified_at="2024-01-01T00:00:00Z",
                 )
             ],
             constraints=[],
@@ -78,7 +79,8 @@ class TestExtractFromFreeform:
             rationale="Type safety",
             source="freeform",
             status=DecisionStatus.ACCEPTED,
-            timestamp="2024-02-01T00:00:00Z",
+            created_at="2024-02-01T00:00:00Z",
+            modified_at="2024-02-01T00:00:00Z",
         )
         constraint = Constraint(
             id="c-1",
@@ -87,7 +89,7 @@ class TestExtractFromFreeform:
             enforced_by="d-1",
             source="freeform",
             status="active",
-            timestamp="2024-02-01T00:00:00Z",
+            created_at="2024-02-01T00:00:00Z",
         )
         result = ExtractionResult(
             decisions=[decision],
@@ -165,7 +167,8 @@ class TestExtractFromSession:
                     rationale="Better async support",
                     source="session",
                     status=DecisionStatus.ACCEPTED,
-                    timestamp="2024-03-01T00:00:00Z",
+                    created_at="2024-03-01T00:00:00Z",
+                    modified_at="2024-03-01T00:00:00Z",
                 )
             ],
             constraints=[],
@@ -209,7 +212,7 @@ class TestExtractFromAdrConsequences:
                 enforced_by="d-use-orm",
                 source="ADR-005",
                 status="active",
-                timestamp="2024-01-01T00:00:00Z",
+                created_at="2024-01-01T00:00:00Z",
             )
         ]
 
@@ -922,7 +925,8 @@ class TestExtractFromCodebaseSummary:
             rationale="FastAPI is the web framework",
             source="freeform",
             status=DecisionStatus.ACCEPTED,
-            timestamp="2024-01-01T00:00:00Z",
+            created_at="2024-01-01T00:00:00Z",
+            modified_at="2024-01-01T00:00:00Z",
         )
         client = MagicMock()
         response = self._make_codebase_mock_response(decisions=[decision])

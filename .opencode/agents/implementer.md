@@ -4,9 +4,7 @@ mode: subagent
 permission:
   edit: allow
   bash:
-    "uv run *": allow
-    "git *": allow
-    "*": ask
+    "*": allow
 ---
 
 You are a production-grade Python implementer. Your role is to write clean, correct, well-typed code.

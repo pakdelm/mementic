@@ -5,7 +5,7 @@ from __future__ import annotations
 from enum import Enum
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class DecisionStatus(str, Enum):
@@ -31,8 +31,23 @@ class Decision(BaseModel):
     source: str
     status: DecisionStatus = DecisionStatus.ACCEPTED
     author: str = "unknown"
-    timestamp: str
+    created_at: str
+    modified_at: str
+    repo: str = ""
+    affected_entities: list[str] = Field(default_factory=list)
     tags: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _migrate_legacy_fields(cls, data: Any) -> Any:
+        """Accept legacy ``timestamp`` field in place of ``created_at``
+        and ``modified_at`` for backward compatibility with old JSON payloads."""
+        if isinstance(data, dict):
+            ts = data.pop("timestamp", None)
+            if ts is not None:
+                data.setdefault("created_at", ts)
+                data.setdefault("modified_at", ts)
+        return data
 
 
 class Constraint(BaseModel):
@@ -42,10 +57,29 @@ class Constraint(BaseModel):
     enforced_by: str = ""
     source: str
     status: str = "active"
-    timestamp: str
+    created_at: str
+    repo: str = ""
+
+    @model_validator(mode="before")
+    @classmethod
+    def _migrate_legacy_fields(cls, data: Any) -> Any:
+        """Accept legacy ``timestamp`` field in place of ``created_at``
+        for backward compatibility with old JSON payloads."""
+        if isinstance(data, dict):
+            ts = data.pop("timestamp", None)
+            if ts is not None:
+                data.setdefault("created_at", ts)
+        return data
 
 
 class CodeEntity(BaseModel):
+    """A code entity within a repository.
+
+    The `id` field uses the namespaced format:
+        {normalized_repo_path}::{relative_file_path}
+    e.g., /home/me/dev/auth-service::src/config.py
+    """
+
     id: str
     type: EntityType
     repo: str = ""
