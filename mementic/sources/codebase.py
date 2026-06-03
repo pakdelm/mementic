@@ -12,6 +12,7 @@ from pathlib import Path
 
 # Python stdlib modules to skip in import extraction
 _STDLIB_MODULES: frozenset[str] = frozenset({
+    "__future__",
     "os",
     "sys",
     "re",
@@ -61,6 +62,11 @@ _IGNORED_DIRS: frozenset[str] = frozenset({
     ".nox",
 })
 
+# Dot-directories that are architecturally relevant and should NOT be skipped
+_ARCH_DOT_DIRS: frozenset[str] = frozenset({
+    ".github",
+})
+
 # Filename patterns that signal architectural relevance (case-insensitive match)
 _ARCH_SIGNAL_PATTERNS: tuple[str, ...] = (
     "readme",
@@ -95,9 +101,12 @@ _TOTAL_MD_BUDGET = 5000
 def _is_ignored_dir(name: str) -> bool:
     """Check if directory name should be skipped.
 
-    The root directory (``.``) is never ignored.
+    The root directory (``.``) is never ignored. Architecturally relevant
+    dot-directories (``.github``) are also not ignored.
     """
     if name == ".":
+        return False
+    if name in _ARCH_DOT_DIRS:
         return False
     return name in _IGNORED_DIRS or name.startswith(".")
 
@@ -115,6 +124,14 @@ def _should_skip_dir(dirpath: str, depth: int) -> bool:
 def _extract_python_imports(filepath: str) -> list[str]:
     """Extract non-stdlib imports from a Python file.
 
+    Uses a line-based regex that does not handle:
+    - Parenthesized multi-line imports (only the first matched line is captured)
+    - Imports inside strings or comments (false positives possible)
+
+    For a best-effort structural scanner this captures the majority of real
+    imports accurately. Use the ``tokenize`` module for production-grade parsing
+    that avoids string/comment false positives.
+
     Args:
         filepath: Path to a Python source file.
 
@@ -127,7 +144,7 @@ def _extract_python_imports(filepath: str) -> list[str]:
         re.MULTILINE,
     )
     try:
-        with open(filepath, encoding="utf-8", errors="ignore") as f:
+        with open(filepath, encoding="utf-8", errors="replace") as f:
             content = f.read()
     except OSError:
         return imports
@@ -155,7 +172,7 @@ def _read_config_files(repo_path: str) -> dict[str, str]:
         if not os.path.isfile(fpath):
             continue
         try:
-            with open(fpath, encoding="utf-8", errors="ignore") as f:
+            with open(fpath, encoding="utf-8", errors="replace") as f:
                 content = f.read()
         except OSError:
             continue
@@ -166,7 +183,7 @@ def _read_config_files(repo_path: str) -> dict[str, str]:
             in_section = False
             skip_section = False
             for line in lines:
-                if line.startswith("[project]"):
+                if line.startswith("[project]") or line.startswith("[project."):
                     in_section = True
                     skip_section = False
                 elif line.startswith("[tool"):
@@ -221,49 +238,19 @@ def _detect_adr(content: str) -> bool:
     )
 
 
-def _scan_markdown_files(repo_path: str) -> tuple[list[str], list[str]]:
-    """Scan all markdown files, returning ADR and content sections.
+def _format_md_sections(
+    md_files: list[tuple[str, str, int, bool]],
+) -> tuple[list[str], list[str]]:
+    """Format collected markdown file data into ADR and content sections.
 
-    Walks the repo, reads all ``*.md`` files, detects ADRs by structured
-    format, scores files by architectural signal, and returns results
-    within the content budget.
+    Sorts by signal score descending, applies the content budget.
 
     Args:
-        repo_path: Path to the repository root.
+        md_files: List of (relpath, content, score, is_adr) tuples.
 
     Returns:
-        A tuple of (adr_sections, content_sections) where each section
-        is a formatted markdown string block.
+        A tuple of (adr_sections, content_sections).
     """
-    md_files: list[tuple[str, str, int, bool]] = []  # (path, content, score, is_adr)
-
-    for dirpath, dirnames, filenames in os.walk(repo_path):
-        # Calculate depth
-        rel = os.path.relpath(dirpath, repo_path)
-        depth = 0 if rel == "." else len(Path(rel).parts)
-        if _should_skip_dir(dirpath, depth):
-            dirnames[:] = []  # don't recurse
-            continue
-        # Filter ignored dirs from subdirs
-        dirnames[:] = [d for d in dirnames if not _is_ignored_dir(d)]
-
-        for fname in filenames:
-            if not fname.lower().endswith(".md"):
-                continue
-            fpath = os.path.join(dirpath, fname)
-            try:
-                with open(fpath, encoding="utf-8", errors="ignore") as f:
-                    content = f.read()
-            except OSError:
-                continue
-            score = _md_signal_score(fname)
-            is_adr = _detect_adr(content)
-            capped = content[:_PER_MD_FILE_CAP]
-            if len(content) > _PER_MD_FILE_CAP:
-                capped += "\n..."
-            md_files.append((os.path.relpath(fpath, repo_path), capped, score, is_adr))
-
-    # Sort by score descending (high signal first), then by path
     md_files.sort(key=lambda x: (-x[2], x[0]))
 
     adr_sections: list[str] = []
@@ -282,13 +269,77 @@ def _scan_markdown_files(repo_path: str) -> tuple[list[str], list[str]]:
     return adr_sections, content_sections
 
 
+def _format_tree(
+    root_py_files: list[tuple[str, list[str]]],
+    dir_entries: list[tuple[int, str, list[tuple[str, list[str]]]]],
+) -> list[str]:
+    """Format collected tree data into display lines.
+
+    Args:
+        root_py_files: Root-level Python files with imports.
+        dir_entries: Subdirectory entries with depth, name, and Python files.
+
+    Returns:
+        List of formatted tree lines.
+    """
+    lines: list[str] = []
+
+    # Root-level Python files (no directory entry)
+    for pf, (fname, imports) in enumerate(root_py_files):
+        if pf >= 5:
+            break
+        if imports:
+            import_str = ", ".join(imports[:8])
+            lines.append(f"  {fname} (imports: {import_str})")
+        else:
+            lines.append(f"  {fname}")
+    remaining = len(root_py_files) - 5
+    if remaining > 0:
+        lines.append(f"  ... (+{remaining} more .py files)")
+
+    # Subdirectories
+    for depth, dirname, py_files in dir_entries:
+        indent = "  " * depth
+        lines.append(f"{indent}{dirname}/")
+        for pf, (fname, imports) in enumerate(py_files):
+            if pf >= 5:
+                break
+            if imports:
+                import_str = ", ".join(imports[:8])
+                lines.append(f"{indent}  {fname} (imports: {import_str})")
+            else:
+                lines.append(f"{indent}  {fname}")
+        remaining = len(py_files) - 5
+        if remaining > 0:
+            lines.append(f"{indent}  ... (+{remaining} more .py files)")
+
+    return lines
+
+
+def _format_import_graph(import_graph: dict[str, list[str]]) -> list[str]:
+    """Format the import graph for display.
+
+    Args:
+        import_graph: Dict mapping file paths to lists of imported modules.
+
+    Returns:
+        List of formatted import graph lines.
+    """
+    lines: list[str] = []
+    for filepath in sorted(import_graph):
+        lines.append(f"{filepath}:")
+        for imp in sorted(set(import_graph[filepath])):
+            lines.append(f"  - {imp}")
+    return lines
+
+
 def scan_codebase_structure(repo_path: str) -> str:
     """Scan a repository and produce a structured markdown summary.
 
     Produces a deterministic summary without any LLM calls. Includes
     directory tree, configuration files, ADR-specific markdown files,
     other signal-rich markdown files, and an import graph of non-stdlib
-    Python imports.
+    Python imports. Uses a single ``os.walk`` traversal for efficiency.
 
     Args:
         repo_path: Absolute or relative path to the repository root.
@@ -301,10 +352,13 @@ def scan_codebase_structure(repo_path: str) -> str:
     if not os.path.isdir(repo_path):
         return ""
 
-    parts: list[str] = []
+    # ── Single os.walk traversal: collect tree, imports, and markdown data ──
+    # (dir_name, depth, [(filename, imports)])
+    _dir_entries: list[tuple[int, str, list[tuple[str, list[str]]]]] = []
+    _root_py_files: list[tuple[str, list[str]]] = []
+    _import_graph: dict[str, list[str]] = {}
+    _md_files: list[tuple[str, str, int, bool]] = []
 
-    # 1. Directory tree
-    tree_lines: list[str] = []
     for dirpath, dirnames, filenames in os.walk(repo_path):
         rel = os.path.relpath(dirpath, repo_path)
         depth = 0 if rel == "." else len(Path(rel).parts)
@@ -313,25 +367,46 @@ def scan_codebase_structure(repo_path: str) -> str:
             continue
         dirnames[:] = sorted(d for d in dirnames if not _is_ignored_dir(d))
 
-        indent = "  " * depth
-        if rel != ".":
-            tree_lines.append(f"{indent}{os.path.basename(dirpath)}/")
-
-        # Show Python files with imports
-        py_files = sorted(f for f in filenames if f.endswith(".py"))
-        for pf in py_files[:5]:  # limit per directory
-            fpath = os.path.join(dirpath, pf)
+        # Collect Python files and their imports
+        py_files_data: list[tuple[str, list[str]]] = []
+        for fname in sorted(f for f in filenames if f.endswith(".py")):
+            fpath = os.path.join(dirpath, fname)
             imports = _extract_python_imports(fpath)
+            py_files_data.append((fname, imports))
             if imports:
-                import_str = ", ".join(imports[:8])
-                tree_lines.append(f"{indent}  {pf} (imports: {import_str})")
-            else:
-                tree_lines.append(f"{indent}  {pf}")
-        # Note if there are more files
-        remaining = len(py_files) - 5
-        if remaining > 0:
-            tree_lines.append(f"{indent}  ... (+{remaining} more .py files)")
+                relpath = os.path.relpath(fpath, repo_path).replace("\\", "/")
+                _import_graph[relpath] = imports
 
+        if rel == ".":
+            _root_py_files = py_files_data
+        else:
+            _dir_entries.append((depth, os.path.basename(dirpath), py_files_data))
+
+        # Collect markdown files
+        for fname in filenames:
+            if not fname.lower().endswith(".md"):
+                continue
+            fpath = os.path.join(dirpath, fname)
+            try:
+                with open(fpath, encoding="utf-8", errors="replace") as f:
+                    content = f.read()
+            except OSError:
+                continue
+            score = _md_signal_score(fname)
+            is_adr = _detect_adr(content)
+            capped = content[:_PER_MD_FILE_CAP]
+            if len(content) > _PER_MD_FILE_CAP:
+                remaining = len(content) - _PER_MD_FILE_CAP
+                capped += f"\n... [{remaining} more chars omitted]"
+            _md_files.append(
+                (os.path.relpath(fpath, repo_path), capped, score, is_adr)
+            )
+
+    # ── Assemble output ──
+    parts: list[str] = []
+
+    # 1. Directory tree
+    tree_lines = _format_tree(_root_py_files, _dir_entries)
     if tree_lines:
         parts.append("## Repository Structure\n")
         parts.extend(tree_lines)
@@ -347,7 +422,7 @@ def scan_codebase_structure(repo_path: str) -> str:
             parts.append("")
 
     # 3. Markdown files
-    adr_sections, content_sections = _scan_markdown_files(repo_path)
+    adr_sections, content_sections = _format_md_sections(_md_files)
     if adr_sections:
         parts.append("## ADR Files (auto-detected by format)\n")
         for section in adr_sections:
@@ -359,31 +434,11 @@ def scan_codebase_structure(repo_path: str) -> str:
             parts.append(section)
             parts.append("")
 
-    # 4. Import graph summary
-    import_graph: dict[str, list[str]] = {}
-    for dirpath, dirnames, filenames in os.walk(repo_path):
-        rel = os.path.relpath(dirpath, repo_path)
-        depth = 0 if rel == "." else len(Path(rel).parts)
-        if _should_skip_dir(dirpath, depth):
-            dirnames[:] = []
-            continue
-        dirnames[:] = sorted(d for d in dirnames if not _is_ignored_dir(d))
-
-        for fname in filenames:
-            if not fname.endswith(".py"):
-                continue
-            fpath = os.path.join(dirpath, fname)
-            imports = _extract_python_imports(fpath)
-            if imports:
-                relpath = os.path.relpath(fpath, repo_path).replace("\\", "/")
-                import_graph[relpath] = imports
-
-    if import_graph:
+    # 4. Import graph
+    import_lines = _format_import_graph(_import_graph)
+    if import_lines:
         parts.append("## Import Graph\n")
-        for filepath in sorted(import_graph):
-            parts.append(f"{filepath}:")
-            for imp in sorted(set(import_graph[filepath])):
-                parts.append(f"  - {imp}")
-            parts.append("")
+        parts.extend(import_lines)
+        parts.append("")
 
     return "\n".join(parts)
