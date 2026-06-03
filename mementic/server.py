@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-import threading
 from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
@@ -23,12 +22,19 @@ from mementic.models import (
 
 mcp = FastMCP("Mementic")
 
-_graph_lock = threading.Lock()
 _metrics_store = UsageStore()
 
 
-def _load_graph() -> tuple[GraphStore, MementicConfig]:
-    """Load the knowledge graph and config from the configured path.
+def _load_graph(project: str | None = None) -> tuple[GraphStore, MementicConfig]:
+    """Load the knowledge graph, preferring the project database over legacy JSON.
+
+    Tries to resolve a project (auto-detected or explicit) and use its SQLite
+    database.  Falls back to the legacy ``graph.json`` when no project database
+    is available.
+
+    Args:
+        project: Optional project name for explicit selection.  When ``None``,
+            auto-resolution is attempted.
 
     Returns:
         A tuple of (GraphStore, MementicConfig).
@@ -36,6 +42,20 @@ def _load_graph() -> tuple[GraphStore, MementicConfig]:
     config_path = os.environ.get("MEMENTIC_CONFIG", ".mementic.json")
     cfg = load_config(config_path)
 
+    # Try project database first
+    try:
+        from mementic.config import resolve_project
+
+        proj_name, global_cfg = resolve_project(project)
+        proj_entry = global_cfg.projects[proj_name]
+        db_path = Path(proj_entry.db_path).expanduser()
+        if db_path.exists():
+            graph = GraphStore(db_path=db_path)
+            return graph, cfg
+    except (ValueError, KeyError, ImportError):
+        pass
+
+    # Fall back to legacy graph.json
     graph_path = cfg.output.graph_path
     if Path(graph_path).exists():
         return GraphStore.load(graph_path), cfg
@@ -43,14 +63,26 @@ def _load_graph() -> tuple[GraphStore, MementicConfig]:
 
 
 def _save_graph(graph: GraphStore, cfg: MementicConfig) -> None:
-    """Thread-safe save of the graph to its configured path."""
+    """Save the graph — no-op in project mode (auto-persisted to SQLite)."""
+    if graph._db_path is not None:
+        return
     graph.save(cfg.output.graph_path)
+
+
+def _repo_from_env() -> str:
+    """Detect the current repository from the environment.
+
+    Returns the ``MEMENTIC_REPO`` environment variable, or an empty string
+    when not set.
+    """
+    return os.environ.get("MEMENTIC_REPO", "")
 
 
 @mcp.tool()
 async def get_context_pack(
     task_description: str,
     affected_files: list[str],
+    project: str | None = None,
 ) -> str:
     """Return all relevant Decisions and Constraints for a given task.
 
@@ -59,11 +91,13 @@ async def get_context_pack(
     Args:
         task_description: Description of the task being started.
         affected_files: List of file paths that will be affected.
+        project: Optional project name to target.  When ``None``,
+            auto-resolution is attempted.
 
     Returns:
         Formatted markdown with relevant architectural context.
     """
-    graph, cfg = _load_graph()
+    graph, cfg = _load_graph(project)
     constraints = graph.get_constraints_for_entities(affected_files)
     decisions = graph.get_decisions_for_entities(affected_files)
     pack_text = format_context_pack(task_description, decisions, constraints)
@@ -78,7 +112,12 @@ async def get_context_pack(
         model="",
         status="success",
     )
-    _metrics_store.append(entry)
+
+    if graph._conn:
+        metrics_store = UsageStore(conn=graph._conn)
+    else:
+        metrics_store = _metrics_store
+    metrics_store.append(entry)
 
     return pack_text
 
@@ -103,32 +142,36 @@ async def propose_decision(
     Returns:
         Confirmation message with save status.
     """
-    with _graph_lock:
-        graph, cfg = _load_graph()
+    graph, cfg = _load_graph()
+    repo = _repo_from_env()
 
-        decision = Decision(
-            id=slugify(title, max_length=80),
-            title=title,
-            rationale=rationale,
-            rejected_alternatives=rejected_alternatives or [],
-            source=f"agent-proposal:{timestamp()}",
-            status=DecisionStatus.PROPOSED,
-            author="opencode",
-            timestamp=timestamp(),
-        )
+    now = timestamp()
+    decision = Decision(
+        id=slugify(title, max_length=80),
+        title=title,
+        rationale=rationale,
+        rejected_alternatives=rejected_alternatives or [],
+        source=f"agent-proposal:{now}",
+        status=DecisionStatus.PROPOSED,
+        author="opencode",
+        created_at=now,
+        modified_at=now,
+        repo=repo,
+    )
 
-        graph.add_decision(decision)
+    graph.add_decision(decision)
 
-        for entity_path in affected_entities or []:
-            if entity_path == decision.id or not entity_path:
-                continue
-            entity = CodeEntity(id=entity_path, type=EntityType.FILE, repo="")
-            graph.add_code_entity(entity)
-            graph.link(decision.id, entity_path, "affects")
+    for entity_path in affected_entities or []:
+        if entity_path == decision.id or not entity_path:
+            continue
+        entity = CodeEntity(id=entity_path, type=EntityType.FILE, repo=repo)
+        graph.add_code_entity(entity)
+        graph.link(decision.id, entity_path, "affects")
 
-        _save_graph(graph, cfg)
+    _save_graph(graph, cfg)
     return (
-        f"Decision '{title}' saved for review (status: proposed). Use `mementic review` to accept."
+        f"Decision '{title}' saved for review (status: proposed). "
+        "Use `mementic review` to accept."
     )
 
 
@@ -151,43 +194,50 @@ async def propose_constraint(
     Returns:
         Confirmation message with save status.
     """
-    with _graph_lock:
-        graph, cfg = _load_graph()
+    graph, cfg = _load_graph()
+    repo = _repo_from_env()
 
-        constraint_id = id or slugify(description, max_length=80)
+    constraint_id = id or slugify(description, max_length=80)
 
-        constraint = Constraint(
-            id=constraint_id,
-            description=description,
-            bound_entities=bound_entities,
-            enforced_by=decision_id or "",
-            source=f"agent-proposal:{timestamp()}",
-            status="proposed",
-            timestamp=timestamp(),
-        )
+    now = timestamp()
+    constraint = Constraint(
+        id=constraint_id,
+        description=description,
+        bound_entities=bound_entities,
+        enforced_by=decision_id or "",
+        source=f"agent-proposal:{now}",
+        status="proposed",
+        created_at=now,
+        repo=repo,
+    )
 
-        graph.add_constraint(constraint)
+    graph.add_constraint(constraint)
 
-        for entity_path in bound_entities:
-            entity = CodeEntity(id=entity_path, type=EntityType.FILE, repo="")
-            graph.add_code_entity(entity)
-            graph.link(constraint.id, entity_path, "binds_to")
+    for entity_path in bound_entities:
+        entity = CodeEntity(id=entity_path, type=EntityType.FILE, repo=repo)
+        graph.add_code_entity(entity)
+        graph.link(constraint.id, entity_path, "binds_to")
 
-        _save_graph(graph, cfg)
+    _save_graph(graph, cfg)
     return f"Constraint '{constraint.id}' saved for review."
 
 
 @mcp.tool()
-async def get_system_evolution(entity_path: str) -> str:
+async def get_system_evolution(
+    entity_path: str,
+    project: str | None = None,
+) -> str:
     """Trace all decisions that affected a specific code entity.
 
     Args:
         entity_path: Path of the code entity to trace.
+        project: Optional project name to target.  When ``None``,
+            auto-resolution is attempted.
 
     Returns:
         Markdown summary of all decisions affecting the entity.
     """
-    graph, cfg = _load_graph()
+    graph, cfg = _load_graph(project)
     decisions = graph.get_evolution(entity_path)
 
     if not decisions:
@@ -195,7 +245,7 @@ async def get_system_evolution(entity_path: str) -> str:
 
     lines = [f"## Evolution of {entity_path}\n"]
     for d in decisions:
-        lines.append(f"- [{d.timestamp}] **{d.title}**: {d.rationale}")
+        lines.append(f"- [{d.created_at}] **{d.title}**: {d.rationale}")
         if d.rejected_alternatives:
             lines.append(f"  Rejected: {', '.join(d.rejected_alternatives)}")
 

@@ -25,7 +25,8 @@ def make_decision(
         source=source,
         status=DecisionStatus.ACCEPTED,
         author="test-author",
-        timestamp=ts,
+        created_at=ts,
+        modified_at=ts,
     )
 
 
@@ -43,7 +44,7 @@ def make_constraint(
         enforced_by=enforced_by,
         source=source,
         status="active",
-        timestamp=ts,
+        created_at=ts,
     )
 
 

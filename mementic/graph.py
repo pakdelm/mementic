@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -14,10 +15,250 @@ from mementic.models import (
     GraphPayload,
 )
 
+SCHEMA_VERSION = 1
+
 
 class GraphStore:
-    def __init__(self) -> None:
+    """Knowledge graph store backed by NetworkX (in-memory) and optionally SQLite.
+
+    When ``db_path`` is None, operates in NetworkX-only mode with JSON save/load.
+    When ``db_path`` is provided, persists to SQLite: mutations update NetworkX and
+    flush to SQLite; queries read directly from SQLite via indexed JOINs.
+    """
+
+    def __init__(self, db_path: str | Path | None = None) -> None:
         self._g: nx.DiGraph = nx.DiGraph()
+        self._db_path = Path(db_path) if db_path else None
+        self._conn: sqlite3.Connection | None = None
+        if self._db_path:
+            self._ensure_db()
+
+    def close(self) -> None:
+        """Close the SQLite connection if open. Safe to call multiple times."""
+        if self._conn is not None:
+            self._conn.close()
+            self._conn = None
+
+    # ------------------------------------------------------------------
+    # Database lifecycle
+    # ------------------------------------------------------------------
+
+    def _ensure_db(self) -> None:
+        """Open the SQLite database, apply migrations, and load data into NetworkX."""
+        assert self._db_path is not None
+        self._db_path.parent.mkdir(parents=True, exist_ok=True)
+        self._conn = sqlite3.connect(str(self._db_path))
+        self._conn.row_factory = sqlite3.Row
+        self._migrate_schema(self._conn)
+        self._load_from_db()
+
+    @staticmethod
+    def _migrate_schema(conn: sqlite3.Connection) -> None:
+        """Apply schema migrations sequentially based on PRAGMA user_version."""
+        version: int = conn.execute("PRAGMA user_version").fetchone()[0]
+
+        if version < 1:
+            conn.executescript("""
+                CREATE TABLE IF NOT EXISTS decisions (
+                    id TEXT PRIMARY KEY,
+                    title TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'proposed',
+                    rationale TEXT DEFAULT '',
+                    source TEXT DEFAULT '',
+                    repo TEXT DEFAULT '',
+                    affected_entities TEXT DEFAULT '[]',
+                    rejected_alternatives TEXT DEFAULT '[]',
+                    author TEXT DEFAULT 'unknown',
+                    tags TEXT DEFAULT '[]',
+                    created_at TEXT NOT NULL,
+                    modified_at TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS constraints (
+                    id TEXT PRIMARY KEY,
+                    description TEXT NOT NULL,
+                    enforced_by TEXT DEFAULT '',
+                    source TEXT DEFAULT '',
+                    repo TEXT DEFAULT '',
+                    bound_entities TEXT DEFAULT '[]',
+                    status TEXT DEFAULT 'active',
+                    created_at TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS entities (
+                    id TEXT PRIMARY KEY,
+                    type TEXT NOT NULL DEFAULT 'file',
+                    repo TEXT DEFAULT '',
+                    created_at TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS edges (
+                    source_id TEXT NOT NULL,
+                    target_id TEXT NOT NULL,
+                    kind TEXT NOT NULL,
+                    PRIMARY KEY (source_id, target_id, kind)
+                );
+
+                CREATE TABLE IF NOT EXISTS project_sources (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    repo_path TEXT NOT NULL UNIQUE,
+                    label TEXT,
+                    ingested_at TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS extraction_log (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    operation TEXT NOT NULL,
+                    source_label TEXT DEFAULT '',
+                    input_tokens INTEGER DEFAULT 0,
+                    output_tokens INTEGER DEFAULT 0,
+                    total_tokens INTEGER DEFAULT 0,
+                    model TEXT DEFAULT '',
+                    status TEXT DEFAULT 'success',
+                    timestamp TEXT NOT NULL
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_decisions_repo
+                    ON decisions(repo);
+                CREATE INDEX IF NOT EXISTS idx_decisions_status
+                    ON decisions(status);
+                CREATE INDEX IF NOT EXISTS idx_constraints_repo
+                    ON constraints(repo);
+                CREATE INDEX IF NOT EXISTS idx_edges_source
+                    ON edges(source_id);
+                CREATE INDEX IF NOT EXISTS idx_edges_target
+                    ON edges(target_id);
+                CREATE INDEX IF NOT EXISTS idx_extraction_op
+                    ON extraction_log(operation);
+
+                PRAGMA user_version = 1;
+            """)
+
+    def _load_from_db(self) -> None:
+        """Load all rows from SQLite into the in-memory NetworkX graph."""
+        assert self._conn is not None
+
+        for row in self._conn.execute("SELECT * FROM decisions"):
+            payload = dict(row)
+            payload["affected_entities"] = json.loads(payload["affected_entities"])
+            payload["rejected_alternatives"] = json.loads(
+                payload["rejected_alternatives"]
+            )
+            payload["tags"] = json.loads(payload["tags"])
+            self._g.add_node(row["id"], node_type="Decision", payload=payload)
+
+        for row in self._conn.execute("SELECT * FROM constraints"):
+            payload = dict(row)
+            payload["bound_entities"] = json.loads(payload["bound_entities"])
+            self._g.add_node(row["id"], node_type="Constraint", payload=payload)
+
+        for row in self._conn.execute("SELECT * FROM entities"):
+            payload = dict(row)
+            self._g.add_node(row["id"], node_type="CodeEntity", payload=payload)
+
+        for row in self._conn.execute("SELECT * FROM edges"):
+            self._g.add_edge(
+                row["source_id"], row["target_id"], relation=row["kind"]
+            )
+
+    def _write_back(self) -> None:
+        """Sync the NetworkX graph to SQLite. No-op when db_path is None."""
+        if self._conn is None:
+            return
+
+        now = datetime.now(timezone.utc).isoformat()
+
+        with self._conn:
+            self._conn.execute("DELETE FROM edges")
+
+            for u, v, attrs in self._g.edges(data=True):
+                self._conn.execute(
+                    "INSERT INTO edges (source_id, target_id, kind) "
+                    "VALUES (?, ?, ?)",
+                    (u, v, attrs.get("relation", "")),
+                )
+
+            for node_id, attrs in self._g.nodes(data=True):
+                node_type = attrs.get("node_type", "")
+                payload: dict[str, Any] = attrs.get("payload", {})
+
+                if node_type == "Decision":
+                    self._conn.execute(
+                        """INSERT OR REPLACE INTO decisions
+                           (id, title, status, rationale, source, repo,
+                            affected_entities, rejected_alternatives,
+                            author, tags, created_at, modified_at)
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        (
+                            payload.get("id", node_id),
+                            payload.get("title", ""),
+                            payload.get("status", "proposed"),
+                            payload.get("rationale", ""),
+                            payload.get("source", ""),
+                            payload.get("repo", ""),
+                            json.dumps(payload.get("affected_entities", [])),
+                            json.dumps(
+                                payload.get("rejected_alternatives", [])
+                            ),
+                            payload.get("author", "unknown"),
+                            json.dumps(payload.get("tags", [])),
+                            payload.get("created_at", now),
+                            payload.get("modified_at", now),
+                        ),
+                    )
+                elif node_type == "Constraint":
+                    self._conn.execute(
+                        """INSERT OR REPLACE INTO constraints
+                           (id, description, enforced_by, source, repo,
+                            bound_entities, status, created_at)
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                        (
+                            payload.get("id", node_id),
+                            payload.get("description", ""),
+                            payload.get("enforced_by", ""),
+                            payload.get("source", ""),
+                            payload.get("repo", ""),
+                            json.dumps(payload.get("bound_entities", [])),
+                            payload.get("status", "active"),
+                            payload.get("created_at", now),
+                        ),
+                    )
+                elif node_type == "CodeEntity":
+                    self._conn.execute(
+                        """INSERT OR REPLACE INTO entities
+                           (id, type, repo, created_at)
+                           VALUES (?, ?, ?, ?)""",
+                        (
+                            payload.get("id", node_id),
+                            payload.get("type", "file"),
+                            payload.get("repo", ""),
+                            payload.get("created_at", now),
+                        ),
+                    )
+
+    # ------------------------------------------------------------------
+    # Helpers for row → Pydantic model parsing
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _row_to_decision(row: sqlite3.Row) -> Decision:
+        payload = dict(row)
+        payload["affected_entities"] = json.loads(payload["affected_entities"])
+        payload["rejected_alternatives"] = json.loads(
+            payload["rejected_alternatives"]
+        )
+        payload["tags"] = json.loads(payload["tags"])
+        return Decision(**payload)
+
+    @staticmethod
+    def _row_to_constraint(row: sqlite3.Row) -> Constraint:
+        payload = dict(row)
+        payload["bound_entities"] = json.loads(payload["bound_entities"])
+        return Constraint(**payload)
+
+    # ------------------------------------------------------------------
+    # Mutations (NetworkX + optional SQLite write-back)
+    # ------------------------------------------------------------------
 
     def add_decision(self, d: Decision) -> None:
         if d.id in self._g:
@@ -31,6 +272,7 @@ class GraphStore:
             self._g.nodes[d.id]["payload"] = d.model_dump()
         else:
             self._g.add_node(d.id, node_type="Decision", payload=d.model_dump())
+        self._write_back()
 
     def add_constraint(self, c: Constraint) -> None:
         if c.id in self._g:
@@ -43,7 +285,10 @@ class GraphStore:
             self._g.nodes[c.id]["node_type"] = "Constraint"
             self._g.nodes[c.id]["payload"] = c.model_dump()
         else:
-            self._g.add_node(c.id, node_type="Constraint", payload=c.model_dump())
+            self._g.add_node(
+                c.id, node_type="Constraint", payload=c.model_dump()
+            )
+        self._write_back()
 
     def add_code_entity(self, e: CodeEntity) -> None:
         if e.id in self._g:
@@ -56,20 +301,41 @@ class GraphStore:
             self._g.nodes[e.id]["node_type"] = "CodeEntity"
             self._g.nodes[e.id]["payload"] = e.model_dump()
         else:
-            self._g.add_node(e.id, node_type="CodeEntity", payload=e.model_dump())
+            self._g.add_node(
+                e.id, node_type="CodeEntity", payload=e.model_dump()
+            )
+        self._write_back()
 
     def link(self, source_id: str, target_id: str, relation: str) -> None:
         self._g.add_edge(source_id, target_id, relation=relation)
+        self._write_back()
+
+    # ------------------------------------------------------------------
+    # Queries (SQLite when available, otherwise NetworkX)
+    # ------------------------------------------------------------------
 
     def get_constraints_for_entities(
         self, paths: list[str], prefix_match: bool = False
     ) -> list[Constraint]:
         seen: set[str] = set()
         result: list[Constraint] = []
+
+        if self._conn is not None:
+            for row in self._conn.execute("SELECT * FROM constraints"):
+                bound_entities: list[str] = json.loads(row["bound_entities"])
+                for be in bound_entities:
+                    for p in paths:
+                        if be == p or (prefix_match and be.startswith(p)):
+                            if row["id"] not in seen:
+                                seen.add(row["id"])
+                                result.append(self._row_to_constraint(row))
+                            break
+            return result
+
         for _node_id, attrs in self._g.nodes(data=True):
             if attrs.get("node_type") != "Constraint":
                 continue
-            bound_entities: list[str] = attrs["payload"].get("bound_entities", [])
+            bound_entities = attrs["payload"].get("bound_entities", [])
             for be in bound_entities:
                 for p in paths:
                     if be == p or (prefix_match and be.startswith(p)):
@@ -78,8 +344,22 @@ class GraphStore:
                             result.append(Constraint(**attrs["payload"]))
         return result
 
-    def get_decisions_for_entities(self, paths: list[str]) -> list[Decision]:
+    def get_decisions_for_entities(
+        self, paths: list[str],
+    ) -> list[Decision]:
         decisions: dict[str, Decision] = {}
+
+        if self._conn is not None:
+            placeholders = ",".join("?" for _ in paths)
+            for row in self._conn.execute(
+                f"SELECT DISTINCT d.* FROM decisions d "
+                f"JOIN edges e ON d.id = e.source_id "
+                f"WHERE e.target_id IN ({placeholders})",
+                paths,
+            ):
+                decisions[row["id"]] = self._row_to_decision(row)
+            return list(decisions.values())
+
         for node_id, attrs in self._g.nodes(data=True):
             if attrs.get("node_type") != "CodeEntity":
                 continue
@@ -94,10 +374,58 @@ class GraphStore:
     def get_evolution(self, entity_path: str) -> list[Decision]:
         decisions: dict[str, Decision] = {}
 
+        if self._conn is not None:
+            # Part 1: decisions linked via constraints bound to entity_path
+            for crow in self._conn.execute("SELECT * FROM constraints"):
+                bound_entities: list[str] = json.loads(
+                    crow["bound_entities"]
+                )
+                if any(
+                    be == entity_path
+                    or be.startswith(entity_path)
+                    or entity_path.startswith(be)
+                    for be in bound_entities
+                ):
+                    for erow in self._conn.execute(
+                        "SELECT source_id FROM edges WHERE target_id = ?",
+                        (crow["id"],),
+                    ):
+                        if erow["source_id"] not in decisions:
+                            drow = self._conn.execute(
+                                "SELECT * FROM decisions WHERE id = ?",
+                                (erow["source_id"],),
+                            ).fetchone()
+                            if drow:
+                                decisions[drow["id"]] = (
+                                    self._row_to_decision(drow)
+                                )
+
+            # Part 2: decisions directly linked to matching entity nodes
+            for erow in self._conn.execute("SELECT * FROM entities"):
+                if (
+                    erow["id"] == entity_path
+                    or erow["id"].startswith(entity_path)
+                ):
+                    for edge_row in self._conn.execute(
+                        "SELECT source_id FROM edges WHERE target_id = ?",
+                        (erow["id"],),
+                    ):
+                        if edge_row["source_id"] not in decisions:
+                            drow = self._conn.execute(
+                                "SELECT * FROM decisions WHERE id = ?",
+                                (edge_row["source_id"],),
+                            ).fetchone()
+                            if drow:
+                                decisions[drow["id"]] = (
+                                    self._row_to_decision(drow)
+                                )
+
+            return list(decisions.values())
+
         for _node_id, attrs in self._g.nodes(data=True):
             if attrs.get("node_type") != "Constraint":
                 continue
-            bound_entities: list[str] = attrs["payload"].get("bound_entities", [])
+            bound_entities = attrs["payload"].get("bound_entities", [])
             if any(
                 be == entity_path
                 or be.startswith(entity_path)
@@ -121,6 +449,11 @@ class GraphStore:
         return list(decisions.values())
 
     def get_all_decisions(self) -> list[Decision]:
+        if self._conn is not None:
+            return [
+                self._row_to_decision(row)
+                for row in self._conn.execute("SELECT * FROM decisions")
+            ]
         return [
             Decision(**attrs["payload"])
             for _node_id, attrs in self._g.nodes(data=True)
@@ -128,6 +461,11 @@ class GraphStore:
         ]
 
     def get_all_constraints(self) -> list[Constraint]:
+        if self._conn is not None:
+            return [
+                self._row_to_constraint(row)
+                for row in self._conn.execute("SELECT * FROM constraints")
+            ]
         return [
             Constraint(**attrs["payload"])
             for _node_id, attrs in self._g.nodes(data=True)
@@ -135,6 +473,13 @@ class GraphStore:
         ]
 
     def get_pending_decisions(self) -> list[Decision]:
+        if self._conn is not None:
+            return [
+                self._row_to_decision(row)
+                for row in self._conn.execute(
+                    "SELECT * FROM decisions WHERE status = 'proposed'"
+                )
+            ]
         return [
             Decision(**attrs["payload"])
             for _node_id, attrs in self._g.nodes(data=True)
@@ -143,6 +488,13 @@ class GraphStore:
         ]
 
     def get_pending_constraints(self) -> list[Constraint]:
+        if self._conn is not None:
+            return [
+                self._row_to_constraint(row)
+                for row in self._conn.execute(
+                    "SELECT * FROM constraints WHERE status = 'proposed'"
+                )
+            ]
         return [
             Constraint(**attrs["payload"])
             for _node_id, attrs in self._g.nodes(data=True)
@@ -150,7 +502,15 @@ class GraphStore:
             and attrs["payload"].get("status") == "proposed"
         ]
 
+    # ------------------------------------------------------------------
+    # Serialization (JSON for backward compat; no-op for SQLite)
+    # ------------------------------------------------------------------
+
     def save(self, path: str) -> None:
+        if self._conn is not None:
+            # SQLite mode: data is already persisted; save is a no-op.
+            return
+
         nodes_payload: list[dict[str, Any]] = []
         for node_id, attrs in self._g.nodes(data=True):
             nodes_payload.append({
@@ -171,7 +531,9 @@ class GraphStore:
         p = Path(path)
         p.parent.mkdir(parents=True, exist_ok=True)
         tmp = p.with_suffix(p.suffix + ".tmp")
-        tmp.write_text(json.dumps(payload.model_dump(mode="json"), indent=2))
+        tmp.write_text(
+            json.dumps(payload.model_dump(mode="json"), indent=2)
+        )
         tmp.replace(p)
 
         audit_path = p.parent / "audit.jsonl"
@@ -179,13 +541,19 @@ class GraphStore:
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "action": "save",
             "decisions": sum(
-                1 for _, a in self._g.nodes(data=True) if a.get("node_type") == "Decision"
+                1
+                for _, a in self._g.nodes(data=True)
+                if a.get("node_type") == "Decision"
             ),
             "constraints": sum(
-                1 for _, a in self._g.nodes(data=True) if a.get("node_type") == "Constraint"
+                1
+                for _, a in self._g.nodes(data=True)
+                if a.get("node_type") == "Constraint"
             ),
             "entities": sum(
-                1 for _, a in self._g.nodes(data=True) if a.get("node_type") == "CodeEntity"
+                1
+                for _, a in self._g.nodes(data=True)
+                if a.get("node_type") == "CodeEntity"
             ),
             "edges": self._g.number_of_edges(),
         }
@@ -212,6 +580,10 @@ class GraphStore:
                 relation=edge_data.get("relation", ""),
             )
         return gs
+
+    # ------------------------------------------------------------------
+    # Node / Edge accessors (always NetworkX)
+    # ------------------------------------------------------------------
 
     def has_node(self, node_id: str) -> bool:
         return node_id in self._g
@@ -249,7 +621,27 @@ class GraphStore:
             return []
         return list(self._g.predecessors(node_id))
 
+    # ------------------------------------------------------------------
+    # Statistics
+    # ------------------------------------------------------------------
+
     def stats(self) -> dict[str, int]:
+        if self._conn is not None:
+            return {
+                "decisions": self._conn.execute(
+                    "SELECT COUNT(*) FROM decisions"
+                ).fetchone()[0],
+                "constraints": self._conn.execute(
+                    "SELECT COUNT(*) FROM constraints"
+                ).fetchone()[0],
+                "entities": self._conn.execute(
+                    "SELECT COUNT(*) FROM entities"
+                ).fetchone()[0],
+                "edges": self._conn.execute(
+                    "SELECT COUNT(*) FROM edges"
+                ).fetchone()[0],
+            }
+
         decisions = 0
         constraints = 0
         entities = 0

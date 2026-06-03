@@ -15,16 +15,24 @@ __all__ = [
     "AgentSessionConfig",
     "ClaudeSource",
     "CursorSource",
+    "GlobalConfig",
     "LLMConfig",
     "MementicConfig",
     "OpenCodeSource",
     "OutputConfig",
     "PROVIDER_CONFIGS",
+    "ProjectEntry",
+    "RepoEntry",
     "SessionsConfig",
     "Sources",
     "WindsurfSource",
+    "get_global_config_path",
+    "has_global_config",
     "get_provider_config",
     "load_config",
+    "load_global_config",
+    "resolve_project",
+    "save_global_config",
 ]
 
 # ── Provider metadata ──────────────────────────────────────────────
@@ -258,3 +266,183 @@ def load_config(path: str = ".mementic.json") -> MementicConfig:
         return MementicConfig()
 
     return MementicConfig.model_validate(data)
+
+
+# ── Global config models ──────────────────────────────────────────────
+
+
+class RepoEntry(BaseModel):
+    """A registered repo within a project.
+
+    Attributes:
+        path: Absolute path to the repo on disk.
+        label: Optional short display name for the repo.
+    """
+
+    path: str
+    label: str = ""
+
+
+class ProjectEntry(BaseModel):
+    """A named project with registered repos and a dedicated database.
+
+    Attributes:
+        description: Optional human-readable description.
+        db_path: Path to the project's SQLite database
+            (absolute or ~-prefixed).
+        repos: Mapping of repo absolute paths to RepoEntry metadata.
+    """
+
+    description: str = ""
+    db_path: str
+    repos: dict[str, RepoEntry] = Field(default_factory=dict)
+
+
+class GlobalConfig(BaseModel):
+    """Global project configuration stored at ``~/.mementic/config.json``.
+
+    This file defines named projects, each with its own database and
+    registered repos.  It sits above the per-repo ``.mementic.json``
+    files, which only describe *what to scan* in an individual repo.
+
+    Attributes:
+        version: Schema version of the config file.
+        default_project: Name of the default project to use when no
+            ``--project`` flag is given.
+        projects: Mapping of project names to ProjectEntry objects.
+            Empty when no config file exists yet (first run).
+    """
+
+    version: int = 1
+    default_project: str = "main"
+    projects: dict[str, ProjectEntry] = Field(default_factory=dict)
+
+
+# ── Global config I/O ────────────────────────────────────────────────
+
+
+def get_global_config_path() -> Path:
+    """Return the canonical path to the global config file.
+
+    Respects the ``MEMENTIC_GLOBAL_CONFIG`` environment variable.
+    When set, that path is used instead of the default.
+
+    Returns:
+        ``Path.home() / ".mementic" / "config.json"``, unless overridden.
+    """
+    import os
+    if override := os.environ.get("MEMENTIC_GLOBAL_CONFIG"):
+        return Path(override)
+    return Path.home() / ".mementic" / "config.json"
+
+
+def has_global_config() -> bool:
+    """Return True if ``~/.mementic/config.json`` exists on disk.
+
+    Returns:
+        ``True`` when the global project config file is present.
+    """
+    return get_global_config_path().is_file()
+
+
+def load_global_config() -> GlobalConfig:
+    """Load the global project config from ``~/.mementic/config.json``.
+
+    If the file does not exist, a default ``GlobalConfig`` with a
+    single ``"main"`` project is returned.  Corrupt JSON produces a
+    warning on stderr and also falls back to the default.
+
+    Returns:
+        A validated ``GlobalConfig`` instance.
+
+    Raises:
+        pydantic.ValidationError: If the file contains valid JSON but
+            invalid field types or values (e.g. an empty ``projects``
+            dict after ``mementic init`` has been run).
+    """
+    config_path = get_global_config_path()
+    if not config_path.is_file():
+        return _default_global_config()
+
+    try:
+        data = json.loads(config_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        sys.stderr.write(
+            f"Config file {config_path} is corrupt. "
+            "Run 'mementic init' to regenerate.\n"
+        )
+        return _default_global_config()
+
+    return GlobalConfig.model_validate(data)
+
+
+def save_global_config(config: GlobalConfig) -> None:
+    """Write a ``GlobalConfig`` to ``~/.mementic/config.json``.
+
+    Creates the parent directory if it is missing.
+
+    Args:
+        config: The validated global config to persist.
+    """
+    config_path = get_global_config_path()
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(
+        config.model_dump_json(indent=2),
+        encoding="utf-8",
+    )
+
+
+def resolve_project(project: str | None = None) -> tuple[str, GlobalConfig]:
+    """Resolve which project to target.
+
+    Args:
+        project: Optional project name.  When given, the project must
+            exist in the global config.  When omitted and exactly one
+            project is configured, that project is returned.  When
+            omitted and multiple projects exist, a ``ValueError`` is
+            raised listing the available choices.
+
+    Returns:
+        A ``(project_name, global_config)`` tuple.
+
+    Raises:
+        ValueError: If the requested project does not exist, or if no
+            project was specified and the global config contains more
+            than one project.
+    """
+    config = load_global_config()
+
+    if project is not None:
+        if project not in config.projects:
+            available = ", ".join(sorted(config.projects))
+            raise ValueError(
+                f"Project '{project}' not found in config. "
+                f"Available: {available}"
+            )
+        return project, config
+
+    if len(config.projects) == 1:
+        (only_project,) = config.projects
+        return only_project, config
+
+    if len(config.projects) == 0:
+        raise ValueError(
+            "No projects configured. Run 'mementic init' to create one."
+        )
+
+    available = ", ".join(sorted(config.projects))
+    raise ValueError(
+        f"Multiple projects configured. Use --project to specify. "
+        f"Available: {available}"
+    )
+
+
+def _default_global_config() -> GlobalConfig:
+    """Return an empty ``GlobalConfig`` with no projects.
+
+    This is used when no config file exists yet (first run before
+    ``mementic init``).  An empty projects dict means no project
+    database is available — CLI commands fall back to legacy
+    ``graph.json``.
+    """
+    return GlobalConfig()

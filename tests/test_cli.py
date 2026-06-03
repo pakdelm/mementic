@@ -13,6 +13,7 @@ import pytest
 from typer.testing import CliRunner
 
 from mementic.cli import app
+from mementic.config import load_global_config
 
 runner = CliRunner()
 
@@ -432,7 +433,8 @@ class TestCaptureAutoAccept:
                     rationale="Secure API with tokens",
                     source="session",
                     status=DecisionStatus.ACCEPTED,
-                    timestamp="2024-01-01T00:00:00Z",
+                    created_at="2024-01-01T00:00:00Z",
+                    modified_at="2024-01-01T00:00:00Z",
                 ),
             ],
             affected_entities=["src/auth.py"],
@@ -492,7 +494,8 @@ class TestCaptureAutoAccept:
                     rationale="Completely different approach to JWT authentication with rotating keys",
                     source="session",
                     status=DecisionStatus.PROPOSED,
-                    timestamp="2024-01-02T00:00:00Z",
+                    created_at="2024-01-02T00:00:00Z",
+                    modified_at="2024-01-02T00:00:00Z",
                 ),
             ],
             affected_entities=[],
@@ -536,7 +539,8 @@ class TestCaptureAutoAccept:
                     rationale="Testing",
                     source="session",
                     status=DecisionStatus.ACCEPTED,
-                    timestamp="2024-01-01T00:00:00Z",
+                    created_at="2024-01-01T00:00:00Z",
+                    modified_at="2024-01-01T00:00:00Z",
                 ),
             ],
         )
@@ -1053,7 +1057,8 @@ class TestCaptureNoGit:
                     rationale="Testing",
                     source="session",
                     status=DecisionStatus.ACCEPTED,
-                    timestamp="2024-01-01T00:00:00Z",
+                    created_at="2024-01-01T00:00:00Z",
+                    modified_at="2024-01-01T00:00:00Z",
                 ),
             ],
         )
@@ -1112,7 +1117,8 @@ class TestCaptureNoGit:
                     rationale="Testing",
                     source="session",
                     status=DecisionStatus.ACCEPTED,
-                    timestamp="2024-01-01T00:00:00Z",
+                    created_at="2024-01-01T00:00:00Z",
+                    modified_at="2024-01-01T00:00:00Z",
                 ),
             ],
         )
@@ -1167,7 +1173,8 @@ class TestCaptureNoGit:
                     rationale="Testing",
                     source="session",
                     status=DecisionStatus.ACCEPTED,
-                    timestamp="2024-01-01T00:00:00Z",
+                    created_at="2024-01-01T00:00:00Z",
+                    modified_at="2024-01-01T00:00:00Z",
                 ),
             ],
         )
@@ -1225,7 +1232,8 @@ class TestCaptureNoGit:
                     rationale="Testing",
                     source="session",
                     status=DecisionStatus.ACCEPTED,
-                    timestamp="2024-01-01T00:00:00Z",
+                    created_at="2024-01-01T00:00:00Z",
+                    modified_at="2024-01-01T00:00:00Z",
                 ),
             ],
         )
@@ -1322,3 +1330,101 @@ class TestInitRepoFlag:
         output = _strip_ansi(result.stdout)
         assert "--repo" in output
         assert "--no-scan" in output
+
+
+# ── Spec 12b: Project management CLI commands ──────────────────────
+
+
+class TestProjectCommands:
+    """Tests for 'mementic project create|list|set-default' commands."""
+
+    def _setup_config(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> Path:
+        """Create an isolated global config file and monkeypatch its path."""
+        config_dir = tmp_path / ".mementic"
+        config_dir.mkdir()
+        config_file = config_dir / "config.json"
+        config_file.write_text(json.dumps({
+            "version": 1,
+            "default_project": "main",
+            "projects": {
+                "main": {
+                    "description": "",
+                    "db_path": "~/.mementic/projects/main.mementic.db",
+                    "repos": {},
+                },
+            },
+        }))
+        monkeypatch.setattr(
+            "mementic.config.get_global_config_path", lambda: config_file
+        )
+        return config_file
+
+    def test_project_create_adds_to_config(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Runs 'mementic project create myproject', then checks config."""
+        self._setup_config(tmp_path, monkeypatch)
+
+        result = runner.invoke(app, ["project", "create", "myproject"])
+        assert result.exit_code == 0, f"stderr: {result.stderr}"
+
+        cfg = load_global_config()
+        assert "myproject" in cfg.projects
+        assert cfg.projects["myproject"].db_path == (
+            "~/.mementic/projects/myproject.mementic.db"
+        )
+        assert cfg.projects["myproject"].description == ""
+
+    def test_project_create_duplicate_errors(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Creates same project twice, second call fails with non-zero exit code."""
+        self._setup_config(tmp_path, monkeypatch)
+
+        result1 = runner.invoke(app, ["project", "create", "dup-project"])
+        assert result1.exit_code == 0
+
+        result2 = runner.invoke(app, ["project", "create", "dup-project"])
+        assert result2.exit_code == 1
+        assert "already exists" in result2.stderr or "already exists" in result2.stdout
+
+    def test_project_list_shows_projects(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Creates a project, runs 'mementic project list', output contains project name."""
+        self._setup_config(tmp_path, monkeypatch)
+
+        runner.invoke(app, ["project", "create", "myproject"])
+        result = runner.invoke(app, ["project", "list"])
+
+        assert result.exit_code == 0
+        output = result.stdout
+        assert "myproject" in output
+
+    def test_project_set_default(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Creates two projects, sets default to second, checks config."""
+        self._setup_config(tmp_path, monkeypatch)
+
+        runner.invoke(app, ["project", "create", "first"])
+        runner.invoke(app, ["project", "create", "second"])
+
+        result = runner.invoke(app, ["project", "set-default", "second"])
+        assert result.exit_code == 0
+
+        cfg = load_global_config()
+        assert cfg.default_project == "second"
+
+    def test_project_set_default_missing_errors(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Set-default to nonexistent project, fails with non-zero exit code."""
+        self._setup_config(tmp_path, monkeypatch)
+
+        result = runner.invoke(app, ["project", "set-default", "ghost-project"])
+        assert result.exit_code == 1
+        output = result.stdout + result.stderr
+        assert "not found" in output.lower()

@@ -10,10 +10,8 @@ build/
 # Secrets
 .env
 
-# Mementic runtime
+# Mementic runtime (graph lives at ~/.mementic/projects/)
 .mementic/
-__pycache__/
-audit.jsonl
 
 # IDE
 .vscode/

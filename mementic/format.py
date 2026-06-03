@@ -77,7 +77,7 @@ def format_context_pack(
         lines.append("### Relevant Decisions")
         shown_d = decisions[:max_decisions]
         for d in shown_d:
-            lines.append(f"* {d.title} ({d.timestamp})")
+            lines.append(f"* {d.title} ({d.created_at})")
             lines.append(f"  {d.rationale}")
             if d.rejected_alternatives:
                 lines.append(f"  Rejected: {', '.join(d.rejected_alternatives)}")

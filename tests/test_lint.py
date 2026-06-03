@@ -22,7 +22,8 @@ def make_decision(
         rationale=rationale,
         source="test",
         status=status,
-        timestamp="2024-01-01T00:00:00Z",
+        created_at="2024-01-01T00:00:00Z",
+        modified_at="2024-01-01T00:00:00Z",
         tags=tags or [],
     )
 
@@ -40,7 +41,7 @@ def make_constraint(
         enforced_by=enforced_by,
         source="test",
         status=status,
-        timestamp="2024-01-01T00:00:00Z",
+        created_at="2024-01-01T00:00:00Z",
     )
 
 

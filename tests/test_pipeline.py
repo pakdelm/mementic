@@ -88,7 +88,8 @@ def _mock_freeform_result() -> ExtractionResult:
                 rationale="Type safety",
                 source="opencode:instructions/python-style.md",
                 status=DecisionStatus.ACCEPTED,
-                timestamp="2024-01-01T00:00:00Z",
+                created_at="2024-01-01T00:00:00Z",
+                modified_at="2024-01-01T00:00:00Z",
             )
         ],
         constraints=[
@@ -99,7 +100,7 @@ def _mock_freeform_result() -> ExtractionResult:
                 enforced_by="d-opencode-1",
                 source="opencode:instructions/python-style.md",
                 status="active",
-                timestamp="2024-01-01T00:00:00Z",
+                created_at="2024-01-01T00:00:00Z",
             )
         ],
         affected_entities=["src/models/base.py"],
@@ -116,7 +117,8 @@ def _mock_claude_freeform_result() -> ExtractionResult:
                 rationale="Performance",
                 source="claude:instructions/style.md",
                 status=DecisionStatus.ACCEPTED,
-                timestamp="2024-01-01T00:00:00Z",
+                created_at="2024-01-01T00:00:00Z",
+                modified_at="2024-01-01T00:00:00Z",
             )
         ],
         constraints=[
@@ -127,7 +129,7 @@ def _mock_claude_freeform_result() -> ExtractionResult:
                 enforced_by="d-claude-1",
                 source="claude:instructions/style.md",
                 status="active",
-                timestamp="2024-01-01T00:00:00Z",
+                created_at="2024-01-01T00:00:00Z",
             )
         ],
         affected_entities=["src/handlers/base.py"],
@@ -144,7 +146,8 @@ def _mock_cursor_freeform_result() -> ExtractionResult:
                 rationale="Type safety",
                 source="cursor:instructions/typescript.md",
                 status=DecisionStatus.ACCEPTED,
-                timestamp="2024-01-01T00:00:00Z",
+                created_at="2024-01-01T00:00:00Z",
+                modified_at="2024-01-01T00:00:00Z",
             )
         ],
         constraints=[
@@ -155,7 +158,7 @@ def _mock_cursor_freeform_result() -> ExtractionResult:
                 enforced_by="d-cursor-1",
                 source="cursor:instructions/typescript.md",
                 status="active",
-                timestamp="2024-01-01T00:00:00Z",
+                created_at="2024-01-01T00:00:00Z",
             )
         ],
         affected_entities=["tsconfig.json"],
@@ -172,7 +175,8 @@ def _mock_windsurf_freeform_result() -> ExtractionResult:
                 rationale="Utility-first CSS",
                 source="windsurf:instructions/styling.md",
                 status=DecisionStatus.ACCEPTED,
-                timestamp="2024-01-01T00:00:00Z",
+                created_at="2024-01-01T00:00:00Z",
+                modified_at="2024-01-01T00:00:00Z",
             )
         ],
         constraints=[
@@ -183,7 +187,7 @@ def _mock_windsurf_freeform_result() -> ExtractionResult:
                 enforced_by="d-windsurf-1",
                 source="windsurf:instructions/styling.md",
                 status="active",
-                timestamp="2024-01-01T00:00:00Z",
+                created_at="2024-01-01T00:00:00Z",
             )
         ],
         affected_entities=["src/components/"],
@@ -202,7 +206,8 @@ def _mock_adr_result() -> ExtractionResult:
                 source="adr:0001-use-postgres.md",
                 status=DecisionStatus.ACCEPTED,
                 author="unknown",
-                timestamp="2024-01-01T00:00:00Z",
+                created_at="2024-01-01T00:00:00Z",
+                modified_at="2024-01-01T00:00:00Z",
             )
         ],
         constraints=[
@@ -213,7 +218,7 @@ def _mock_adr_result() -> ExtractionResult:
                 enforced_by="d-0001-use-postgresql",
                 source="adr:adr-0001.md",
                 status="active",
-                timestamp="2024-01-01T00:00:00Z",
+                created_at="2024-01-01T00:00:00Z",
             )
         ],
         affected_entities=["src/db/connection.py"],
@@ -233,7 +238,8 @@ def _mock_adr_proposed_result() -> ExtractionResult:
                 rationale="We need faster response times for frequently accessed data. Add Redis as a caching layer in src/cache/redis_client.py.",
                 source="adr:0002-redis.md",
                 status=DecisionStatus.PROPOSED,
-                timestamp="2024-01-01T00:00:00Z",
+                created_at="2024-01-01T00:00:00Z",
+                modified_at="2024-01-01T00:00:00Z",
             )
         ],
         constraints=[],
@@ -251,7 +257,8 @@ def _mock_adr_deprecated_result() -> ExtractionResult:
                 rationale="We initially used raw REST endpoints. Switch to GraphQL for the API layer in src/api/graphql.py.",
                 source="adr:0003-deprecated.md",
                 status=DecisionStatus.DEPRECATED,
-                timestamp="2024-01-01T00:00:00Z",
+                created_at="2024-01-01T00:00:00Z",
+                modified_at="2024-01-01T00:00:00Z",
             )
         ],
         constraints=[],
@@ -618,7 +625,8 @@ class TestDedup:
         d = Decision(
             id="test-id", title="Test", rationale="...",
             source="adr:test", status=DecisionStatus.ACCEPTED,
-            timestamp="2024-01-01T00:00:00Z",
+            created_at="2024-01-01T00:00:00Z",
+            modified_at="2024-01-01T00:00:00Z",
         )
         added = _add_decision_dedup(gs, d)
         assert added is True
@@ -630,12 +638,14 @@ class TestDedup:
         d1 = Decision(
             id="test-id", title="Test", rationale="...",
             source="adr:test", status=DecisionStatus.ACCEPTED,
-            timestamp="2024-01-01T00:00:00Z",
+            created_at="2024-01-01T00:00:00Z",
+            modified_at="2024-01-01T00:00:00Z",
         )
         d2 = Decision(
             id="test-id", title="Test", rationale="...",
             source="opencode:style.md", status=DecisionStatus.ACCEPTED,
-            timestamp="2024-01-01T00:00:00Z",
+            created_at="2024-01-01T00:00:00Z",
+            modified_at="2024-01-01T00:00:00Z",
         )
         _add_decision_dedup(gs, d1)
         added = _add_decision_dedup(gs, d2)
@@ -650,7 +660,7 @@ class TestDedup:
         c = Constraint(
             id="c-test", description="A constraint",
             source="test", status="active",
-            timestamp="2024-01-01T00:00:00Z",
+            created_at="2024-01-01T00:00:00Z",
         )
         added = _add_constraint_dedup(gs, c)
         assert added is True
@@ -662,7 +672,7 @@ class TestDedup:
         c = Constraint(
             id="c-test", description="A constraint",
             source="test", status="active",
-            timestamp="2024-01-01T00:00:00Z",
+            created_at="2024-01-01T00:00:00Z",
         )
         _add_constraint_dedup(gs, c)
         added = _add_constraint_dedup(gs, c)
@@ -679,12 +689,13 @@ class TestBackfill:
             bound_entities=[],
             source="test",
             status="active",
-            timestamp="2024-01-01T00:00:00Z",
+            created_at="2024-01-01T00:00:00Z",
         )
         d = Decision(
             id="d-parent", title="Parent", rationale="...",
             source="test", status=DecisionStatus.ACCEPTED,
-            timestamp="2024-01-01T00:00:00Z",
+            created_at="2024-01-01T00:00:00Z",
+            modified_at="2024-01-01T00:00:00Z",
         )
         gs.add_constraint(c)
         gs.add_decision(d)
@@ -704,7 +715,7 @@ class TestBackfill:
             bound_entities=["src/foo.py"],
             source="test",
             status="active",
-            timestamp="2024-01-01T00:00:00Z",
+            created_at="2024-01-01T00:00:00Z",
         )
         gs.add_constraint(c)
         gs.add_code_entity(CodeEntity(id="src/foo.py", type=EntityType.FILE))
@@ -720,7 +731,8 @@ class TestBackfill:
             id="d-orphan", title="Use Redis in src/cache/redis_client.py",
             rationale="Need caching in src/cache/redis_client.py",
             source="test", status=DecisionStatus.ACCEPTED,
-            timestamp="2024-01-01T00:00:00Z",
+            created_at="2024-01-01T00:00:00Z",
+            modified_at="2024-01-01T00:00:00Z",
         )
         gs.add_decision(d)
 
@@ -735,7 +747,8 @@ class TestBackfill:
         d = Decision(
             id="d-linked", title="Linked", rationale="...",
             source="test", status=DecisionStatus.ACCEPTED,
-            timestamp="2024-01-01T00:00:00Z",
+            created_at="2024-01-01T00:00:00Z",
+            modified_at="2024-01-01T00:00:00Z",
         )
         gs.add_decision(d)
         gs.add_code_entity(CodeEntity(id="src/main.py", type=EntityType.FILE))
@@ -754,7 +767,7 @@ class TestBackfill:
             bound_entities=[],
             source="docs/some-adr.md",
             status="active",
-            timestamp="2024-01-01T00:00:00Z",
+            created_at="2024-01-01T00:00:00Z",
         )
         gs.add_constraint(c)
         count = _backfill_edges(gs)
@@ -771,7 +784,8 @@ class TestBackfill:
             rationale="No file paths mentioned here whatsoever.",
             source="adr:no-paths",
             status=DecisionStatus.ACCEPTED,
-            timestamp="2024-01-01T00:00:00Z",
+            created_at="2024-01-01T00:00:00Z",
+            modified_at="2024-01-01T00:00:00Z",
         )
         gs.add_decision(d)
         count = _backfill_decision_edges(gs)
@@ -967,7 +981,8 @@ class TestRunInitWithRepoScan:
                 rationale="FastAPI is used as web framework",
                 source="detected:codebase",
                 status=DecisionStatus.PROPOSED,
-                timestamp="2024-01-01T00:00:00Z",
+                created_at="2024-01-01T00:00:00Z",
+                modified_at="2024-01-01T00:00:00Z",
             )
         ]
         mock_result = ExtractionResult(

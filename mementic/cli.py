@@ -11,7 +11,13 @@ from pydantic import ValidationError
 
 load_dotenv()
 
-from mementic.config import load_config  # noqa: E402
+from mementic.config import (  # noqa: E402
+    RepoEntry,
+    load_config,
+    load_global_config,
+    resolve_project,
+    save_global_config,
+)
 from mementic.extraction import extract_from_session  # noqa: E402
 from mementic.format import format_context_pack, timestamp  # noqa: E402
 from mementic.graph import GraphStore  # noqa: E402
@@ -21,6 +27,7 @@ from mementic.conflict import detect_conflicts  # noqa: E402
 from mementic.metrics import UsageStore  # noqa: E402
 
 if TYPE_CHECKING:
+    from mementic.config import MementicConfig  # noqa: F401
     from mementic.lint import LintFinding  # noqa: F401
 
 app = typer.Typer(help="Mementic — semantic memory for engineering teams and AI agents")
@@ -56,6 +63,39 @@ def _load_graph_safe(graph_path: str) -> GraphStore:
         raise typer.Exit(code=1)
 
 
+def _resolve_graph(project: str | None = None) -> tuple[GraphStore, "MementicConfig"]:
+    """Resolve graph for a project or fall back to legacy graph.json.
+
+    Tries to resolve a project from the global config. When no projects are
+    configured (first run, or no ``~/.mementic/config.json`` on disk), falls
+    back to the legacy ``graph.json`` path.
+
+    Args:
+        project: Optional project name from ``--project`` flag.
+
+    Returns:
+        A ``(GraphStore, MementicConfig)`` tuple.
+
+    Raises:
+        typer.Exit: When an explicit ``--project`` is not found.
+    """
+    cfg = load_config()
+
+    try:
+        proj_name, global_cfg = resolve_project(project)
+        proj_entry = global_cfg.projects[proj_name]
+        db_path = Path(proj_entry.db_path).expanduser()
+        return GraphStore(db_path=db_path), cfg
+    except ValueError as e:
+        if project is not None:
+            # Explicit --project that doesn't exist
+            typer.echo(str(e), err=True)
+            raise typer.Exit(code=1)
+        # No projects configured — fall back to legacy graph.json
+
+    return _load_graph_safe(cfg.output.graph_path), cfg
+
+
 def _load_checkpoint() -> str:
     p = Path(CHECKPOINT_FILE)
     return p.read_text().strip() if p.exists() else ""
@@ -75,7 +115,7 @@ def _save_checkpoint() -> None:
 
 def _run_git_diff(reference: str) -> tuple[str, int]:
     """Run git diff against a reference. Returns (diff_text, returncode).
-    
+
     Return codes:
         0   — success
         1   — git not found on PATH
@@ -108,6 +148,10 @@ def init(
     force: bool = typer.Option(
         False, "--force",
         help="Skip auto-bootstrap; fail if .mementic.json is missing"
+    ),
+    project: str | None = typer.Option(
+        None, "--project",
+        help="Target project name for project-aware init",
     ),
 ) -> None:
     """Initialize the knowledge graph from configured sources.
@@ -184,30 +228,64 @@ def init(
         config_file.write_text(json.dumps(cfg_data, indent=2))
         typer.echo(f"Updated {config_path}")
 
-    try:
-        # Auto-detect repo if not explicitly given
-        effective_repo = repo
-        if effective_repo is None and not no_scan:
-            cwd = Path.cwd()
-            indicators = (
-                "pyproject.toml", "package.json", "go.mod", "Cargo.toml",
-                "Makefile", "setup.py", "setup.cfg",
-            )
-            for indicator in indicators:
-                if (cwd / indicator).is_file():
-                    effective_repo = str(cwd)
-                    break
+    # Auto-detect repo if not explicitly given
+    effective_repo = repo
+    if effective_repo is None and not no_scan:
+        cwd = Path.cwd()
+        indicators = (
+            "pyproject.toml", "package.json", "go.mod", "Cargo.toml",
+            "Makefile", "setup.py", "setup.cfg",
+        )
+        for indicator in indicators:
+            if (cwd / indicator).is_file():
+                effective_repo = str(cwd)
+                break
 
-        graph, all_usage = run_init(config_path, repo_path=effective_repo, no_scan=no_scan)
+    # Resolve project info before init (may error on invalid --project)
+    project_db_path: str | None = None
+    project_name: str | None = None
+    project_global_cfg: Any = None
+    if project is not None:
+        try:
+            project_name, project_global_cfg = resolve_project(project)
+            proj_entry = project_global_cfg.projects[project_name]
+            project_db_path = str(Path(proj_entry.db_path).expanduser())
+        except ValueError as e:
+            typer.echo(str(e), err=True)
+            raise typer.Exit(code=1)
+
+    try:
+        graph, all_usage = run_init(
+            config_path,
+            repo_path=effective_repo,
+            no_scan=no_scan,
+            db_path=project_db_path,
+        )
     except RuntimeError as e:
         typer.echo(str(e), err=True)
         raise typer.Exit(code=1)
     stats = graph.stats()
     typer.echo(f"Mementic graph initialized: {stats}")
 
-    # Log extraction costs to metrics
+    # Register repo in project config when project mode is active
+    if project_db_path is not None and project_name is not None and effective_repo:
+        repo_path = str(Path(effective_repo).resolve())
+        repo_name = Path(repo_path).name
+        proj_entry.repos[repo_name] = RepoEntry(
+            path=repo_path, label=repo_name
+        )
+        save_global_config(project_global_cfg)
+        typer.echo(
+            f"Registered repo '{repo_name}' in project '{project_name}'."
+        )
+        typer.echo(f"Project '{project_name}' initialized.")
+
+    # Log extraction costs to metrics (prefer project db connection)
     if all_usage:
-        store = UsageStore()
+        if graph._conn is not None:
+            store = UsageStore(conn=graph._conn)
+        else:
+            store = UsageStore(path=".mementic/metrics.jsonl")
         for usage in all_usage:
             if usage.total_tokens > 0 or usage.status != "success":
                 entry = MetricsEntry(
@@ -231,6 +309,10 @@ def capture(
     tail: int = typer.Option(
         100, "--tail",
         help="Max messages from session tail (0 = skip session, use diff+notes only)",
+    ),
+    project: str | None = typer.Option(
+        None, "--project",
+        help="Target project name",
     ),
 ) -> None:
     """Extract architectural decisions from an agent session.
@@ -343,15 +425,30 @@ def capture(
         typer.echo("No architectural decisions or constraints found.")
         raise typer.Exit()
 
-    graph_path = cfg.output.graph_path
-    if Path(graph_path).exists():
+    # ── Load or create graph (project-aware) ──
+    is_project = False
+    project_display: str | None = None
+    if project is not None:
         try:
-            graph = _load_graph_safe(graph_path)
-        except typer.Exit:
-            typer.echo("Starting with empty graph.", err=True)
-            graph = GraphStore()
+            proj_name, global_cfg = resolve_project(project)
+            proj_entry = global_cfg.projects[proj_name]
+            db_path = Path(proj_entry.db_path).expanduser()
+            graph = GraphStore(db_path=db_path)
+            is_project = True
+            project_display = proj_name
+        except ValueError as e:
+            typer.echo(str(e), err=True)
+            raise typer.Exit(code=1)
     else:
-        graph = GraphStore()
+        graph_path = cfg.output.graph_path
+        if Path(graph_path).exists():
+            try:
+                graph = _load_graph_safe(graph_path)
+            except typer.Exit:
+                typer.echo("Starting with empty graph.", err=True)
+                graph = GraphStore()
+        else:
+            graph = GraphStore()
 
     # ── Conflict detection ──
     from mementic.format import slugify
@@ -389,8 +486,12 @@ def capture(
     for edge in extraction.edges_to_create:
         graph.link(edge.source, edge.target, edge.relation)
 
-    Path(graph_path).parent.mkdir(parents=True, exist_ok=True)
-    graph.save(graph_path)
+    if is_project:
+        # SQLite mode: data already persisted via _write_back on each mutation
+        pass
+    else:
+        Path(graph_path).parent.mkdir(parents=True, exist_ok=True)
+        graph.save(graph_path)
 
     # ── Summary output (F6) ──
     typer.echo()
@@ -411,10 +512,19 @@ def capture(
                 typer.echo(f"    - [{d.id}] {d.title}")
         typer.echo()
         typer.echo("  Run 'mementic review' to resolve flagged conflicts.")
-    typer.echo(f"  Written to {graph_path}")
+    if is_project and project_display:
+        typer.echo(f"  Written to project '{project_display}' database")
+    else:
+        typer.echo(f"  Written to {graph_path}")
 
     # Log capture metrics
-    metrics_store = UsageStore()
+    metrics_path: str = ".mementic/metrics.jsonl"
+    if is_project and project_display:
+        metrics_path = str(
+            Path("~/.mementic/projects").expanduser()
+            / f"{project_display}_metrics.jsonl"
+        )
+    metrics_store = UsageStore(path=metrics_path)
     entry = MetricsEntry(
         timestamp=timestamp(),
         operation="capture",
@@ -438,15 +548,17 @@ def context(
     prefix: bool = typer.Option(
         False, "--prefix", help="Enable prefix matching for namespace queries (e.g. 'mementic/')"
     ),
+    project: str | None = typer.Option(
+        None, "--project",
+        help="Target project name",
+    ),
 ) -> None:
     """Load constraints and produce a context pack for a given task.
 
     Queries the knowledge graph for constraints and decisions relevant to
     the specified files, then formats them as a context pack for agent injection.
     """
-    cfg = load_config()
-
-    graph = _load_graph_safe(cfg.output.graph_path)
+    graph, _cfg = _resolve_graph(project)
 
     constraints = graph.get_constraints_for_entities(files, prefix_match=prefix)
     decisions = graph.get_decisions_for_entities(files)
@@ -462,11 +574,13 @@ def query(
     constraint: str | None = None,
     search: str | None = None,
     depth: int = 1,
+    project: str | None = typer.Option(
+        None, "--project",
+        help="Target project name",
+    ),
 ) -> None:
     """Search decisions, constraints, and entities in the graph."""
-    cfg = load_config()
-
-    graph = _load_graph_safe(cfg.output.graph_path)
+    graph, _cfg = _resolve_graph(project)
 
     if entity:
         decisions = graph.get_evolution(entity)
@@ -493,7 +607,7 @@ def query(
 
         typer.echo(f"Evolution for {entity} (depth {depth}):\n")
         for d in decisions:
-            typer.echo(f"  [{d.id}] {d.title} ({d.timestamp})")
+            typer.echo(f"  [{d.id}] {d.title} ({d.created_at})")
             typer.echo(f"  {d.rationale}\n")
 
         if constraints:
@@ -554,11 +668,13 @@ def status(
     verbose: bool = typer.Option(
         False, "--verbose", "-v", help="Show token usage totals"
     ),
+    project: str | None = typer.Option(
+        None, "--project",
+        help="Target project name",
+    ),
 ) -> None:
     """Show graph statistics."""
-    cfg = load_config()
-
-    graph = _load_graph_safe(cfg.output.graph_path)
+    graph, _cfg = _resolve_graph(project)
     stats = graph.stats()
     typer.echo(f"Decisions: {stats.get('decisions', 0)}")
     typer.echo(f"Constraints: {stats.get('constraints', 0)}")
@@ -595,6 +711,10 @@ def graph(
         None, "--filter", "-f",
         help="Filter nodes by type: decision, constraint, entity",
     ),
+    project: str | None = typer.Option(
+        None, "--project",
+        help="Target project name",
+    ),
 ) -> None:
     """Generate an interactive HTML visualization of the knowledge graph.
 
@@ -605,8 +725,7 @@ def graph(
 
     from mementic.visualize import generate_html_graph
 
-    cfg = load_config()
-    g = _load_graph_safe(cfg.output.graph_path)
+    g, _cfg = _resolve_graph(project)
 
     valid_filters = {"decision", "constraint", "entity"}
     ft = filter_type.lower() if filter_type else None
@@ -633,15 +752,18 @@ def graph(
 
 
 @app.command()
-def review() -> None:
+def review(
+    project: str | None = typer.Option(
+        None, "--project",
+        help="Target project name",
+    ),
+) -> None:
     """Review flagged (proposed) decisions and constraints.
 
     Shows decisions that the conflict detector flagged as potentially
     conflicting with existing ones. Accept or reject each.
     """
-    cfg = load_config()
-
-    graph = _load_graph_safe(cfg.output.graph_path)
+    graph, _cfg = _resolve_graph(project)
 
     pending_d = graph.get_pending_decisions()
     pending_c = graph.get_pending_constraints()
@@ -689,7 +811,8 @@ def review() -> None:
             c.status = "deprecated"
             graph.add_constraint(c)
 
-    graph.save(cfg.output.graph_path)
+    # save() is no-op when db-backed; writes JSON otherwise
+    graph.save(_cfg.output.graph_path)
     typer.echo("Review complete.")
 
 
@@ -735,6 +858,10 @@ def list_cmd(
         False, "--stale",
         help="Show only entities referencing files that no longer exist",
     ),
+    project: str | None = typer.Option(
+        None, "--project",
+        help="Target project name",
+    ),
 ) -> None:
     """Browse decisions, constraints, and entities in a scannable table.
 
@@ -745,9 +872,7 @@ def list_cmd(
         mementic list constraints
         mementic list entities --stale
     """
-    cfg = load_config()
-
-    graph = _load_graph_safe(cfg.output.graph_path)
+    graph, _cfg = _resolve_graph(project)
 
     entity_type = entity_type.lower()
     if entity_type not in ("decisions", "constraints", "entities"):
@@ -782,7 +907,7 @@ def list_cmd(
 
         typer.echo(f"Decisions ({len(decisions)}):")
         for d in decisions:
-            date = d.timestamp[:10] if d.timestamp else ""
+            date = d.created_at[:10] if d.created_at else ""
             icon = _status_icon(d.status)
             typer.echo(
                 f"  {icon}  {d.id:<{pad}}  {date}"
@@ -853,9 +978,25 @@ def metrics(
     reset: bool = typer.Option(
         False, "--reset", help="Reset all metrics after displaying"
     ),
+    project: str | None = typer.Option(
+        None, "--project",
+        help="Target project name (uses project-scoped metrics when set)",
+    ),
 ) -> None:
     """Display aggregated token usage metrics."""
-    store = UsageStore()
+    metrics_path = ".mementic/metrics.jsonl"
+    if project is not None:
+        try:
+            proj_name, _global_cfg = resolve_project(project)
+            metrics_path = str(
+                Path("~/.mementic/projects").expanduser()
+                / f"{proj_name}_metrics.jsonl"
+            )
+        except ValueError as e:
+            typer.echo(str(e), err=True)
+            raise typer.Exit(code=1)
+
+    store = UsageStore(path=metrics_path)
     summary = store.summary()
 
     if json_output:
@@ -907,15 +1048,17 @@ def deprecate(
         "", "--reason", "-r",
         help="Reason for deprecation",
     ),
+    project: str | None = typer.Option(
+        None, "--project",
+        help="Target project name",
+    ),
 ) -> None:
     """Mark a decision as deprecated.
 
     Appends a deprecation note to the rationale and writes an audit entry.
     The next capture will create a better decision — don't edit history.
     """
-    cfg = load_config()
-
-    graph = _load_graph_safe(cfg.output.graph_path)
+    graph, cfg = _resolve_graph(project)
 
     if not graph.has_node(id):
         typer.echo(
@@ -949,6 +1092,7 @@ def deprecate(
     target.status = DecisionStatus.DEPRECATED
     graph.add_decision(target)
 
+    # save() is no-op when db-backed; writes JSON otherwise
     graph.save(cfg.output.graph_path)
     typer.echo(f"Deprecated decision '{id}': {target.title}")
 
@@ -959,6 +1103,10 @@ def lint_cmd(
         False, "--fix",
         help="Auto-resolve all fixable issues and save the graph",
     ),
+    project: str | None = typer.Option(
+        None, "--project",
+        help="Target project name",
+    ),
 ) -> None:
     """Run rules-based graph health checks.
 
@@ -968,9 +1116,7 @@ def lint_cmd(
     """
     from mementic.lint import lint, lint_fix
 
-    cfg = load_config()
-
-    graph = _load_graph_safe(cfg.output.graph_path)
+    graph, cfg = _resolve_graph(project)
 
     result = lint(graph)
 
@@ -988,6 +1134,7 @@ def lint_cmd(
 
     if fix:
         counts = lint_fix(graph, result)
+        # save() is no-op when db-backed; writes JSON otherwise
         graph.save(cfg.output.graph_path)
 
         typer.echo(f"Fixed {counts['total']} issue(s). Graph saved.")
@@ -1022,3 +1169,80 @@ def _print_findings(findings: list[LintFinding]) -> None:
     for f in findings:
         marker = markers.get(f.severity, "?")
         typer.echo(f"  [{marker}] {f.rule:<24} {f.message}")
+
+
+# ── Project management commands ──────────────────────────────────────
+
+project_app = typer.Typer(help="Manage Mementic projects")
+app.add_typer(project_app, name="project")
+
+
+@project_app.command()
+def create(
+    name: str = typer.Argument(..., help="Project name"),
+    description: str = typer.Option(
+        "", "--description", "-d",
+        help="Project description",
+    ),
+) -> None:
+    """Create a new Mementic project."""
+    from mementic.config import ProjectEntry
+
+    config = load_global_config()
+
+    if name in config.projects:
+        typer.echo(
+            f"Project '{name}' already exists.", err=True
+        )
+        raise typer.Exit(code=1)
+
+    config.projects[name] = ProjectEntry(
+        description=description,
+        db_path=f"~/.mementic/projects/{name}.mementic.db",
+    )
+    save_global_config(config)
+    typer.echo(
+        f"Created project '{name}'. "
+        f"Database will be created on first mementic init."
+    )
+
+
+@project_app.command(name="list")
+def list_projects() -> None:
+    """List all configured projects."""
+    config = load_global_config()
+
+    if not config.projects:
+        typer.echo("No projects configured.")
+        raise typer.Exit()
+
+    default = config.default_project
+    for proj_name, proj_entry in config.projects.items():
+        marker = "*" if proj_name == default else " "
+        repo_count = len(proj_entry.repos)
+        desc = f"    {proj_entry.description}" if proj_entry.description else ""
+        typer.echo(f"{marker} {proj_name:<20} ({repo_count} repos){desc}")
+
+
+@project_app.command()
+def set_default(
+    name: str = typer.Argument(..., help="Project name to set as default"),
+) -> None:
+    """Set the default project for cross-repo operations."""
+    config = load_global_config()
+
+    if name not in config.projects:
+        available = ", ".join(sorted(config.projects))
+        typer.echo(
+            f"Project '{name}' not found. Available: {available}",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+    config.default_project = name
+    save_global_config(config)
+    typer.echo(f"Default project set to '{name}'.")
+
+
+if __name__ == "__main__":
+    app()
