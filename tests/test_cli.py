@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -14,6 +15,7 @@ from typer.testing import CliRunner
 from mementic.cli import app
 
 runner = CliRunner()
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*[a-zA-Z]")
 
 
 def _write_config_and_graph(
@@ -1307,6 +1309,6 @@ class TestInitRepoFlag:
         result = runner.invoke(app, ["init", "--help"])
 
         assert result.exit_code == 0
-        output = result.stdout
+        output = _ANSI_RE.sub("", result.stdout)
         assert "--repo" in output
         assert "--no-scan" in output
