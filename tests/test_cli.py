@@ -15,7 +15,17 @@ from typer.testing import CliRunner
 from mementic.cli import app
 
 runner = CliRunner()
-_ANSI_RE = re.compile(r"\x1b\[[0-9;]*[a-zA-Z]")
+
+
+def _strip_ansi(text: str) -> str:
+    """Strip ANSI escape sequences from CLI output for platform-agnostic assertions.
+
+    Covers SGR sequences (colors, bold, etc.) used by Typer/Rich formatting.
+    Does not cover OSC sequences (hyperlinks) or cursor movement — those are
+    rare in CLI help output. Use a library like ``strip-ansi`` if this becomes
+    a recurring pattern across tests.
+    """
+    return re.sub(r"\x1b\[[0-9;]*[a-zA-Z]", "", text)
 
 
 def _write_config_and_graph(
@@ -1309,6 +1319,6 @@ class TestInitRepoFlag:
         result = runner.invoke(app, ["init", "--help"])
 
         assert result.exit_code == 0
-        output = _ANSI_RE.sub("", result.stdout)
+        output = _strip_ansi(result.stdout)
         assert "--repo" in output
         assert "--no-scan" in output
