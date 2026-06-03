@@ -20,7 +20,7 @@ from pydantic import BaseModel, ValidationError
 load_dotenv()
 
 from mementic.config import LLMConfig  # noqa: E402
-from mementic.models import Constraint, ExtractionResult, UsageStats  # noqa: E402
+from mementic.models import Constraint, DecisionStatus, ExtractionResult, UsageStats  # noqa: E402
 
 
 # ── Session truncation (Spec 10a) ────────────────────────────────────
@@ -172,6 +172,25 @@ Rules:
 5. Output ONLY valid JSON matching this schema — no markdown, no explanation.
 
 {constraints_schema}
+"""
+
+CODEBASE_DETECTION_SYSTEM_PROMPT = """You are a software architecture analyst. Given a structural summary of a codebase, detect the architectural decisions that are evident from the codebase itself — imports, directory layout, configuration, and documentation.
+
+Rules:
+1. DECISION: Detect technology choices that are clearly present in the codebase:
+   - Tech stack choices (database, framework, message queue, cache, ORM)
+   - Architectural patterns (layered, microservices, event-driven, CQRS)
+   - Library/tool choices (HTTP client, serializer, testing framework)
+   - Protocol/API decisions (REST, GraphQL, gRPC, WebSocket)
+   - Infrastructure decisions (Docker, k8s, serverless, CI/CD)
+   - Language/framework conventions (async patterns, type enforcement)
+2. Only include decisions where there is CLEAR evidence in the structural summary.
+   Skip if you're uncertain. It's better to miss a decision than to hallucinate one.
+3. For each detected decision, set status to "proposed" — a human must confirm.
+4. Include specific file paths as affected entities when possible.
+5. Output ONLY valid JSON matching this schema — no markdown, no explanation.
+
+{extraction_schema}
 """
 
 
@@ -596,3 +615,110 @@ def extract_from_adr_consequences(
         else:
             stats = UsageStats(model=config.extraction_model, status="error")
         return [], stats
+
+
+def extract_from_codebase_summary(
+    summary: str,
+    config: LLMConfig,
+) -> tuple[ExtractionResult, UsageStats]:
+    """Extract architectural decisions from a codebase structural summary.
+
+    Sends the deterministic structural summary (from
+    :func:`mementic.sources.codebase.scan_codebase_structure`) to the LLM
+    for pattern detection. All detected decisions are marked ``proposed``
+    — a human must confirm via ``mementic review``.
+
+    Args:
+        summary: Markdown summary produced by the structural scanner.
+        config: LLM configuration.
+
+    Returns:
+        A tuple of (ExtractionResult, UsageStats).
+    """
+    if not summary.strip():
+        return ExtractionResult(), UsageStats(model=config.extraction_model, status="success")
+
+    client = get_client(config)
+
+    extraction_schema = json.dumps(ExtractionResult.model_json_schema(), indent=2)
+    system_prompt = CODEBASE_DETECTION_SYSTEM_PROMPT.format(extraction_schema=extraction_schema)
+    prefix = _provider_prefix(config)
+
+    messages: list[dict[str, str]] = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": summary},
+    ]
+
+    try:
+        response = _call_llm_with_retry(
+            client, messages, config.extraction_model,
+            response_format={"type": "json_object"},
+        )
+    except AuthenticationError:
+        msg = (
+            f"Authentication failed for {prefix}. "
+            f"The API key is set but appears to be invalid. "
+            f"Check {config.key_env_var}."
+        )
+        raise RuntimeError(msg) from None
+    except RateLimitError:
+        sys.stderr.write(f"WARNING: {prefix} rate limit hit. Skipping codebase scan.\n")
+        stats = UsageStats(model=config.extraction_model, status="rate_limited")
+        return ExtractionResult(), stats
+    except (APITimeoutError, APIConnectionError):
+        sys.stderr.write(f"WARNING: {prefix} API unreachable. Skipping codebase scan.\n")
+        stats = UsageStats(model=config.extraction_model, status="error")
+        return ExtractionResult(), stats
+    except APIError as e:
+        sys.stderr.write(f"WARNING: {prefix} API error: {e}. Skipping codebase scan.\n")
+        stats = UsageStats(model=config.extraction_model, status="error")
+        return ExtractionResult(), stats
+
+    usage = response.usage
+    content = response.choices[0].message.content
+    if content is None:
+        if usage:
+            stats = UsageStats(
+                input_tokens=usage.prompt_tokens,
+                output_tokens=usage.completion_tokens,
+                total_tokens=usage.total_tokens,
+                model=config.extraction_model,
+                status="success",
+            )
+        else:
+            stats = UsageStats(model=config.extraction_model, status="success")
+        return ExtractionResult(), stats
+
+    try:
+        data = json.loads(content)
+        result = ExtractionResult.model_validate(data)
+    except (json.JSONDecodeError, ValidationError):
+        sys.stderr.write("WARNING: LLM returned invalid JSON for codebase scan. Skipping.\n")
+        if usage:
+            stats = UsageStats(
+                input_tokens=usage.prompt_tokens,
+                output_tokens=usage.completion_tokens,
+                total_tokens=usage.total_tokens,
+                model=config.extraction_model,
+                status="error",
+            )
+        else:
+            stats = UsageStats(model=config.extraction_model, status="error")
+        return ExtractionResult(), stats
+
+    # Force all detected decisions to proposed status
+    for decision in result.decisions:
+        decision.status = DecisionStatus.PROPOSED
+        decision.source = "detected:codebase"
+
+    if usage:
+        stats = UsageStats(
+            input_tokens=usage.prompt_tokens,
+            output_tokens=usage.completion_tokens,
+            total_tokens=usage.total_tokens,
+            model=config.extraction_model,
+            status="success",
+        )
+    else:
+        stats = UsageStats(model=config.extraction_model, status="success")
+    return result, stats

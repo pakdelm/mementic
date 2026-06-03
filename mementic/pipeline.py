@@ -6,7 +6,11 @@ from pathlib import Path
 from typing import Any
 
 from mementic.config import load_config
-from mementic.extraction import extract_from_adr_consequences, extract_from_freeform
+from mementic.extraction import (
+    extract_from_adr_consequences,
+    extract_from_codebase_summary,
+    extract_from_freeform,
+)
 from mementic.format import slugify
 from mementic.graph import GraphStore
 from mementic.models import (
@@ -19,6 +23,7 @@ from mementic.models import (
     UsageStats,
 )
 from mementic.sources.adr import scan_adr_dir
+from mementic.sources.codebase import scan_codebase_structure
 from mementic.sources.opencode import scan_opencode_instructions
 
 
@@ -131,8 +136,22 @@ def _backfill_decision_edges(graph: GraphStore) -> int:
     return count
 
 
-def run_init(config_path: str = ".mementic.json") -> tuple[GraphStore, list[UsageStats]]:
+def run_init(
+    config_path: str = ".mementic.json",
+    repo_path: str | None = None,
+    no_scan: bool = False,
+) -> tuple[GraphStore, list[UsageStats]]:
     """Initialize the knowledge graph from all configured sources.
+
+    When ``repo_path`` is provided (or CWD is auto-detected as a codebase),
+    a deterministic structural scan runs first to detect architectural
+    patterns from the codebase itself. This is skipped when ``no_scan``
+    is True or when no codebase indicators are found.
+
+    Args:
+        config_path: Path to .mementic.json config.
+        repo_path: Optional path to the repository root for codebase scanning.
+        no_scan: If True, skip the codebase structural scan.
 
     Returns:
         A tuple of (GraphStore, list[UsageStats]) — usage stats from all
@@ -141,6 +160,20 @@ def run_init(config_path: str = ".mementic.json") -> tuple[GraphStore, list[Usag
     cfg = load_config(config_path)
     graph = GraphStore()
     all_usage: list[UsageStats] = []
+
+    # Phase 1: Codebase structural scan (Spec 12a) — cold-start killer
+    # Only runs when repo_path is explicitly provided (auto-detection is CLI concern)
+    if repo_path and not no_scan:
+        summary = scan_codebase_structure(repo_path)
+        if summary.strip():
+            result, usage = extract_from_codebase_summary(summary, cfg.llm)
+            all_usage.append(usage)
+            if result.decisions:
+                sys.stderr.write(
+                    f"Codebase scan: detected {len(result.decisions)} "
+                    f"potential decision(s) from structural patterns.\n"
+                )
+            _ingest_result(graph, result, source_path=f"repo:{repo_path}")
 
     for adr_source in cfg.sources.adr_dirs:
         if not Path(adr_source.path).is_dir():
@@ -221,7 +254,7 @@ def run_init(config_path: str = ".mementic.json") -> tuple[GraphStore, list[Usag
         or cfg.sources.cursor_instructions
         or cfg.sources.windsurf_instructions
     )
-    if has_sources:
+    if has_sources or (repo_path and not no_scan):
         _backfill_edges(graph)
         _backfill_decision_edges(graph)
         Path(cfg.output.graph_path).parent.mkdir(parents=True, exist_ok=True)

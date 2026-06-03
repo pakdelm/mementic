@@ -13,7 +13,7 @@ load_dotenv()
 
 from mementic.config import load_config  # noqa: E402
 from mementic.extraction import extract_from_session  # noqa: E402
-from mementic.format import count_tokens, format_context_pack, timestamp  # noqa: E402
+from mementic.format import format_context_pack, timestamp  # noqa: E402
 from mementic.graph import GraphStore  # noqa: E402
 from mementic.models import CodeEntity, Decision, DecisionStatus, EntityType, MetricsEntry  # noqa: E402
 from mementic.pipeline import run_init  # noqa: E402
@@ -94,6 +94,14 @@ def _run_git_diff(reference: str) -> tuple[str, int]:
 @app.command()
 def init(
     config_path: str = ".mementic.json",
+    repo: str | None = typer.Option(
+        None, "--repo",
+        help="Path to repository root for codebase structural scan",
+    ),
+    no_scan: bool = typer.Option(
+        False, "--no-scan",
+        help="Skip codebase structural scan (use configured sources only)",
+    ),
     interactive: bool = typer.Option(
         False, "--interactive", help="Walk through setup interactively"
     ),
@@ -106,6 +114,9 @@ def init(
 
     If .mementic.json doesn't exist, auto-discovers ./docs/adr/ and
     ./docs/instructions/ directories and creates a default config.
+
+    With --repo, scans the codebase structure for architectural patterns
+    before processing configured sources. Use --no-scan to skip.
     """
     config_file = Path(config_path)
 
@@ -174,7 +185,20 @@ def init(
         typer.echo(f"Updated {config_path}")
 
     try:
-        graph, all_usage = run_init(config_path)
+        # Auto-detect repo if not explicitly given
+        effective_repo = repo
+        if effective_repo is None and not no_scan:
+            cwd = Path.cwd()
+            indicators = (
+                "pyproject.toml", "package.json", "go.mod", "Cargo.toml",
+                "Makefile", "setup.py", "setup.cfg",
+            )
+            for indicator in indicators:
+                if (cwd / indicator).is_file():
+                    effective_repo = str(cwd)
+                    break
+
+        graph, all_usage = run_init(config_path, repo_path=effective_repo, no_scan=no_scan)
     except RuntimeError as e:
         typer.echo(str(e), err=True)
         raise typer.Exit(code=1)
@@ -411,9 +435,6 @@ def capture(
 def context(
     task: str,
     files: list[str],
-    benchmark: bool = typer.Option(
-        False, "--benchmark", help="Measure token savings vs. raw source docs"
-    ),
     prefix: bool = typer.Option(
         False, "--prefix", help="Enable prefix matching for namespace queries (e.g. 'mementic/')"
     ),
@@ -432,59 +453,6 @@ def context(
 
     output = format_context_pack(task, decisions, constraints)
     typer.echo(output)
-
-    if benchmark:
-        # Collect all source file paths from config
-        source_paths: list[str] = []
-        for adr_src in cfg.sources.adr_dirs:
-            source_paths.append(adr_src.path)
-        for oc_src in cfg.sources.opencode_instructions:
-            source_paths.append(oc_src.path)
-        for claude_src in cfg.sources.claude_instructions:
-            source_paths.append(claude_src.path)
-        for cursor_src in cfg.sources.cursor_instructions:
-            source_paths.append(cursor_src.path)
-        for windsurf_src in cfg.sources.windsurf_instructions:
-            source_paths.append(windsurf_src.path)
-
-        # Concatenate all *.md files from source directories
-        all_source_text = ""
-        for dir_path in source_paths:
-            p = Path(dir_path)
-            if not p.is_dir():
-                continue
-            for md_file in sorted(p.rglob("*.md")):
-                try:
-                    all_source_text += md_file.read_text(encoding="utf-8") + "\n"
-                except Exception:
-                    continue
-
-        baseline_tokens = count_tokens(all_source_text)
-        context_pack_tokens = count_tokens(output)
-
-        typer.echo()
-        typer.echo("Benchmark")
-        typer.echo(f"  Raw source size:   {baseline_tokens:,} tokens")
-        typer.echo(f"  Context pack:      {context_pack_tokens:,} tokens")
-        typer.echo(f"  Delta:             {context_pack_tokens - baseline_tokens:+,} tokens")
-        typer.echo("  (context pack vs. all ADRs + instructions on disk)")
-
-        # Log benchmark metrics (honest fields only)
-        metrics_store = UsageStore()
-        entry = MetricsEntry(
-            timestamp=timestamp(),
-            operation="enforce_benchmark",
-            source_label=task,
-            input_tokens=0,
-            output_tokens=0,
-            total_tokens=context_pack_tokens,
-            model="",
-            status="success",
-            baseline_tokens=baseline_tokens,
-            context_pack_tokens=context_pack_tokens,
-            savings_ratio=0.0,  # deprecated — Spec 10c bans dishonest ratio
-        )
-        metrics_store.append(entry)
 
 
 @app.command()
@@ -887,9 +855,8 @@ def metrics(
     ),
 ) -> None:
     """Display aggregated token usage metrics."""
-    cfg = load_config()
     store = UsageStore()
-    summary = store.summary(cfg)
+    summary = store.summary()
 
     if json_output:
         typer.echo(json.dumps(summary, indent=2, default=str))
@@ -926,30 +893,6 @@ def metrics(
         typer.echo(
             f"    avg pack:    {cp_avg:>10,.0f} tokens/query"
         )
-
-        # -- Section 3: Breakeven Analysis --
-        typer.echo()
-        typer.echo("  Breakeven analysis")
-        raw_src = summary["raw_source_tokens"]
-        size_ratio = summary.get("size_ratio")
-        breakeven_note = summary.get("breakeven_note", "")
-        typer.echo(
-            f"    raw source size:     {raw_src:>6,} tokens"
-            f"   (all ADRs + instructions on disk)"
-        )
-        typer.echo(
-            f"    context pack size:   {cp_avg:>6,.0f} tokens"
-            f"   (avg per query)"
-        )
-        if size_ratio is not None:
-            typer.echo(
-                f"    size ratio:          {size_ratio:>6.1f}x"
-                f"   (context pack / raw sources)"
-            )
-        else:
-            typer.echo("    size ratio:          N/A   (need data)")
-        if breakeven_note:
-            typer.echo(f"    -> {breakeven_note}")
 
     if reset:
         if typer.confirm("Delete all metrics?"):

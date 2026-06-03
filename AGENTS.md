@@ -32,9 +32,6 @@ decisions relevant to the files you are about to touch.
    orphaned nodes, and broken references before querying the graph.
 2. Call `mementic_get_context_pack` with the task description and ALL files
    you intend to touch — even new files, even speculative changes.
-   **Pass `benchmark=True` on every call** — it reads local files
-   and counts tokens, no LLM cost. This accumulates savings data
-   automatically for `mementic metrics`.
 3. Call `mementic_get_system_evolution` for each file being modified to
    understand what decisions shaped it.
 4. Validate your plan against every returned constraint. If a constraint

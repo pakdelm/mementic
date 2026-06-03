@@ -1,14 +1,12 @@
-"""Tests for mementic.metrics (UsageStore) and mementic.server benchmark logging."""
+"""Tests for mementic.metrics (UsageStore)."""
 
 from __future__ import annotations
 
-import asyncio
 import json
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
-from mementic.config import MementicConfig
-from mementic.metrics import UsageStore, snapshot_raw_sources
+from mementic.metrics import UsageStore
 from mementic.models import MetricsEntry
 
 
@@ -107,9 +105,6 @@ class TestSummary:
         assert result["context_pack_avg_tokens"] == 0.0
         assert result["context_pack_avg_constraints"] == 0.0
         assert result["context_pack_avg_decisions"] == 0.0
-        assert result["raw_source_tokens"] == 0
-        assert result["size_ratio"] is None
-        assert "Need benchmark data" in result["breakeven_note"]
 
     def test_summary_aggregates_tokens(self, tmp_path: Path) -> None:
         """summary() correctly aggregates token counts across entries."""
@@ -200,44 +195,22 @@ class TestSummary:
         assert result["extraction_capture_tokens"] == 700  # 300 + 400
         assert result["extraction_total_tokens"] == 1050  # 350 + 700
 
-    def test_summary_no_negative_savings(self, tmp_path: Path) -> None:
-        """summary() does not contain avg_savings_ratio or negative savings display."""
+    def test_summary_honest_fields_only(self, tmp_path: Path) -> None:
+        """summary() does not contain deprecated or dishonest fields."""
         store = UsageStore(path=str(tmp_path / "metrics.jsonl"))
-        store.append(
-            _make_entry(
-                operation="enforce_benchmark",
-                baseline_tokens=1000,
-                context_pack_tokens=2000,
-                savings_ratio=-0.5,
-                total_tokens=100,
-            )
-        )
+        store.append(_make_entry(operation="mcp_context_pack", total_tokens=100))
 
         result = store.summary()
 
-        # The dishonest fields must not exist
+        # The dishonest/deprecated fields must not exist
         assert "avg_savings_ratio" not in result
         assert "tasks_to_breakeven" not in result
         assert "benchmark_tasks" not in result
         assert "avg_baseline_tokens" not in result
         assert "avg_context_pack_tokens" not in result
-
-        # Honest fields exist
-        assert "Need benchmark data" in result["breakeven_note"]
-
-    def test_summary_breakeven_requires_data(self, tmp_path: Path) -> None:
-        """When no context packs are logged, breakeven_note indicates need for data."""
-        store = UsageStore(path=str(tmp_path / "metrics.jsonl"))
-        store.append(_make_entry(operation="capture", total_tokens=100))
-        store.append(_make_entry(operation="init_adr", total_tokens=50))
-
-        result = store.summary()
-
-        assert result["context_pack_queries"] == 0
-        assert result["context_pack_total_tokens"] == 0
-        assert result["context_pack_avg_tokens"] == 0.0
-        assert result["size_ratio"] is None
-        assert "Need benchmark data" in result["breakeven_note"]
+        assert "breakeven_note" not in result
+        assert "raw_source_tokens" not in result
+        assert "size_ratio" not in result
 
     def test_summary_context_pack_aggregation(self, tmp_path: Path) -> None:
         """summary() correctly aggregates context pack query metrics."""
@@ -258,12 +231,11 @@ class TestSummary:
         store.append(_make_entry(operation="capture", total_tokens=100))
         store.append(_make_entry(operation="init_adr", total_tokens=200))
         store.append(_make_entry(operation="mcp_context_pack", total_tokens=50))
-        store.append(_make_entry(operation="enforce_benchmark", total_tokens=30))
 
         result = store.summary()
 
-        assert result["total_calls"] == 4
-        assert result["total_tokens"] == 380
+        assert result["total_calls"] == 3
+        assert result["total_tokens"] == 350
         assert result["extraction_init_calls"] == 1
         assert result["extraction_capture_calls"] == 1
         assert result["context_pack_queries"] == 1
@@ -338,9 +310,6 @@ class TestRoundtrip:
             total_tokens=49,
             model="claude-3-opus",
             status="success",
-            baseline_tokens=None,
-            context_pack_tokens=None,
-            savings_ratio=None,
         )
         store.append(entry)
         [restored] = store.read_all()
@@ -353,9 +322,6 @@ class TestRoundtrip:
         assert restored.total_tokens == entry.total_tokens
         assert restored.model == entry.model
         assert restored.status == entry.status
-        assert restored.baseline_tokens == entry.baseline_tokens
-        assert restored.context_pack_tokens == entry.context_pack_tokens
-        assert restored.savings_ratio == entry.savings_ratio
 
     def test_jsonl_format_is_valid(self, tmp_path: Path) -> None:
         """The file contains valid JSON lines, one per entry."""
@@ -397,97 +363,4 @@ class TestDefaultPath:
         assert store._path == Path("custom/path/data.jsonl")
 
 
-# ---------------------------------------------------------------------------
-# snapshot_raw_sources tests
-# ---------------------------------------------------------------------------
 
-
-class TestSnapshotRawSources:
-    """Tests for snapshot_raw_sources()."""
-
-    def test_snapshot_raw_sources(self, tmp_path: Path) -> None:
-        """snapshot_raw_sources counts tokens in configured source directories."""
-        adr_dir = tmp_path / "adrs"
-        adr_dir.mkdir()
-        (adr_dir / "adr-001.md").write_text("hello world hello", encoding="utf-8")
-        (adr_dir / "adr-002.md").write_text("foo bar baz", encoding="utf-8")
-
-        oc_dir = tmp_path / "opencode"
-        oc_dir.mkdir()
-        (oc_dir / "style.md").write_text("some instructions here", encoding="utf-8")
-
-        from mementic.config import AdrDirSource, OpenCodeSource, Sources
-
-        cfg = MementicConfig(
-            sources=Sources(
-                adr_dirs=[AdrDirSource(path=str(adr_dir))],
-                opencode_instructions=[OpenCodeSource(path=str(oc_dir))],
-            )
-        )
-
-        total = snapshot_raw_sources(cfg)
-        # 21 chars in 3 files, token estimate = 21 // 4 = 5
-        # hello world hello = 17 chars, foo bar baz = 11, some instructions here = 23
-        # total = 51 chars, 51 // 4 = 12
-        assert total > 0
-        assert isinstance(total, int)
-
-    def test_snapshot_empty_dirs(self, tmp_path: Path) -> None:
-        """snapshot_raw_sources returns 0 for empty/nonexistent directories."""
-        from mementic.config import AdrDirSource, Sources
-
-        nonexistent = str(tmp_path / "does_not_exist")
-        cfg = MementicConfig(
-            sources=Sources(
-                adr_dirs=[AdrDirSource(path=nonexistent)],
-            )
-        )
-
-        total = snapshot_raw_sources(cfg)
-        assert total == 0
-
-    def test_snapshot_no_sources_configured(self) -> None:
-        """snapshot_raw_sources returns 0 when no sources are configured."""
-        cfg = MementicConfig()
-        total = snapshot_raw_sources(cfg)
-        assert total == 0
-
-
-# ---------------------------------------------------------------------------
-# Benchmark logging test (server.py)
-# ---------------------------------------------------------------------------
-
-
-class TestBenchmarkLogging:
-    """Tests for honest benchmark logging in server.py get_context_pack."""
-
-    def test_benchmark_logs_honest_fields(self, tmp_path: Path) -> None:
-        """Benchmark MetricsEntry has baseline_tokens and context_pack_tokens set correctly."""
-        temp_store = UsageStore(path=str(tmp_path / "metrics.jsonl"))
-
-        with (
-            patch("mementic.server._load_graph") as mock_load,
-            patch("mementic.server.format_context_pack", return_value="pack text"),
-            patch("mementic.server.count_tokens", return_value=100),
-            patch("mementic.server._count_raw_source_tokens", return_value=5000),
-            patch("mementic.server._metrics_store", temp_store),
-        ):
-            cfg = MementicConfig()
-            mock_load.return_value = (MagicMock(), cfg)
-
-            from mementic.server import get_context_pack
-
-            loop = asyncio.new_event_loop()
-            try:
-                loop.run_until_complete(get_context_pack("test task", ["file.py"], benchmark=True))
-            finally:
-                loop.close()
-
-        entries = temp_store.read_all()
-        bench_entries = [e for e in entries if e.operation == "enforce_benchmark"]
-        assert len(bench_entries) == 1
-        be = bench_entries[0]
-        assert be.baseline_tokens == 5000
-        assert be.context_pack_tokens == 100
-        assert be.savings_ratio == 0.0  # deprecated
-        assert be.total_tokens == 100  # actual LLM cost

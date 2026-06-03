@@ -191,7 +191,7 @@ conflicts, run `mementic review` to resolve them.
 |---|---|
 | `mementic init [--config PATH] [--interactive] [--force]` | Auto-bootstrap config and initialize graph |
 | `mementic capture [--session PATH] [--notes TEXT]` | Extract decisions from session (auto-accepts, flags conflicts) |
-| `mementic context --task TEXT --files FILE... [--benchmark]` | Generate context pack; `--benchmark` measures token savings vs. raw source docs |
+| `mementic context --task TEXT --files FILE...` | Generate context pack with relevant constraints and decisions |
 | `mementic query [--entity PATH] [--search TERM] [--depth N]` | Search graph |
 | `mementic list [decisions\|constraints\|entities] [--status] [-n N]` | Browse graph in scannable format |
 | `mementic deprecate <id> [--reason TEXT]` | Retire a decision (don't edit history) |
@@ -232,37 +232,12 @@ Breakdown by Activity
 Use `--json` for machine-readable output and `--reset` to clear the log and
 start fresh.
 
-### Benchmark context savings
-
-Run `context` with `--benchmark` to measure how many tokens the agent avoids
-
-```bash
-mementic context --benchmark --task "Refactor auth module" --files src/auth/handler.py
-```
-
-Compares every raw source file the agent *would* have read against what the
-context pack actually returns:
-
-```
-Benchmark
-  Raw source size:   12,000 tokens     ← tokens in all ADRs + instructions
-  Context pack:         400 tokens     ← what the agent actually reads
-  Savings:           11,600 tokens (97%)
-```
-
-Benchmark results are stored in `.mementic/metrics.jsonl` and fed into the
-breakeven calculation in `mementic metrics`. Run it across a few different
-tasks to get a realistic picture.
-
 ### How it works
 
 | Concept | What it means |
 |---|---|
 | **Extraction cost** | LLM tokens spent running `init` and `capture` |
-| **Naive baseline** | Total tokens in all ADR and instruction files — what an agent would read *without* mementic |
-| **Context pack** | The subset mementic returns for a specific task — typically <5% of baseline |
-| **Savings** | Baseline minus context pack — tokens the agent *didn't* read |
-| **Breakeven** | How many tasks until cumulative savings exceed cumulative extraction cost |
+| **Context pack** | The subset of decisions and constraints mementic returns for a specific task |
 
 Data is stored as JSONL in `.mementic/metrics.jsonl` (auto-created,
 automatically gitignored with the rest of `.mementic/`). No LLM cost for reading or summarizing
