@@ -9,7 +9,20 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from mementic.config import LLMConfig, MementicConfig, SessionsConfig, load_config
+from mementic.config import (
+    LLMConfig,
+    MementicConfig,
+    SessionsConfig,
+    load_config,
+)
+from mementic.config import (
+    GlobalConfig,
+    ProjectEntry,
+    RepoEntry,
+    load_global_config,
+    resolve_project,
+    save_global_config,
+)
 from mementic.graph import GraphStore
 
 
@@ -405,4 +418,166 @@ class TestConfigCorruption:
         assert "nonexistent_adr" in stderr_output
         assert "not found" in stderr_output.lower()
         assert isinstance(graph, GraphStore)
+
+
+# ── Spec 12b: Global multi-project config ─────────────────────────
+
+
+class TestGlobalConfig:
+    """Tests for GlobalConfig, ProjectEntry, RepoEntry, and config I/O."""
+
+    # ── load / save ─────────────────────────────────────────────────
+
+    def test_load_global_config_returns_default_when_missing(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """When no config file, returns empty config with no projects."""
+        config_file = tmp_path / "nonexistent" / "config.json"
+        monkeypatch.setattr(
+            "mementic.config.get_global_config_path", lambda: config_file
+        )
+
+        config = load_global_config()
+
+        assert config.version == 1
+        assert config.default_project == "main"
+        assert config.projects == {}  # empty — no config on disk yet
+
+    def test_save_and_reload_roundtrip(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """Saves a GlobalConfig with projects, reloads, verifies fields match."""
+        config_file = tmp_path / ".mementic" / "config.json"
+        config_file.parent.mkdir(parents=True)
+        monkeypatch.setattr(
+            "mementic.config.get_global_config_path", lambda: config_file
+        )
+
+        original = GlobalConfig(
+            version=1,
+            default_project="main",
+            projects={
+                "main": ProjectEntry(
+                    description="Primary project",
+                    db_path="~/.mementic/projects/main.mementic.db",
+                    repos={
+                        "/abs/path/to/repo": RepoEntry(
+                            path="/abs/path/to/repo", label="my-repo"
+                        ),
+                    },
+                ),
+                "secondary": ProjectEntry(
+                    db_path="~/.mementic/projects/secondary.mementic.db",
+                ),
+            },
+        )
+        save_global_config(original)
+
+        loaded = load_global_config()
+        assert loaded.version == original.version
+        assert loaded.default_project == original.default_project
+        assert set(loaded.projects.keys()) == {"main", "secondary"}
+        assert loaded.projects["main"].description == "Primary project"
+        assert loaded.projects["main"].db_path == "~/.mementic/projects/main.mementic.db"
+        assert "/abs/path/to/repo" in loaded.projects["main"].repos
+        assert loaded.projects["main"].repos["/abs/path/to/repo"].label == "my-repo"
+        assert loaded.projects["secondary"].description == ""
+        assert loaded.projects["secondary"].repos == {}
+
+    # ── resolve_project ─────────────────────────────────────────────
+
+    def test_resolve_project_explicit(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """resolve_project('myproj') returns ('myproj', config)."""
+        config_file = tmp_path / ".mementic" / "config.json"
+        config_file.parent.mkdir(parents=True)
+        monkeypatch.setattr(
+            "mementic.config.get_global_config_path", lambda: config_file
+        )
+
+        cfg = GlobalConfig(
+            projects={
+                "myproj": ProjectEntry(db_path="~/projects/myproj.db"),
+            },
+        )
+        save_global_config(cfg)
+
+        name, loaded = resolve_project("myproj")
+        assert name == "myproj"
+        assert "myproj" in loaded.projects
+
+    def test_resolve_project_not_found_raises(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """resolve_project('missing') raises ValueError."""
+        config_file = tmp_path / ".mementic" / "config.json"
+        config_file.parent.mkdir(parents=True)
+        monkeypatch.setattr(
+            "mementic.config.get_global_config_path", lambda: config_file
+        )
+
+        cfg = GlobalConfig(
+            projects={
+                "myproj": ProjectEntry(db_path="~/projects/myproj.db"),
+            },
+        )
+        save_global_config(cfg)
+
+        with pytest.raises(ValueError, match="Project 'missing' not found"):
+            resolve_project("missing")
+
+    def test_resolve_project_single_implicit(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """Config with exactly 1 project, resolve_project(None) returns it."""
+        config_file = tmp_path / ".mementic" / "config.json"
+        config_file.parent.mkdir(parents=True)
+        monkeypatch.setattr(
+            "mementic.config.get_global_config_path", lambda: config_file
+        )
+
+        cfg = GlobalConfig(
+            projects={
+                "onlyproj": ProjectEntry(db_path="~/projects/only.db"),
+            },
+        )
+        save_global_config(cfg)
+
+        name, loaded = resolve_project(None)
+        assert name == "onlyproj"
+
+    def test_resolve_project_multiple_no_flag_raises(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """Config with 2+ projects, resolve_project(None) raises ValueError."""
+        config_file = tmp_path / ".mementic" / "config.json"
+        config_file.parent.mkdir(parents=True)
+        monkeypatch.setattr(
+            "mementic.config.get_global_config_path", lambda: config_file
+        )
+
+        cfg = GlobalConfig(
+            projects={
+                "proj-a": ProjectEntry(db_path="~/projects/a.db"),
+                "proj-b": ProjectEntry(db_path="~/projects/b.db"),
+            },
+        )
+        save_global_config(cfg)
+
+        with pytest.raises(ValueError, match="Multiple projects configured"):
+            resolve_project(None)
+
+    # ── model defaults ──────────────────────────────────────────────
+
+    def test_project_entry_defaults(self) -> None:
+        """ProjectEntry(db_path='/tmp/test.db') has empty repos, empty description."""
+        entry = ProjectEntry(db_path="/tmp/test.db")
+        assert entry.description == ""
+        assert entry.repos == {}
+
+    def test_repo_entry_defaults(self) -> None:
+        """RepoEntry(path='/tmp/repo') has label=''."""
+        entry = RepoEntry(path="/tmp/repo")
+        assert entry.label == ""
 

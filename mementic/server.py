@@ -51,9 +51,6 @@ def _load_graph(project: str | None = None) -> tuple[GraphStore, MementicConfig]
         db_path = Path(proj_entry.db_path).expanduser()
         if db_path.exists():
             graph = GraphStore(db_path=db_path)
-            # Use project db connection for metrics
-            global _metrics_store
-            _metrics_store = UsageStore(conn=graph._conn)
             return graph, cfg
     except (ValueError, KeyError, ImportError):
         pass

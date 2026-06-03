@@ -11,7 +11,6 @@ Does NOT delete or modify the original JSON files.
 from __future__ import annotations
 
 import json
-import sqlite3
 import sys
 from pathlib import Path
 
@@ -91,7 +90,11 @@ def migrate_metrics_jsonl(metrics_path: str, db_path: str) -> int:
         print(f"  Skipping: {metrics_path} not found.")
         return 0
 
-    conn = sqlite3.connect(db_path)
+    # Use GraphStore to ensure schema migration runs before we insert.
+    # Opening via GraphStore(db_path=...) creates tables if needed.
+    db = GraphStore(db_path=db_path)
+    assert db._conn is not None  # guaranteed when db_path is set
+    conn = db._conn
     count = 0
 
     try:
@@ -125,7 +128,7 @@ def migrate_metrics_jsonl(metrics_path: str, db_path: str) -> int:
 
         conn.commit()
     finally:
-        conn.close()
+        db.close()
 
     print(f"  Migrated {count} metrics entries.")
     return count

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 from pathlib import Path
 from unittest.mock import patch
 
@@ -361,6 +362,123 @@ class TestDefaultPath:
         assert isinstance(store._path, Path)
         # Path str() uses OS-native separators - compare with Path equality
         assert store._path == Path("custom/path/data.jsonl")
+
+
+# ── Spec 12b: SQLite metrics ───────────────────────────────────────
+
+_EXTRACTION_LOG_DDL = """\
+CREATE TABLE IF NOT EXISTS extraction_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    operation TEXT NOT NULL,
+    source_label TEXT DEFAULT '',
+    input_tokens INTEGER DEFAULT 0,
+    output_tokens INTEGER DEFAULT 0,
+    total_tokens INTEGER DEFAULT 0,
+    model TEXT DEFAULT '',
+    status TEXT DEFAULT 'success',
+    timestamp TEXT NOT NULL
+);
+"""
+
+
+def _make_db() -> sqlite3.Connection:
+    """Create an in-memory SQLite database with the extraction_log table."""
+    conn = sqlite3.connect(":memory:")
+    conn.execute(_EXTRACTION_LOG_DDL)
+    conn.commit()
+    return conn
+
+
+class TestSQLiteMetrics:
+    """Tests for UsageStore with SQLite connection."""
+
+    def test_append_to_db(self) -> None:
+        """Creates UsageStore(conn=conn), appends and reads back a MetricsEntry."""
+        conn = _make_db()
+        store = UsageStore(conn=conn)
+
+        entry = _make_entry(
+            operation="capture",
+            source_label="test-src",
+            input_tokens=10,
+            output_tokens=20,
+            total_tokens=30,
+            model="deepseek-chat",
+            status="success",
+            timestamp="2024-06-01T00:00:00Z",
+        )
+        store.append(entry)
+
+        rows = store.read_all()
+        assert len(rows) == 1
+        assert rows[0].operation == "capture"
+        assert rows[0].source_label == "test-src"
+        assert rows[0].input_tokens == 10
+        assert rows[0].output_tokens == 20
+        assert rows[0].total_tokens == 30
+        assert rows[0].model == "deepseek-chat"
+        assert rows[0].status == "success"
+        assert rows[0].timestamp == "2024-06-01T00:00:00Z"
+
+    def test_read_all_from_db(self) -> None:
+        """Appends 3 entries, reads all, verifies count and fields."""
+        conn = _make_db()
+        store = UsageStore(conn=conn)
+
+        for i in range(3):
+            store.append(_make_entry(
+                timestamp=f"2024-06-0{i+1}T00:00:00Z",
+                total_tokens=(i + 1) * 100,
+            ))
+
+        rows = store.read_all()
+        assert len(rows) == 3
+        assert rows[0].timestamp == "2024-06-01T00:00:00Z"
+        assert rows[2].timestamp == "2024-06-03T00:00:00Z"
+        assert rows[0].total_tokens == 100
+        assert rows[2].total_tokens == 300
+
+    def test_summary_from_db(self) -> None:
+        """Appends 3 entries with different operations, calls summary(), verifies total_calls=3."""
+        conn = _make_db()
+        store = UsageStore(conn=conn)
+
+        store.append(_make_entry(operation="capture", total_tokens=100))
+        store.append(_make_entry(operation="init_adr", total_tokens=200))
+        store.append(_make_entry(operation="init_freeform", total_tokens=300))
+
+        result = store.summary()
+        assert result["total_calls"] == 3
+        assert result["total_tokens"] == 600
+        assert result["by_operation"]["capture"]["calls"] == 1
+        assert result["by_operation"]["init_adr"]["calls"] == 1
+
+    def test_reset_db(self) -> None:
+        """Appends 2 entries, resets, reads all → empty list."""
+        conn = _make_db()
+        store = UsageStore(conn=conn)
+
+        store.append(_make_entry())
+        store.append(_make_entry())
+        assert len(store.read_all()) == 2
+
+        store.reset()
+        assert store.read_all() == []
+
+    def test_jsonl_fallback(self, tmp_path: Path) -> None:
+        """UsageStore without conn still works (append/read via JSONL)."""
+        jsonl_path = tmp_path / "metrics.jsonl"
+        store = UsageStore(path=str(jsonl_path))
+
+        store.append(_make_entry(operation="capture", total_tokens=99))
+        store.append(_make_entry(operation="init_adr", total_tokens=101))
+
+        rows = store.read_all()
+        assert len(rows) == 2
+        assert rows[0].operation == "capture"
+        assert rows[1].operation == "init_adr"
+        assert rows[0].total_tokens == 99
+        assert rows[1].total_tokens == 101
 
 
 

@@ -12,6 +12,7 @@ from pydantic import ValidationError
 load_dotenv()
 
 from mementic.config import (  # noqa: E402
+    RepoEntry,
     load_config,
     load_global_config,
     resolve_project,
@@ -65,9 +66,9 @@ def _load_graph_safe(graph_path: str) -> GraphStore:
 def _resolve_graph(project: str | None = None) -> tuple[GraphStore, "MementicConfig"]:
     """Resolve graph for a project or fall back to legacy graph.json.
 
-    When ``--project`` is not given, uses the legacy graph.json path.
-    When ``--project`` is given, resolves the named project and opens its
-    SQLite database.
+    Tries to resolve a project from the global config. When no projects are
+    configured (first run, or no ``~/.mementic/config.json`` on disk), falls
+    back to the legacy ``graph.json`` path.
 
     Args:
         project: Optional project name from ``--project`` flag.
@@ -79,9 +80,6 @@ def _resolve_graph(project: str | None = None) -> tuple[GraphStore, "MementicCon
         typer.Exit: When an explicit ``--project`` is not found.
     """
     cfg = load_config()
-    if project is None:
-        # No project requested — use legacy graph.json
-        return _load_graph_safe(cfg.output.graph_path), cfg
 
     try:
         proj_name, global_cfg = resolve_project(project)
@@ -89,8 +87,13 @@ def _resolve_graph(project: str | None = None) -> tuple[GraphStore, "MementicCon
         db_path = Path(proj_entry.db_path).expanduser()
         return GraphStore(db_path=db_path), cfg
     except ValueError as e:
-        typer.echo(str(e), err=True)
-        raise typer.Exit(code=1)
+        if project is not None:
+            # Explicit --project that doesn't exist
+            typer.echo(str(e), err=True)
+            raise typer.Exit(code=1)
+        # No projects configured — fall back to legacy graph.json
+
+    return _load_graph_safe(cfg.output.graph_path), cfg
 
 
 def _load_checkpoint() -> str:
@@ -252,51 +255,37 @@ def init(
             raise typer.Exit(code=1)
 
     try:
-        graph, all_usage = run_init(config_path, repo_path=effective_repo, no_scan=no_scan)
+        graph, all_usage = run_init(
+            config_path,
+            repo_path=effective_repo,
+            no_scan=no_scan,
+            db_path=project_db_path,
+        )
     except RuntimeError as e:
         typer.echo(str(e), err=True)
         raise typer.Exit(code=1)
     stats = graph.stats()
     typer.echo(f"Mementic graph initialized: {stats}")
 
-    # ── Project mode: copy graph to project SQLite database ──
-    if project_db_path is not None and project_name is not None:
-        from mementic.config import RepoEntry
-        typer.echo(f"Saving to project '{project_name}' database...")
-        project_graph = GraphStore(db_path=project_db_path)
-        for d in graph.get_all_decisions():
-            project_graph.add_decision(d)
-        for c in graph.get_all_constraints():
-            project_graph.add_constraint(c)
-        for nid, ntype, payload in graph.iter_nodes():
-            if ntype == "CodeEntity":
-                project_graph.add_code_entity(CodeEntity(**payload))
-        for src, tgt, rel in graph.iter_edges():
-            project_graph.link(src, tgt, rel)
-        project_graph.close()
-
-        # Register repo if --repo was given or auto-detected
-        if effective_repo:
-            repo_path = str(Path(effective_repo).resolve())
-            repo_name = Path(repo_path).name
-            proj_entry.repos[repo_name] = RepoEntry(
-                path=repo_path, label=repo_name
-            )
-            save_global_config(project_global_cfg)
-            typer.echo(
-                f"Registered repo '{repo_name}' in project '{project_name}'."
-            )
+    # Register repo in project config when project mode is active
+    if project_db_path is not None and project_name is not None and effective_repo:
+        repo_path = str(Path(effective_repo).resolve())
+        repo_name = Path(repo_path).name
+        proj_entry.repos[repo_name] = RepoEntry(
+            path=repo_path, label=repo_name
+        )
+        save_global_config(project_global_cfg)
+        typer.echo(
+            f"Registered repo '{repo_name}' in project '{project_name}'."
+        )
         typer.echo(f"Project '{project_name}' initialized.")
 
-    # Log extraction costs to metrics
+    # Log extraction costs to metrics (prefer project db connection)
     if all_usage:
-        metrics_path: str = ".mementic/metrics.jsonl"
-        if project_db_path is not None and project_name is not None:
-            metrics_path = str(
-                Path("~/.mementic/projects").expanduser()
-                / f"{project_name}_metrics.jsonl"
-            )
-        store = UsageStore(path=metrics_path)
+        if graph._conn is not None:
+            store = UsageStore(conn=graph._conn)
+        else:
+            store = UsageStore(path=".mementic/metrics.jsonl")
         for usage in all_usage:
             if usage.total_tokens > 0 or usage.status != "success":
                 entry = MetricsEntry(

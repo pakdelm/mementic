@@ -27,6 +27,7 @@ __all__ = [
     "Sources",
     "WindsurfSource",
     "get_global_config_path",
+    "has_global_config",
     "get_provider_config",
     "load_config",
     "load_global_config",
@@ -309,29 +310,12 @@ class GlobalConfig(BaseModel):
         default_project: Name of the default project to use when no
             ``--project`` flag is given.
         projects: Mapping of project names to ProjectEntry objects.
-            Must never be empty after the first ``mementic init``.
+            Empty when no config file exists yet (first run).
     """
 
     version: int = 1
     default_project: str = "main"
     projects: dict[str, ProjectEntry] = Field(default_factory=dict)
-
-    @model_validator(mode="after")
-    def _validate_projects(self) -> GlobalConfig:
-        """Validate that the projects dict is non-empty.
-
-        An empty dict indicates a manually-edited config file that
-        lost its project entries.  We error loudly so the user can
-        fix it rather than silently creating a default project that
-        could mask the editing mistake.
-        """
-        if not self.projects:
-            raise ValueError(
-                "The config file has an empty projects dict. "
-                "Run 'mementic init' to create a project, or repair "
-                "~/.mementic/config.json manually."
-            )
-        return self
 
 
 # ── Global config I/O ────────────────────────────────────────────────
@@ -340,10 +324,25 @@ class GlobalConfig(BaseModel):
 def get_global_config_path() -> Path:
     """Return the canonical path to the global config file.
 
+    Respects the ``MEMENTIC_GLOBAL_CONFIG`` environment variable.
+    When set, that path is used instead of the default.
+
     Returns:
-        ``Path.home() / ".mementic" / "config.json"``.
+        ``Path.home() / ".mementic" / "config.json"``, unless overridden.
     """
+    import os
+    if override := os.environ.get("MEMENTIC_GLOBAL_CONFIG"):
+        return Path(override)
     return Path.home() / ".mementic" / "config.json"
+
+
+def has_global_config() -> bool:
+    """Return True if ``~/.mementic/config.json`` exists on disk.
+
+    Returns:
+        ``True`` when the global project config file is present.
+    """
+    return get_global_config_path().is_file()
 
 
 def load_global_config() -> GlobalConfig:
@@ -439,15 +438,11 @@ def resolve_project(project: str | None = None) -> tuple[str, GlobalConfig]:
 
 
 def _default_global_config() -> GlobalConfig:
-    """Return a default ``GlobalConfig`` with a ``"main"`` project.
+    """Return an empty ``GlobalConfig`` with no projects.
 
     This is used when no config file exists yet (first run before
-    ``mementic init``) or when the config file is corrupt.
+    ``mementic init``).  An empty projects dict means no project
+    database is available — CLI commands fall back to legacy
+    ``graph.json``.
     """
-    return GlobalConfig(
-        projects={
-            "main": ProjectEntry(
-                db_path="~/.mementic/projects/main.mementic.db",
-            )
-        }
-    )
+    return GlobalConfig()
