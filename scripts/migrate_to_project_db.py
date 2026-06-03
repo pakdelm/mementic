@@ -169,14 +169,16 @@ def main() -> None:
     print()
 
     # Register repo in project config if not already present
-    repo_str = str(repo_path)
-    if repo_str not in proj_entry.repos:
+    repo_name = repo_path.name
+    if repo_name not in proj_entry.repos:
         from mementic.config import RepoEntry
-        proj_entry.repos[repo_str] = RepoEntry(path=repo_str, label=repo_path.name)
+        proj_entry.repos[repo_name] = RepoEntry(
+            path=str(repo_path), label=repo_name
+        )
         save_global_config(global_cfg)
-        print(f"Registered repo '{repo_path.name}' in project '{proj_name}'.")
+        print(f"Registered repo '{repo_name}' in project '{proj_name}'.")
     else:
-        print(f"Repo '{repo_path.name}' already registered.")
+        print(f"Repo '{repo_name}' already registered.")
 
     print()
 

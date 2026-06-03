@@ -278,9 +278,14 @@ def init(
         # Register repo if --repo was given or auto-detected
         if effective_repo:
             repo_path = str(Path(effective_repo).resolve())
-            proj_entry.repos[repo_path] = RepoEntry(path=repo_path)
+            repo_name = Path(repo_path).name
+            proj_entry.repos[repo_name] = RepoEntry(
+                path=repo_path, label=repo_name
+            )
             save_global_config(project_global_cfg)
-            typer.echo(f"Registered repo '{repo_path}' in project '{project_name}'.")
+            typer.echo(
+                f"Registered repo '{repo_name}' in project '{project_name}'."
+            )
         typer.echo(f"Project '{project_name}' initialized.")
 
     # Log extraction costs to metrics
