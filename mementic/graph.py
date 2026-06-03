@@ -45,6 +45,8 @@ class GraphStore:
 
     def _ensure_db(self) -> None:
         """Open the SQLite database, apply migrations, and load data into NetworkX."""
+        assert self._db_path is not None
+        self._db_path.parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(str(self._db_path))
         self._conn.row_factory = sqlite3.Row
         self._migrate_schema(self._conn)
