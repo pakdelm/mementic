@@ -173,7 +173,7 @@ class UsageStore:
                 model_counter[e.model] += 1
             status_counter[e.status] += 1
 
-            if e.operation in ("init_adr", "init_freeform"):
+            if e.operation in ("init_adr", "init_freeform", "init"):
                 extraction_init_calls += 1
                 extraction_init_tokens += e.total_tokens
             elif e.operation == "capture":
