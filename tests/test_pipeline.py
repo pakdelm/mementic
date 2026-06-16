@@ -237,7 +237,7 @@ def _mock_adr_proposed_result() -> ExtractionResult:
                 title="Introduce Redis caching",
                 rationale="We need faster response times for frequently accessed data. Add Redis as a caching layer in src/cache/redis_client.py.",
                 source="adr:0002-redis.md",
-                status=DecisionStatus.PROPOSED,
+                status=DecisionStatus.ACCEPTED,
                 created_at="2024-01-01T00:00:00Z",
                 modified_at="2024-01-01T00:00:00Z",
             )
@@ -344,7 +344,7 @@ class TestRunInitWithAdr:
         decisions = gs.get_all_decisions()
         assert len(decisions) == 2
         statuses = {d.title: d.status for d in decisions}
-        assert statuses["Introduce Redis caching"] == DecisionStatus.PROPOSED
+        assert statuses["Introduce Redis caching"] == DecisionStatus.ACCEPTED
         assert statuses["Old REST API approach"] == DecisionStatus.DEPRECATED
 
     def test_creates_code_entities_from_file_paths(self, tmp_path: Path) -> None:
@@ -980,7 +980,7 @@ class TestRunInitWithRepoScan:
                 title="Use FastAPI",
                 rationale="FastAPI is used as web framework",
                 source="detected:codebase",
-                status=DecisionStatus.PROPOSED,
+                status=DecisionStatus.ACCEPTED,
                 created_at="2024-01-01T00:00:00Z",
                 modified_at="2024-01-01T00:00:00Z",
             )

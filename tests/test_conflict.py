@@ -1,12 +1,10 @@
-"""Tests for mementic conflict detection engine (Spec 06c F2)."""
+"""Tests for mementic auto-resolve capture engine."""
 
 from __future__ import annotations
 
-import pytest
-
-from mementic.conflict import _word_overlap, detect_conflicts
+from mementic.conflict import _word_overlap, auto_resolve_capture
 from mementic.graph import GraphStore
-from mementic.models import CodeEntity, Decision, DecisionStatus, EntityType
+from mementic.models import Constraint, Decision, DecisionStatus
 
 
 def make_decision(
@@ -37,11 +35,7 @@ class TestWordOverlap:
 
     def test_partial_overlap(self) -> None:
         ratio = _word_overlap("use async for io", "use async everywhere")
-        # "use" and "async" overlap, "for", "io", "everywhere" don't
-        # intersection: {use, async} = 2
-        # union: {use, async, for, io, everywhere} = 5
-        # ratio = 2/5 = 0.4
-        assert ratio == pytest.approx(0.4)
+        assert ratio == 0.4
 
     def test_both_empty(self) -> None:
         assert _word_overlap("", "") == 1.0
@@ -53,79 +47,51 @@ class TestWordOverlap:
         assert _word_overlap("Use Async", "use async") == 1.0
 
 
-class TestDetectConflicts:
-    def test_slug_collision_detected(self) -> None:
-        """Decision whose slugified title matches existing accepted ID."""
+class TestAutoResolveCapture:
+    """Tests for auto_resolve_capture three-rule logic."""
+
+    # ── Rule 1: New slug → ACCEPT ──
+
+    def test_new_slug_accepted(self) -> None:
+        """Decision with no existing ID match is counted as new."""
+        graph = GraphStore()
+        existing = make_decision(id="use-async", title="Use async", rationale="Better performance")
+        graph.add_decision(existing)
+
+        proposed = [
+            make_decision(id="adopt-pydantic", title="Adopt pydantic", rationale="Type safety"),
+        ]
+        counts = auto_resolve_capture(graph, proposed)
+        assert counts["new_decisions"] == 1
+        assert counts["updated_decisions"] == 0
+        assert counts["skipped_decisions"] == 0
+
+    # ── Rule 2: Same slug, same content → SKIP ──
+
+    def test_same_slug_same_content_skipped(self) -> None:
+        """Decision with same ID and same rationale (>=80% overlap) is skipped."""
         graph = GraphStore()
         existing = make_decision(
             id="use-jwt-auth",
             title="Use JWT Auth",
-            rationale="Standard token-based auth",
+            rationale="Standard token-based auth for APIs",
         )
         graph.add_decision(existing)
 
         proposed = [
             make_decision(
-                id="new-1",
-                title="Use JWT Auth",  # slugifies to "use-jwt-auth"
-                rationale="Some different rationale about JWT",
-                status=DecisionStatus.PROPOSED,
-            )
+                id="use-jwt-auth",
+                title="Use JWT Auth",
+                rationale="Standard token-based auth for APIs",  # same content
+            ),
         ]
+        counts = auto_resolve_capture(graph, proposed)
+        assert counts["new_decisions"] == 0
+        assert counts["updated_decisions"] == 0
+        assert counts["skipped_decisions"] == 1
 
-        conflicts = detect_conflicts(graph, proposed, None)
-        assert len(conflicts) == 1
-        assert conflicts[0].id == "use-jwt-auth"
-
-    def test_no_conflict_different_topics(self) -> None:
-        """Decisions on different topics with no entity overlap."""
-        graph = GraphStore()
-        existing = make_decision(
-            id="use-async",
-            title="Use async",
-            rationale="Better performance",
-        )
-        graph.add_decision(existing)
-
-        proposed = [
-            make_decision(
-                id="new-1",
-                title="Adopt pydantic",
-                rationale="Type safety for data models",
-                status=DecisionStatus.PROPOSED,
-            )
-        ]
-
-        conflicts = detect_conflicts(graph, proposed, None)
-        assert len(conflicts) == 0
-
-    def test_entity_overlap_with_divergent_rationale(self) -> None:
-        """Proposed decision affects same entities but rationale is very different."""
-        graph = GraphStore()
-        existing = make_decision(
-            id="use-sqlite",
-            title="Use SQLite",
-            rationale="Simple persistence with no server needed",
-        )
-        graph.add_decision(existing)
-        graph.add_code_entity(CodeEntity(id="src/db.py", type=EntityType.FILE))
-        graph.link("use-sqlite", "src/db.py", "affects")
-
-        proposed = [
-            make_decision(
-                id="new-1",
-                title="Replace DB layer",
-                rationale="Need distributed transactions across multiple nodes",
-                status=DecisionStatus.PROPOSED,
-            )
-        ]
-
-        conflicts = detect_conflicts(graph, proposed, {"new-1": ["src/db.py"]})
-        assert len(conflicts) == 1
-        assert conflicts[0].id == "use-sqlite"
-
-    def test_entity_overlap_with_similar_rationale_no_conflict(self) -> None:
-        """Same entities but similar rationale — no conflict (it's a refinement)."""
+    def test_same_slug_similar_content_skipped(self) -> None:
+        """Decision with same ID and very similar rationale is skipped."""
         graph = GraphStore()
         existing = make_decision(
             id="use-sqlite",
@@ -133,48 +99,64 @@ class TestDetectConflicts:
             rationale="Simple persistence with no server needed for local storage",
         )
         graph.add_decision(existing)
-        graph.add_code_entity(CodeEntity(id="src/db.py", type=EntityType.FILE))
-        graph.link("use-sqlite", "src/db.py", "affects")
 
         proposed = [
             make_decision(
-                id="new-1",
+                id="use-sqlite",
                 title="SQLite config update",
                 rationale="Simple persistence with no server needed for storage layer",
-                status=DecisionStatus.PROPOSED,
-            )
+            ),
         ]
+        counts = auto_resolve_capture(graph, proposed)
+        # Rationales are very similar (>80% overlap), so skip
+        assert counts["skipped_decisions"] == 1
+        assert counts["updated_decisions"] == 0
 
-        conflicts = detect_conflicts(graph, proposed, {"new-1": ["src/db.py"]})
-        # Rationales are very similar (>50% overlap), so no conflict
-        assert len(conflicts) == 0
+    # ── Rule 3: Same slug, different content → deprecate existing, ACCEPT ──
 
-    def test_no_conflict_when_no_entity_overlap(self) -> None:
-        """Different entities, different topics — no conflict."""
+    def test_same_slug_different_content_updates(self) -> None:
+        """Decision with same ID but different rationale is an update."""
         graph = GraphStore()
         existing = make_decision(
-            id="use-sqlite",
-            title="Use SQLite",
-            rationale="Simple persistence",
+            id="use-jwt-auth",
+            title="Use JWT Auth",
+            rationale="Token-based auth for APIs",
         )
         graph.add_decision(existing)
-        graph.add_code_entity(CodeEntity(id="src/db.py", type=EntityType.FILE))
-        graph.link("use-sqlite", "src/db.py", "affects")
 
         proposed = [
             make_decision(
-                id="new-1",
-                title="Add auth middleware",
-                rationale="Need JWT authentication",
-                status=DecisionStatus.PROPOSED,
-            )
+                id="use-jwt-auth",
+                title="Use JWT Auth",
+                rationale="Completely different approach to JWT authentication with rotating keys",
+            ),
         ]
+        counts = auto_resolve_capture(graph, proposed)
+        assert counts["updated_decisions"] == 1
+        assert counts["new_decisions"] == 0
+        assert counts["skipped_decisions"] == 0
 
-        conflicts = detect_conflicts(graph, proposed, {"new-1": ["src/auth.py"]})
-        assert len(conflicts) == 0
+        # Verify existing decision was deprecated
+        payload = graph.get_node_payload("use-jwt-auth")
+        assert payload["status"] == "deprecated"
 
-    def test_only_accepted_decisions_checked(self) -> None:
-        """Deprecated existing decisions are not checked for conflicts."""
+    # ── Empty graph ──
+
+    def test_empty_graph_all_new(self) -> None:
+        """All decisions are new when graph is empty."""
+        graph = GraphStore()
+        proposed = [
+            make_decision(id="new-1", title="Some decision", rationale="Some rationale"),
+        ]
+        counts = auto_resolve_capture(graph, proposed)
+        assert counts["new_decisions"] == 1
+        assert counts["updated_decisions"] == 0
+        assert counts["skipped_decisions"] == 0
+
+    # ── Deprecated existing not matched (no existing node) ──
+
+    def test_deprecated_existing_no_conflict(self) -> None:
+        """Deprecated existing decision is treated same as absent — new decision accepted."""
         graph = GraphStore()
         existing = make_decision(
             id="old-idea",
@@ -186,54 +168,105 @@ class TestDetectConflicts:
 
         proposed = [
             make_decision(
-                id="new-1",
-                title="Old Idea",  # slugifies to "old-idea"
-                rationale="New rationale",
-                status=DecisionStatus.PROPOSED,
-            )
+                id="old-idea",
+                title="Old Idea",
+                rationale="New rationale completely different from old",
+            ),
         ]
+        counts = auto_resolve_capture(graph, proposed)
+        # Existing node is DEPRECATED, but node exists. Rationales differ (< 0.8 overlap).
+        # Rule 3: deprecate existing (already deprecated), accept new.
+        assert counts["updated_decisions"] == 1
 
-        conflicts = detect_conflicts(graph, proposed, None)
-        assert len(conflicts) == 0
+    # ── Multiple proposed decisions ──
 
-    def test_empty_graph_no_conflicts(self) -> None:
+    def test_multiple_proposed_mixed(self) -> None:
+        """Multiple proposals: some new, some duplicates, some updates."""
         graph = GraphStore()
-        proposed = [
-            make_decision(
-                id="new-1",
-                title="Some decision",
-                rationale="Some rationale",
-                status=DecisionStatus.PROPOSED,
-            )
-        ]
-        conflicts = detect_conflicts(graph, proposed, None)
-        assert len(conflicts) == 0
-
-    def test_multiple_proposed_with_mixed_conflicts(self) -> None:
-        """Multiple proposals, some conflict, some don't."""
-        graph = GraphStore()
-        existing = make_decision(
+        graph.add_decision(make_decision(
             id="use-jwt",
             title="Use JWT",
             rationale="Token-based auth",
-        )
-        graph.add_decision(existing)
+        ))
 
         proposed = [
             make_decision(
-                id="new-1",
-                title="Use JWT",  # conflicts via slug
-                rationale="Better JWT approach",
-                status=DecisionStatus.PROPOSED,
+                id="use-jwt",
+                title="Use JWT",
+                rationale="Token-based auth",  # same → skip
             ),
             make_decision(
-                id="new-2",
-                title="Add rate limiting",  # no conflict
+                id="add-rate-limiting",
+                title="Add rate limiting",  # new
                 rationale="Protect against abuse",
-                status=DecisionStatus.PROPOSED,
             ),
         ]
+        counts = auto_resolve_capture(graph, proposed)
+        assert counts["skipped_decisions"] == 1
+        assert counts["new_decisions"] == 1
+        assert counts["updated_decisions"] == 0
 
-        conflicts = detect_conflicts(graph, proposed, None)
-        assert len(conflicts) == 1
-        assert conflicts[0].id == "use-jwt"
+    # ── Constraints ──
+
+    def test_constraints_new_and_duplicate(self) -> None:
+        """New constraints accepted, duplicate constraints skipped."""
+        graph = GraphStore()
+        graph.add_constraint(Constraint(
+            id="must-be-stateless",
+            description="Services must be stateless",
+            source="test",
+            status="active",
+            created_at="2024-01-01T00:00:00Z",
+        ))
+
+        proposed_constraints = [
+            Constraint(
+                id="must-be-stateless",
+                description="Services must be stateless",  # duplicate
+                source="test",
+                status="active",
+                created_at="2024-01-02T00:00:00Z",
+            ),
+            Constraint(
+                id="use-https",
+                description="All endpoints must use HTTPS",  # new
+                source="test",
+                status="active",
+                created_at="2024-01-02T00:00:00Z",
+            ),
+        ]
+        counts = auto_resolve_capture(
+            graph, [], proposed_constraints
+        )
+        assert counts["skipped_constraints"] == 1
+        assert counts["new_constraints"] == 1
+        assert counts["updated_constraints"] == 0
+
+    def test_constraint_update_different_description(self) -> None:
+        """Constraint with same ID but different description triggers update."""
+        graph = GraphStore()
+        graph.add_constraint(Constraint(
+            id="use-async-io",
+            description="All I/O must be async",
+            source="test",
+            status="active",
+            created_at="2024-01-01T00:00:00Z",
+        ))
+
+        proposed_constraints = [
+            Constraint(
+                id="use-async-io",
+                description="All network and file I/O must use async patterns",
+                source="test",
+                status="active",
+                created_at="2024-01-02T00:00:00Z",
+            ),
+        ]
+        counts = auto_resolve_capture(
+            graph, [], proposed_constraints
+        )
+        assert counts["updated_constraints"] == 1
+
+        # Verify existing constraint was deprecated
+        payload = graph.get_node_payload("use-async-io")
+        assert payload["status"] == "deprecated"

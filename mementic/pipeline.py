@@ -43,8 +43,6 @@ def find_file_paths(text: str) -> list[str]:
 
 def _status_from_adr(status: str) -> DecisionStatus:
     s = status.strip().lower()
-    if s == "proposed":
-        return DecisionStatus.PROPOSED
     if s in ("deprecated", "superseded"):
         return DecisionStatus.DEPRECATED
     return DecisionStatus.ACCEPTED

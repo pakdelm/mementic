@@ -36,7 +36,7 @@ def _build_sample_graph() -> GraphStore:
         title="Adopt pydantic",
         rationale="Standard validation",
         source="ADR-002",
-        status=DecisionStatus.PROPOSED,
+        status=DecisionStatus.ACCEPTED,
         created_at="2024-02-01T00:00:00Z",
         modified_at="2024-02-01T00:00:00Z",
     )

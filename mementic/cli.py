@@ -20,16 +20,17 @@ from mementic.config import (  # noqa: E402
     save_global_config,
 )
 from mementic.extraction import extract_from_session  # noqa: E402
-from mementic.format import format_context_pack, timestamp  # noqa: E402
+from mementic.format import count_tokens, format_context_pack, timestamp  # noqa: E402
 from mementic.graph import GraphStore  # noqa: E402
 from mementic.models import CodeEntity, Decision, DecisionStatus, EntityType, MetricsEntry  # noqa: E402
 from mementic.pipeline import run_init  # noqa: E402
-from mementic.conflict import detect_conflicts  # noqa: E402
+from mementic.conflict import auto_resolve_capture  # noqa: E402
 from mementic.metrics import UsageStore  # noqa: E402
+from mementic.sources.adr import scan_adr_dir  # noqa: E402
+from mementic.sources.opencode import scan_opencode_instructions  # noqa: E402
 
 if TYPE_CHECKING:
     from mementic.config import MementicConfig  # noqa: F401
-    from mementic.lint import LintFinding  # noqa: F401
 
 app = typer.Typer(help="Mementic — semantic memory for engineering teams and AI agents")
 
@@ -245,8 +246,47 @@ def init(
     except RuntimeError as e:
         typer.echo(str(e), err=True)
         raise typer.Exit(code=1)
+    # Load config for source counts in post-bootstrap output
+    cfg = load_config(config_path)
     stats = graph.stats()
-    typer.echo(f"Mementic graph initialized: {stats}")
+    typer.echo()
+    typer.echo("Mementic initialized")
+    typer.echo()
+
+    # Source counts
+    adr_count = len(cfg.sources.adr_dirs)
+    instr_count = (
+        len(cfg.sources.opencode_instructions)
+        + len(cfg.sources.claude_instructions)
+        + len(cfg.sources.cursor_instructions)
+        + len(cfg.sources.windsurf_instructions)
+    )
+    entity_count = stats.get("entities", 0)
+    typer.echo(
+        f"  Sources      ADR: {adr_count}    "
+        f"Instructions: {instr_count}    "
+        f"Codebase: {entity_count} entities"
+    )
+    typer.echo(
+        f"  Graph        {stats.get('decisions', 0)} decisions, "
+        f"{stats.get('constraints', 0)} constraints, "
+        f"{entity_count} entities, "
+        f"{stats.get('edges', 0)} edges"
+    )
+    typer.echo()
+
+    # Health checklist
+    from mementic.health import check_health
+    items = check_health(graph)
+    typer.echo("  Status")
+    for item in items:
+        marker = "[OK]" if item.status == "ok" else "[FAIL]"
+        if item.hint:
+            typer.echo(f"    {marker:<6} {item.label:<10} {item.hint}")
+        else:
+            typer.echo(f"    {marker:<6} {item.label}")
+    typer.echo()
+    typer.echo("  Next: mementic capture --agent opencode")
 
     # Register repo in project config when project mode is active
     if project_db_path is not None and project_name is not None and effective_repo:
@@ -303,8 +343,8 @@ def capture(
 ) -> None:
     """Extract architectural decisions from an agent session.
 
-    Decisions are auto-accepted unless flagged by the conflict detector.
-    Flagged decisions are set to 'proposed' for review via `mementic review`.
+    Decisions are auto-resolved against the existing graph using
+    three deterministic rules (new/duplicate/update). No interactive prompts.
     """
     from mementic.session import get_registry
 
@@ -449,7 +489,7 @@ def capture(
         typer.echo("No architectural decisions or constraints found.")
         raise typer.Exit()
 
-    # ── Conflict detection ──
+    # ── Auto-resolve capture ──
     from mementic.format import slugify
 
     # Replace LLM-generated IDs (dec-001, etc.) with deterministic slugs
@@ -458,26 +498,25 @@ def capture(
     for c in extraction.constraints:
         c.id = slugify(c.description, max_length=80)
 
-    conflicts = detect_conflicts(
-        graph,
-        extraction.decisions,
-        # Flat entity list shared across all decisions (extraction limitation)
-        {d.id: extraction.affected_entities for d in extraction.decisions},
+    counts = auto_resolve_capture(
+        graph, extraction.decisions, extraction.constraints
     )
-    conflicting_existing_slugs = {c.id for c in conflicts}
 
-    auto_accepted = 0
-    flagged = 0
-
+    # Add only NEW and UPDATED decisions (skipped are not added)
     for d in extraction.decisions:
-        if d.id in conflicting_existing_slugs:
-            d.status = DecisionStatus.PROPOSED
-            flagged += 1
-        else:
-            d.status = DecisionStatus.ACCEPTED
-            auto_accepted += 1
+        # Check if this decision should be added (not skipped)
+        # auto_resolve_capture sets status to ACCEPTED for all non-skipped
+        if not graph.has_node(d.id) or d.status == DecisionStatus.ACCEPTED:
+            # Rule 1 (new) or Rule 3 (updated): add to graph
+            # For updated, the existing was already deprecated by auto_resolve_capture
+            if graph.has_node(d.id):
+                # Rule 3: existing node is deprecated; update payload to accepted
+                graph.set_node_payload(d.id, d.model_dump())
+            else:
+                # Rule 1: new node
+                graph.add_decision(d)
+        # Rule 2 (skipped): don't add
 
-        graph.add_decision(d)
         for entity_path in extraction.affected_entities:
             graph.add_code_entity(
                 CodeEntity(id=entity_path, type=EntityType.FILE)
@@ -485,7 +524,13 @@ def capture(
             graph.link(d.id, entity_path, "affects")
 
     for c in extraction.constraints:
-        graph.add_constraint(c)
+        if not graph.has_node(c.id):
+            graph.add_constraint(c)
+        elif c.status == "active":
+            # Updated constraint: existing was deprecated, update payload
+            graph.set_node_payload(c.id, c.model_dump())
+        # Skipped: don't add
+
         for entity_path in c.bound_entities:
             graph.link(c.id, entity_path, "binds_to")
     for edge in extraction.edges_to_create:
@@ -503,20 +548,14 @@ def capture(
     typer.echo("=" * 50)
     typer.echo("Capture complete")
     typer.echo("=" * 50)
-    typer.echo(f"  Extracted: {len(extraction.decisions)} decisions, "
-               f"{len(extraction.constraints)} constraints")
-    typer.echo(f"  Auto-accepted: {auto_accepted}")
-    if auto_accepted:
-        for d in extraction.decisions:
-            if d.status == DecisionStatus.ACCEPTED:
-                typer.echo(f"    - [{d.id}] {d.title}")
-    if flagged:
-        typer.echo(f"  Flagged for review: {flagged}")
-        for d in extraction.decisions:
-            if d.id in conflicting_existing_slugs:
-                typer.echo(f"    - [{d.id}] {d.title}")
-        typer.echo()
-        typer.echo("  Run 'mementic review' to resolve flagged conflicts.")
+    typer.echo(f"  New:           {counts['new_decisions']} decisions, "
+               f"{counts['new_constraints']} constraints")
+    if counts['updated_decisions'] > 0:
+        typer.echo(f"  Updated:       {counts['updated_decisions']} decisions "
+                    f"(existing deprecated)")
+    if counts['skipped_decisions'] > 0 or counts['skipped_constraints'] > 0:
+        total_skipped = counts['skipped_decisions'] + counts['skipped_constraints']
+        typer.echo(f"  Duplicates:    {total_skipped} skipped")
     if is_project and project_display:
         typer.echo(f"  Written to project '{project_display}' database")
     else:
@@ -574,8 +613,10 @@ def context(
     """
     graph, _cfg = _resolve_graph(project)
 
-    constraints = graph.get_constraints_for_entities(files, prefix_match=prefix)
-    decisions = graph.get_decisions_for_entities(files)
+    constraints = graph.get_constraints_for_entities(
+        files, prefix_match=prefix, annotate_overlap=True
+    )
+    decisions = graph.get_decisions_for_entities(files, annotate_overlap=True)
 
     output = format_context_pack(task, decisions, constraints)
     typer.echo(output)
@@ -722,36 +763,27 @@ def server():
 
 @app.command()
 def status(
-    verbose: bool = typer.Option(
-        False, "--verbose", "-v", help="Show token usage totals"
-    ),
     project: str | None = typer.Option(
         None, "--project",
         help="Target project name",
     ),
 ) -> None:
-    """Show graph statistics."""
-    graph, _cfg = _resolve_graph(project)
-    stats = graph.stats()
-    typer.echo(f"Decisions: {stats.get('decisions', 0)}")
-    typer.echo(f"Constraints: {stats.get('constraints', 0)}")
-    typer.echo(f"Code Entities: {stats.get('entities', 0)}")
-    typer.echo(f"Edges: {stats.get('edges', 0)}")
+    """Show health checklist for mementic."""
+    from mementic.health import check_health
 
-    if verbose:
-        metrics_path = Path(".mementic/metrics.jsonl")
-        if not metrics_path.exists():
-            typer.echo()
-            typer.echo("No metrics data yet.")
-        else:
-            store = UsageStore()
-            summary = store.summary()
-            typer.echo()
-            typer.echo("Token Usage")
-            typer.echo(f"  LLM calls:         {summary['total_calls']}")
-            typer.echo(f"  Total input:       {summary['total_input_tokens']:,} tokens")
-            typer.echo(f"  Total output:      {summary['total_output_tokens']:,} tokens")
-            typer.echo(f"  Total cost:        {summary['total_tokens']:,} tokens")
+    try:
+        graph, _cfg = _resolve_graph(project)
+    except typer.Exit:
+        graph = None
+
+    items = check_health(graph)
+    typer.echo("Mementic status")
+    for item in items:
+        marker = "[OK]" if item.status == "ok" else "[FAIL]"
+        line = f"  {marker:<6} {item.label}"
+        if item.hint:
+            line += f"  {item.hint}"
+        typer.echo(line)
 
 
 @app.command()
@@ -808,88 +840,10 @@ def graph(
         webbrowser.open(Path(output).resolve().as_uri())
 
 
-@app.command()
-def review(
-    project: str | None = typer.Option(
-        None, "--project",
-        help="Target project name",
-    ),
-) -> None:
-    """Review flagged (proposed) decisions and constraints.
-
-    Shows decisions that the conflict detector flagged as potentially
-    conflicting with existing ones. Accept or reject each.
-    """
-    graph, _cfg = _resolve_graph(project)
-
-    pending_d = graph.get_pending_decisions()
-    pending_c = graph.get_pending_constraints()
-
-    if not pending_d and not pending_c:
-        typer.echo("No pending proposals. Graph is clean!")
-        return
-
-    typer.echo(f"Pending decisions: {len(pending_d)}")
-    typer.echo(f"Pending constraints: {len(pending_c)}")
-    typer.echo()
-
-    for d in pending_d:
-        typer.echo(f"[{d.id}] {d.title}")
-        typer.echo(f"  Rationale: {d.rationale}")
-        if d.rejected_alternatives:
-            typer.echo(f"  Rejected: {', '.join(d.rejected_alternatives)}")
-
-        # Show potential conflicts
-        conflicts = detect_conflicts(
-            graph,
-            [d],
-            {d.id: _get_entities_for_decision(graph, d.id)},
-        )
-        if conflicts:
-            typer.echo("  Conflicts with:")
-            for conflict_d in conflicts:
-                typer.echo(f"    - [{conflict_d.id}] {conflict_d.title}")
-
-        choice = typer.confirm("Accept?", default=True)
-        if choice:
-            d.status = DecisionStatus.ACCEPTED
-            graph.add_decision(d)
-        else:
-            d.status = DecisionStatus.REJECTED
-            graph.add_decision(d)
-
-    for c in pending_c:
-        typer.echo(f"\n[{c.id}] {c.description}")
-        choice = typer.confirm("Accept?", default=True)
-        if choice:
-            c.status = "active"
-            graph.add_constraint(c)
-        else:
-            c.status = "deprecated"
-            graph.add_constraint(c)
-
-    # save() is no-op when db-backed; writes JSON otherwise
-    graph.save(_cfg.output.graph_path)
-    typer.echo("Review complete.")
-
-
-def _get_entities_for_decision(graph: GraphStore, decision_id: str) -> list[str]:
-    """Get affected entity paths for a decision node by following its edges."""
-    entities: list[str] = []
-    for _nid, ntype, _payload in graph.iter_nodes():
-        if ntype != "CodeEntity":
-            continue
-        for pred in graph.get_predecessors(_nid):
-            if pred == decision_id:
-                entities.append(_nid)
-    return entities
-
-
 def _status_icon(status: str) -> str:
     """Return a compact status marker for list output."""
     icons = {
         "accepted": "+",
-        "proposed": "?",
         "deprecated": "-",
         "rejected": "x",
         "active": "+",
@@ -905,7 +859,7 @@ def list_cmd(
     ),
     status: str | None = typer.Option(
         None, "--status",
-        help="Filter by status: proposed, accepted, deprecated, rejected, active",
+        help="Filter by status: accepted, deprecated, rejected, active",
     ),
     n: int = typer.Option(
         0, "-n",
@@ -939,7 +893,7 @@ def list_cmd(
         )
         raise typer.Exit(code=1)
 
-    valid_statuses = {"proposed", "accepted", "deprecated", "rejected", "active", "superseded"}
+    valid_statuses = {"accepted", "deprecated", "rejected", "active"}
     if status and status not in valid_statuses:
         typer.echo(
             f"Invalid status '{status}'. Valid: {', '.join(sorted(valid_statuses))}",
@@ -1059,65 +1013,135 @@ def metrics(
     if json_output:
         typer.echo(json.dumps(summary, indent=2, default=str))
     else:
-        # -- Section 1: Extraction Cost --
-        typer.echo("Token Economics")
-        typer.echo("-" * 50)
-        typer.echo("  Extraction cost (lifetime)")
-        init_calls = summary["extraction_init_calls"]
-        init_tokens = summary["extraction_init_tokens"]
-        capture_calls = summary["extraction_capture_calls"]
-        capture_tokens = summary["extraction_capture_tokens"]
-        typer.echo(
-            f"    init:       {init_calls:>4} calls   {init_tokens:>10,} tokens"
-            f"   (one-time graph build)"
+        # ── Lazy source material counting (Task 2.2) ──
+        cfg = load_config()
+        source_file_count = 0
+        source_tokens = 0
+
+        # Count ADR files
+        for adr_source in cfg.sources.adr_dirs:
+            if Path(adr_source.path).is_dir():
+                adrs = scan_adr_dir(adr_source.path)
+                for adr in adrs:
+                    try:
+                        text = Path(adr.path).read_text(encoding="utf-8")
+                        source_tokens += count_tokens(text)
+                        source_file_count += 1
+                    except Exception:  # noqa: S110
+                        pass
+
+        # Count instruction files (all agent types — same reader)
+        for source_list in (
+            cfg.sources.opencode_instructions,
+            cfg.sources.claude_instructions,
+            cfg.sources.cursor_instructions,
+            cfg.sources.windsurf_instructions,
+        ):
+            for source in source_list:
+                if Path(source.path).is_dir():
+                    instructions = scan_opencode_instructions(source.path)
+                    for instr in instructions:
+                        source_tokens += count_tokens(instr.content)
+                        source_file_count += 1
+
+        source_available = source_tokens > 0
+
+        # ── Summary fields ──
+        init_calls: int = summary["extraction_init_calls"]
+        init_tokens: int = summary["extraction_init_tokens"]
+        capture_calls: int = summary["extraction_capture_calls"]
+        capture_tokens: int = summary["extraction_capture_tokens"]
+        cp_queries: int = summary["context_pack_queries"]
+        cp_total: int = summary["context_pack_total_tokens"]
+        cp_avg: float = summary["context_pack_avg_tokens"]
+
+        extraction_total = init_tokens + capture_tokens
+        capture_avg = capture_tokens / capture_calls if capture_calls > 0 else 0.0
+
+        # ── Computed values ──
+        compression_ratio = (
+            (init_tokens / source_tokens * 100) if source_tokens > 0 else None
         )
-        typer.echo(
-            f"    capture:    {capture_calls:>4} calls   {capture_tokens:>10,} tokens"
-            f"   (per-session extraction)"
+        graph_compression = (
+            (extraction_total / source_tokens * 100) if source_tokens > 0 else None
         )
-        typer.echo(
-            f"    subtotal:              {summary['extraction_total_tokens']:>10,} tokens"
+        pack_vs_source = (
+            (cp_avg / source_tokens * 100)
+            if source_tokens > 0 and cp_avg > 0
+            else None
+        )
+        extraction_amortized = (
+            (extraction_total / cp_queries) if cp_queries > 0 else None
         )
 
-        # ── Section 2: Context Pack Usage ──
-        typer.echo()
-        typer.echo("  Context pack usage (lifetime)")
-        cp_queries = summary["context_pack_queries"]
-        cp_total = summary["context_pack_total_tokens"]
-        cp_avg = summary["context_pack_avg_tokens"]
-        typer.echo(
-            f"    queries:     {cp_queries:>4} calls   {cp_total:>10,} tokens"
-        )
-        typer.echo(
-            f"    avg pack:    {cp_avg:>10,.0f} tokens/query"
-        )
+        # ── Formatting helpers ──
+        def _n(v: int) -> str:
+            return f"{v:,}"
 
-        # ── Section 3: Breakeven Analysis ──
+        def _t(v: int | float) -> str:
+            return f"{v:,.0f}"
+
+        def _p(v: float | None) -> str:
+            if v is None:
+                return "--"
+            return f"{v:.1f}%"
+
+        def _section(header: str) -> None:
+            typer.echo(f"{header:<30}{'Count':>8}     {'Tokens':>12}")
+
+        def _row(label: str, count: str, tokens: str) -> None:
+            typer.echo(f"  {label:<28}{count:>8}     {tokens:>12}")
+
+        def _ref_row(label: str, value: str) -> None:
+            typer.echo(f"  {label:<28}  {value}")
+
+        # ── Render ──
+        sep = "═" * 56
+        typer.echo(sep)
+        typer.echo("                  MEMENTIC TOKEN USAGE")
+        typer.echo(sep)
         typer.echo()
-        typer.echo("  Breakeven analysis")
-        if cp_queries > 0:
-            extraction_per_query = summary["extraction_per_query"]
-            context_pack_per_query = summary["context_pack_per_query"]
-            overhead_ratio = summary["breakeven_ratio"]
-            typer.echo(
-                f"    extraction cost/query:  {extraction_per_query:>7,.0f} tokens"
-            )
-            typer.echo(
-                f"    context pack/query:     {context_pack_per_query:>7,.0f} tokens"
-            )
-            typer.echo(
-                f"    overhead ratio:         {overhead_ratio:>6.1f}%  "
-                f"(context pack as % of extraction cost)"
-            )
-        else:
-            typer.echo(
-                "    No context pack queries yet. Breakeven data will accumulate "
-                "as agents"
-            )
-            typer.echo(
-                "    call get_context_pack. Run this command again after a few "
-                "sessions."
-            )
+
+        # Section 1: Setup (one-time)
+        _section("Setup (one-time)")
+        sc = _n(source_file_count) if source_available else "--"
+        st = _n(source_tokens) if source_available else "--"
+        _row("Source material", sc, st)
+        _row("Init extraction", _n(init_calls), _n(init_tokens))
+        _row("Compression ratio", "", _p(compression_ratio))
+        typer.echo()
+
+        # Section 2: Capture (recurring)
+        _section("Capture (recurring)")
+        _row("Sessions", _n(capture_calls), _n(capture_tokens))
+        ca = _t(capture_avg) if capture_calls > 0 else "--"
+        _row("Avg per session", "", ca)
+        typer.echo()
+
+        # Section 3: Context Packs
+        _section("Context Packs")
+        _row("Queries", _n(cp_queries), _n(cp_total))
+        qa = _t(cp_avg) if cp_queries > 0 else "--"
+        _row("Avg per pack", "", qa)
+        typer.echo()
+
+        # Section 4: Reference
+        typer.echo("Reference")
+        gc = _p(graph_compression)
+        gc_detail = f"({_n(extraction_total)} / {_n(source_tokens)})" if source_available else ""
+        _ref_row("Graph compression", f"{gc}  {gc_detail}".rstrip())
+        pv = _p(pack_vs_source)
+        pv_detail = (
+            f"({_t(cp_avg)} / {_n(source_tokens)})"
+            if source_available and cp_queries > 0
+            else ""
+        )
+        _ref_row("Pack vs source", f"{pv}  {pv_detail}".rstrip())
+        ea = _t(extraction_amortized) if extraction_amortized is not None else "--"
+        ea_detail = (
+            f"({_n(extraction_total)} / {cp_queries})" if cp_queries > 0 else ""
+        )
+        _ref_row("Extraction amortized", f"{ea}  tokens/query {ea_detail}".rstrip())
 
     if reset:
         if typer.confirm("Delete all metrics?"):
@@ -1179,80 +1203,6 @@ def deprecate(
     # save() is no-op when db-backed; writes JSON otherwise
     graph.save(cfg.output.graph_path)
     typer.echo(f"Deprecated decision '{id}': {target.title}")
-
-
-@app.command(name="lint")
-def lint_cmd(
-    fix: bool = typer.Option(
-        False, "--fix",
-        help="Auto-resolve all fixable issues and save the graph",
-    ),
-    project: str | None = typer.Option(
-        None, "--project",
-        help="Target project name",
-    ),
-) -> None:
-    """Run rules-based graph health checks.
-
-    Checks 5 deterministic rules for graph integrity. No LLM cost.
-    `mementic lint` shows issues grouped by actionability.
-    `mementic lint --fix` auto-resolves everything that can be fixed safely.
-    """
-    from mementic.lint import lint, lint_fix
-
-    graph, cfg = _resolve_graph(project)
-
-    result = lint(graph)
-
-    if not result.findings:
-        typer.echo("Graph is clean — no issues found.")
-        return
-
-    fixable = [f for f in result.findings if f.fixable]
-    needs_review = [f for f in result.findings if not f.fixable]
-
-    total = len(result.findings)
-    typer.echo(f"{total} issue(s): {len(fixable)} auto-fixable, "
-               f"{len(needs_review)} need review.")
-    typer.echo()
-
-    if fix:
-        counts = lint_fix(graph, result)
-        # save() is no-op when db-backed; writes JSON otherwise
-        graph.save(cfg.output.graph_path)
-
-        typer.echo(f"Fixed {counts['total']} issue(s). Graph saved.")
-        if counts["removed"]:
-            typer.echo(f"  {counts['removed']} entity node(s) removed "
-                       f"(stale or orphaned)")
-        if counts["deprecated"]:
-            typer.echo(f"  {counts['deprecated']} constraint(s) deprecated "
-                       f"(cascaded from deprecated decision)")
-        if counts["cleared"]:
-            typer.echo(f"  {counts['cleared']} broken enforced_by reference(s) cleared")
-
-        remaining = [f for f in result.findings if not f.fixable]
-        if remaining:
-            typer.echo()
-            typer.echo(f"{len(remaining)} remaining (need manual review):")
-            _print_findings(remaining)
-    else:
-        if fixable:
-            typer.echo("Auto-fixable (run `mementic lint --fix`):")
-            _print_findings(fixable)
-        if needs_review:
-            if fixable:
-                typer.echo()
-            typer.echo("Needs review:")
-            _print_findings(needs_review)
-
-
-def _print_findings(findings: list[LintFinding]) -> None:
-    """Print a compact list of lint findings."""
-    markers = {"error": "ERR", "warning": "WARN", "info": "INFO"}
-    for f in findings:
-        marker = markers.get(f.severity, "?")
-        typer.echo(f"  [{marker}] {f.rule:<24} {f.message}")
 
 
 # ── Project management commands ──────────────────────────────────────

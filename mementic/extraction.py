@@ -186,7 +186,7 @@ Rules:
    - Language/framework conventions (async patterns, type enforcement)
 2. Only include decisions where there is CLEAR evidence in the structural summary.
    Skip if you're uncertain. It's better to miss a decision than to hallucinate one.
-3. For each detected decision, set status to "proposed" — a human must confirm.
+ 3. For each detected decision, set status to "accepted".
 4. Include specific file paths as affected entities when possible.
 5. Output ONLY valid JSON matching this schema — no markdown, no explanation.
 
@@ -633,8 +633,8 @@ def extract_from_codebase_summary(
 
     Sends the deterministic structural summary (from
     :func:`mementic.sources.codebase.scan_codebase_structure`) to the LLM
-    for pattern detection. All detected decisions are marked ``proposed``
-    — a human must confirm via ``mementic review``.
+    for pattern detection. All detected decisions are marked ``accepted``
+    — automatically accepted via auto-resolve capture.
 
     Args:
         summary: Markdown summary produced by the structural scanner.
@@ -714,9 +714,9 @@ def extract_from_codebase_summary(
             stats = UsageStats(model=config.extraction_model, status="error")
         return ExtractionResult(), stats
 
-    # Force all detected decisions to proposed status
+    # Force all detected decisions to accepted status
     for decision in result.decisions:
-        decision.status = DecisionStatus.PROPOSED
+        decision.status = DecisionStatus.ACCEPTED
         decision.source = "detected:codebase"
 
     if usage:

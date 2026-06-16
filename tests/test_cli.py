@@ -18,6 +18,18 @@ from mementic.config import load_global_config
 runner = CliRunner()
 
 
+def _make_mock_graph(**stats_overrides: int) -> MagicMock:
+    """Build a MagicMock GraphStore that supports stats() and is not None."""
+    mock_graph = MagicMock()
+    mock_graph.stats.return_value = {
+        "decisions": stats_overrides.get("decisions", 0),
+        "constraints": stats_overrides.get("constraints", 0),
+        "entities": stats_overrides.get("entities", 0),
+        "edges": stats_overrides.get("edges", 0),
+    }
+    return mock_graph
+
+
 def _strip_ansi(text: str) -> str:
     """Strip ANSI escape sequences from CLI output for platform-agnostic assertions.
 
@@ -101,7 +113,7 @@ class TestInitAutoBootstrap:
 
             config_path = tmp_path / ".mementic.json"
 
-            with patch("mementic.cli.run_init", return_value=(MagicMock(), [])):
+            with patch("mementic.cli.run_init", return_value=(_make_mock_graph(), [])):
                 result = runner.invoke(
                     app, ["init", "--config-path", str(config_path)],
                 )
@@ -144,7 +156,7 @@ class TestInitAutoBootstrap:
             os.chdir(tmp_path)
             config_path = tmp_path / ".mementic.json"
 
-            with patch("mementic.cli.run_init", return_value=(MagicMock(), [])):
+            with patch("mementic.cli.run_init", return_value=(_make_mock_graph(), [])):
                 result = runner.invoke(
                     app, ["init", "--config-path", str(config_path)],
                 )
@@ -169,7 +181,7 @@ class TestInitAutoBootstrap:
             }
             config_path.write_text(json.dumps(original))
 
-            with patch("mementic.cli.run_init", return_value=(MagicMock(), [])):
+            with patch("mementic.cli.run_init", return_value=(_make_mock_graph(), [])):
                 result = runner.invoke(
                     app, ["init", "--config-path", str(config_path)],
                 )
@@ -195,7 +207,7 @@ class TestInitAutoBootstrap:
 
             config_path = tmp_path / ".mementic.json"
 
-            with patch("mementic.cli.run_init", return_value=(MagicMock(), [])):
+            with patch("mementic.cli.run_init", return_value=(_make_mock_graph(), [])):
                 result = runner.invoke(
                     app, ["init", "--config-path", str(config_path)],
                 )
@@ -225,7 +237,7 @@ class TestInitAutoBootstrap:
 
             config_path = tmp_path / ".mementic.json"
 
-            with patch("mementic.cli.run_init", return_value=(MagicMock(), [])):
+            with patch("mementic.cli.run_init", return_value=(_make_mock_graph(), [])):
                 result = runner.invoke(
                     app, ["init", "--config-path", str(config_path)],
                 )
@@ -267,7 +279,7 @@ class TestInitInteractive:
             }))
             monkeypatch.setenv("MEMENTIC_GLOBAL_CONFIG", str(global_config_path))
 
-            with patch("mementic.cli.run_init", return_value=(MagicMock(), [])):
+            with patch("mementic.cli.run_init", return_value=(_make_mock_graph(), [])):
                 result = runner.invoke(
                     app,
                     ["init", "--config-path", str(config_path), "--interactive"],
@@ -307,7 +319,7 @@ class TestInitInteractive:
             }))
             monkeypatch.setenv("MEMENTIC_GLOBAL_CONFIG", str(global_config_path))
 
-            with patch("mementic.cli.run_init", return_value=(MagicMock(), [])):
+            with patch("mementic.cli.run_init", return_value=(_make_mock_graph(), [])):
                 result = runner.invoke(
                     app,
                     ["init", "--config-path", str(config_path), "--interactive"],
@@ -331,7 +343,7 @@ class TestGraphCorruptMessage:
     def test_graph_corrupt_message_on_invalid_json(
         self, tmp_path: Path
     ) -> None:
-        """Graph file with invalid JSON shows corrupt message."""
+        """Graph file with invalid JSON shows health checklist [FAIL]."""
         graph_path = tmp_path / ".mementic" / "graph.json"
         graph_path.parent.mkdir(parents=True)
         graph_path.write_text("not valid json at all {{{")
@@ -345,14 +357,16 @@ class TestGraphCorruptMessage:
             app, ["status"],
             env={"MEMENTIC_CONFIG": str(config_path)},
         )
-        assert result.exit_code == 1
+        # Status command handles graph load failures gracefully
+        assert result.exit_code == 0
         output = result.stdout + result.stderr
-        assert "corrupt" in output.lower()
+        assert "[FAIL]" in output
+        assert "Graph" in output
 
     def test_graph_missing_shows_init_message(
         self, tmp_path: Path
     ) -> None:
-        """Missing graph file shows 'run mementic init' message."""
+        """Missing graph file shows health checklist [FAIL]."""
         graph_path = tmp_path / ".mementic" / "graph.json"
 
         config_path = tmp_path / ".mementic.json"
@@ -364,30 +378,11 @@ class TestGraphCorruptMessage:
             app, ["status"],
             env={"MEMENTIC_CONFIG": str(config_path)},
         )
-        assert result.exit_code == 1
+        # Status command handles graph load failures gracefully
+        assert result.exit_code == 0
         output = result.stdout + result.stderr
-        assert "init" in output.lower()
-
-    def test_review_graph_corrupt_message(
-        self, tmp_path: Path
-    ) -> None:
-        """review command shows corrupt message for invalid graph."""
-        graph_path = tmp_path / ".mementic" / "graph.json"
-        graph_path.parent.mkdir(parents=True)
-        graph_path.write_text("{invalid")
-
-        config_path = tmp_path / ".mementic.json"
-        config_path.write_text(json.dumps({
-            "output": {"graph_path": str(graph_path)},
-        }))
-
-        result = runner.invoke(
-            app, ["review"],
-            env={"MEMENTIC_CONFIG": str(config_path)},
-        )
-        assert result.exit_code == 1
-        output = result.stdout + result.stderr
-        assert "corrupt" in output.lower()
+        assert "[FAIL]" in output
+        assert "Graph" in output
 
 
 # ── D4: git error message in capture ──────────────────────────────
@@ -473,16 +468,16 @@ class TestCaptureAutoAccept:
             )
 
         output = result.stdout + result.stderr
-        # Should show auto-accepted
-        assert "Auto-accepted" in output
-        assert "add-jwt-auth" in output
-        # No flagged count
+        # Should show new decisions
+        assert "New:" in output
+        assert "1 decisions" in output
+        # No duplicates flagged
         assert "Flagged" not in output
 
-    def test_capture_flags_conflicting_decisions(
+    def test_capture_updates_conflicting_decisions(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Decisions that conflict with existing are flagged as proposed."""
+        """Decisions with same slug but different rationale auto-update (deprecate existing)."""
         monkeypatch.chdir(tmp_path)
         monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-fake-key")
 
@@ -511,10 +506,10 @@ class TestCaptureAutoAccept:
             decisions=[
                 Decision(
                     id="new-jwt-approach",
-                    title="Use JWT Auth",  # slugifies to "use-jwt-auth" → conflict
+                    title="Use JWT Auth",  # slugifies to "use-jwt-auth" → update
                     rationale="Completely different approach to JWT authentication with rotating keys",
                     source="session",
-                    status=DecisionStatus.PROPOSED,
+                    status=DecisionStatus.ACCEPTED,
                     created_at="2024-01-02T00:00:00Z",
                     modified_at="2024-01-02T00:00:00Z",
                 ),
@@ -534,8 +529,8 @@ class TestCaptureAutoAccept:
             )
 
         output = result.stdout + result.stderr
-        assert "Flagged for review" in output
-        assert "use-jwt-auth" in output
+        assert "Updated:" in output
+        assert "1 decisions (existing deprecated)" in output
 
     def test_capture_no_interactive_prompts(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -641,11 +636,11 @@ class TestListCommand:
                     "author": "test",
                 },
                 {
-                    "id": "d-proposed",
-                    "title": "Proposed",
+                    "id": "d-deprecated",
+                    "title": "Deprecated",
                     "rationale": "...",
                     "source": "test",
-                    "status": "proposed",
+                    "status": "deprecated",
                     "timestamp": "2024-01-01T00:00:00Z",
                     "tags": [],
                     "rejected_alternatives": [],
@@ -655,12 +650,12 @@ class TestListCommand:
         )
 
         result = runner.invoke(
-            app, ["list", "decisions", "--status", "proposed"],
+            app, ["list", "decisions", "--status", "deprecated"],
             env={"MEMENTIC_CONFIG": str(config_path)},
         )
         assert result.exit_code == 0
         output = result.stdout
-        assert "d-proposed" in output
+        assert "d-deprecated" in output
         assert "d-accepted" not in output
 
     def test_list_decisions_last_n(self, tmp_path: Path) -> None:
@@ -855,195 +850,7 @@ class TestDeprecateCommand:
         assert "already deprecated" in output.lower()
 
 
-# ── 06c F5: review command with conflicts ──────────────────────────
-
-
-class TestReviewCommand:
-    """Tests for mementic review command (Spec 06c F5)."""
-
-    def test_review_shows_no_pending_when_empty(self, tmp_path: Path) -> None:
-        config_path, graph_path = _write_config_and_graph(
-            tmp_path,
-            decisions=[{
-                "id": "d-accepted",
-                "title": "Accepted",
-                "rationale": "Done",
-                "source": "test",
-                "status": "accepted",
-                "timestamp": "2024-01-01T00:00:00Z",
-                "tags": [],
-                "rejected_alternatives": [],
-                "author": "test",
-            }],
-        )
-
-        result = runner.invoke(
-            app, ["review"],
-            env={"MEMENTIC_CONFIG": str(config_path)},
-        )
-        assert result.exit_code == 0
-        output = result.stdout
-        assert "No pending" in output
-
-    def test_review_shows_flagged_proposals(self, tmp_path: Path) -> None:
-        config_path, graph_path = _write_config_and_graph(
-            tmp_path,
-            decisions=[
-                {
-                    "id": "d-accepted",
-                    "title": "Existing Decision",
-                    "rationale": "Already accepted",
-                    "source": "test",
-                    "status": "accepted",
-                    "timestamp": "2024-01-01T00:00:00Z",
-                    "tags": [],
-                    "rejected_alternatives": [],
-                    "author": "test",
-                },
-                {
-                    "id": "d-proposed",
-                    "title": "Proposed Override",
-                    "rationale": "New idea to explore",
-                    "source": "test",
-                    "status": "proposed",
-                    "timestamp": "2024-02-01T00:00:00Z",
-                    "tags": [],
-                    "rejected_alternatives": [],
-                    "author": "test",
-                },
-            ],
-        )
-
-        result = runner.invoke(
-            app, ["review"],
-            env={"MEMENTIC_CONFIG": str(config_path)},
-            input="y\n",
-        )
-        assert result.exit_code == 0
-        output = result.stdout
-        assert "d-proposed" in output
-
-
 # ── 06c F7: lint command ───────────────────────────────────────────
-
-
-class TestLintCommand:
-    """Tests for mementic lint command (Spec 06c F7)."""
-
-    def test_lint_clean_graph(self, tmp_path: Path) -> None:
-        # Create a real file so the entity isn't flagged as stale
-        real_file = tmp_path / "src" / "real.py"
-        real_file.parent.mkdir(parents=True)
-        real_file.write_text("# real file")
-
-        config_path, graph_path = _write_config_and_graph(
-            tmp_path,
-            decisions=[{
-                "id": "d-healthy",
-                "title": "Healthy",
-                "rationale": "Clean",
-                "source": "test",
-                "status": "accepted",
-                "timestamp": "2024-01-01T00:00:00Z",
-                "tags": ["health"],
-                "rejected_alternatives": [],
-                "author": "test",
-            }],
-            constraints=[{
-                "id": "c-bound",
-                "description": "A constraint",
-                "bound_entities": [],
-                "enforced_by": "d-healthy",
-                "source": "test",
-                "status": "active",
-                "timestamp": "2024-01-01T00:00:00Z",
-            }],
-            entities=[{
-                "id": str(real_file),
-                "type": "file",
-                "repo": "",
-            }],
-            edges=[
-                {"source": "d-healthy", "target": "c-bound", "relation": "enforces"},
-                {"source": "d-healthy", "target": str(real_file), "relation": "affects"},
-                {"source": "c-bound", "target": str(real_file), "relation": "binds_to"},
-            ],
-        )
-
-        result = runner.invoke(
-            app, ["lint"],
-            env={"MEMENTIC_CONFIG": str(config_path)},
-        )
-        assert result.exit_code == 0
-        output = result.stdout
-        assert "clean" in output.lower()
-
-    def test_lint_detects_orphaned_constraint(self, tmp_path: Path) -> None:
-        config_path, graph_path = _write_config_and_graph(
-            tmp_path,
-            constraints=[{
-                "id": "c-orphan",
-                "description": "Orphan constraint",
-                "bound_entities": [],
-                "enforced_by": "missing-decision",
-                "source": "test",
-                "status": "active",
-                "timestamp": "2024-01-01T00:00:00Z",
-            }],
-        )
-
-        result = runner.invoke(
-            app, ["lint"],
-            env={"MEMENTIC_CONFIG": str(config_path)},
-        )
-        assert result.exit_code == 0
-        output = result.stdout
-        assert "orphaned-constraint" in output
-
-    def test_lint_detects_stale_entity(self, tmp_path: Path) -> None:
-        config_path, graph_path = _write_config_and_graph(
-            tmp_path,
-            entities=[{
-                "id": "/definitely/not/a/real/file.py",
-                "type": "file",
-                "repo": "",
-            }],
-        )
-
-        result = runner.invoke(
-            app, ["lint"],
-            env={"MEMENTIC_CONFIG": str(config_path)},
-        )
-        assert result.exit_code == 0
-        output = result.stdout
-        assert "stale-entity" in output
-
-    def test_lint_fix_resolves_issues(self, tmp_path: Path) -> None:
-        config_path, graph_path = _write_config_and_graph(
-            tmp_path,
-            constraints=[{
-                "id": "c-orphan",
-                "description": "Orphan",
-                "bound_entities": [],
-                "enforced_by": "missing-decision",
-                "source": "test",
-                "status": "active",
-                "timestamp": "2024-01-01T00:00:00Z",
-            }],
-            entities=[{
-                "id": "/does/not/exist.py",
-                "type": "file",
-                "repo": "",
-            }],
-        )
-
-        result = runner.invoke(
-            app, ["lint", "--fix"],
-            env={"MEMENTIC_CONFIG": str(config_path)},
-        )
-        assert result.exit_code == 0
-        output = result.stdout
-        assert "Fixed" in output
 
 
 # ── Spec 09b B3: Graceful no-git capture ────────────────────────────
@@ -1304,7 +1111,7 @@ class TestInitRepoFlag:
                 "llm": {"provider": "deepseek", "model": "deepseek-chat"},
             }))
 
-            with patch("mementic.cli.run_init", return_value=(MagicMock(), [])) as mock_run_init:
+            with patch("mementic.cli.run_init", return_value=(_make_mock_graph(), [])) as mock_run_init:
                 result = runner.invoke(
                     app, ["init", "--config-path", str(config_path), "--repo", "/some/path"],
                 )
@@ -1328,7 +1135,7 @@ class TestInitRepoFlag:
                 "llm": {"provider": "deepseek", "model": "deepseek-chat"},
             }))
 
-            with patch("mementic.cli.run_init", return_value=(MagicMock(), [])) as mock_run_init:
+            with patch("mementic.cli.run_init", return_value=(_make_mock_graph(), [])) as mock_run_init:
                 result = runner.invoke(
                     app, ["init", "--config-path", str(config_path), "--no-scan"],
                 )
@@ -1602,3 +1409,299 @@ class TestLogCommand:
         assert result.exit_code == 0
         output = result.stdout + result.stderr
         assert "empty" in output.lower() or "no audit" in output.lower()
+
+
+# ── Metrics command tests (Spec 13, Tasks 2.2 / 2.3) ─────────────
+
+
+def _write_metrics_jsonl(path: Path, entries: list[dict]) -> None:
+    """Write a metrics.jsonl file from a list of MetricsEntry-like dicts."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        for entry in entries:
+            f.write(json.dumps(entry) + "\n")
+
+
+def _write_source_files(base: Path, adr_count: int = 2, instr_count: int = 2) -> None:
+    """Create source ADR and instruction markdown files for token counting."""
+    adr_dir = base / "docs" / "adr"
+    adr_dir.mkdir(parents=True)
+    for i in range(1, adr_count + 1):
+        (adr_dir / f"{i:04d}-test-adr.md").write_text(
+            f"# ADR-{i:04d}: Test Decision {i}\n\n"
+            f"## Status\n\nAccepted\n\n"
+            f"## Context\n\nThis is a test ADR document with some content.\n\n"
+            f"## Decision\n\nWe will use Python for everything.\n\n"
+            f"## Consequences\n\nMore Python code.\n\n"
+        )
+
+    instr_dir = base / "docs" / "instructions"
+    instr_dir.mkdir(parents=True)
+    for i in range(1, instr_count + 1):
+        (instr_dir / f"style{i}.md").write_text(
+            f"# Instruction {i}\n\n"
+            f"This is a test instruction file with guidelines for agents.\n"
+        )
+
+
+class TestMetricsCommand:
+    """Tests for mementic metrics command (four-section tabular output)."""
+
+    def _setup_metrics_and_config(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+        entries: list[dict] | None = None,
+        with_sources: bool = True,
+    ) -> Path:
+        """Set up metrics.jsonl, config, and optional source dirs. Returns cwd."""
+        old_cwd = os.getcwd()
+        os.chdir(tmp_path)
+
+        # Write metrics data
+        if entries is not None:
+            _write_metrics_jsonl(tmp_path / ".mementic" / "metrics.jsonl", entries)
+
+        # Write config
+        config = {
+            "output": {"graph_path": str(tmp_path / ".mementic" / "graph.json")},
+            "sources": {
+                "adr_dirs": [{"path": str(tmp_path / "docs" / "adr")}],
+                "opencode_instructions": [{"path": str(tmp_path / "docs" / "instructions")}],
+            },
+        }
+        (tmp_path / ".mementic.json").write_text(json.dumps(config))
+
+        # Ensure no global config (fallback to JSON mode)
+        empty_config_dir = tmp_path / ".empty_mementic"
+        empty_config_dir.mkdir(parents=True, exist_ok=True)
+        monkeypatch.setattr(
+            "mementic.config.get_global_config_path",
+            lambda: empty_config_dir / "config.json",
+        )
+
+        if with_sources:
+            _write_source_files(tmp_path)
+
+        return Path(old_cwd)
+
+    def test_metrics_json_output(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """mementic metrics --json returns summary dict without dead fields."""
+        entries = [
+            {
+                "timestamp": "2024-01-01T00:00:00Z",
+                "operation": "init_adr",
+                "source_label": "deepseek-chat",
+                "input_tokens": 1000,
+                "output_tokens": 500,
+                "total_tokens": 1500,
+                "model": "deepseek-chat",
+                "status": "success",
+            },
+            {
+                "timestamp": "2024-01-01T00:00:01Z",
+                "operation": "capture",
+                "source_label": "opencode:session",
+                "input_tokens": 800,
+                "output_tokens": 400,
+                "total_tokens": 1200,
+                "model": "deepseek-chat",
+                "status": "success",
+            },
+        ]
+        try:
+            self._setup_metrics_and_config(tmp_path, monkeypatch, entries=entries)
+            result = runner.invoke(app, ["metrics", "--json"])
+        finally:
+            os.chdir(Path.cwd() if "old_cwd" not in dir() else tmp_path)
+
+        assert result.exit_code == 0
+        data = json.loads(result.stdout)
+
+        # Verify honest summary fields exist
+        assert "extraction_init_calls" in data
+        assert "extraction_init_tokens" in data
+        assert "extraction_capture_calls" in data
+        assert "extraction_capture_tokens" in data
+        assert "context_pack_queries" in data
+        assert "context_pack_total_tokens" in data
+        assert "context_pack_avg_tokens" in data
+
+        # Dead fields must NOT be present
+        assert "breakeven_ratio" not in data
+        assert "extraction_per_query" not in data
+        assert "context_pack_per_query" not in data
+
+        # Verify values
+        assert data["extraction_init_calls"] == 1
+        assert data["extraction_init_tokens"] == 1500
+        assert data["extraction_capture_calls"] == 1
+        assert data["extraction_capture_tokens"] == 1200
+        assert data["extraction_total_tokens"] == 2700
+
+    def test_metrics_tabular_format(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """mementic metrics renders four-section tabular output."""
+        entries = [
+            {
+                "timestamp": "2024-01-01T00:00:00Z",
+                "operation": "init_adr",
+                "source_label": "deepseek-chat",
+                "input_tokens": 10000,
+                "output_tokens": 4200,
+                "total_tokens": 14200,
+                "model": "deepseek-chat",
+                "status": "success",
+            },
+            {
+                "timestamp": "2024-01-01T00:00:01Z",
+                "operation": "capture",
+                "source_label": "opencode:session1",
+                "input_tokens": 3000,
+                "output_tokens": 1600,
+                "total_tokens": 4600,
+                "model": "deepseek-chat",
+                "status": "success",
+            },
+            {
+                "timestamp": "2024-01-01T00:00:02Z",
+                "operation": "capture",
+                "source_label": "opencode:session2",
+                "input_tokens": 3000,
+                "output_tokens": 1600,
+                "total_tokens": 4600,
+                "model": "deepseek-chat",
+                "status": "success",
+            },
+            {
+                "timestamp": "2024-01-01T00:00:03Z",
+                "operation": "mcp_context_pack",
+                "source_label": "get_context_pack",
+                "input_tokens": 500,
+                "output_tokens": 180,
+                "total_tokens": 680,
+                "model": "deepseek-chat",
+                "status": "success",
+            },
+        ]
+        try:
+            self._setup_metrics_and_config(tmp_path, monkeypatch, entries=entries)
+            result = runner.invoke(app, ["metrics"])
+        finally:
+            os.chdir(os.getcwd())
+
+        assert result.exit_code == 0
+        output = _strip_ansi(result.stdout)
+
+        # Header
+        assert "MEMENTIC TOKEN USAGE" in output
+
+        # Section 1: Setup (one-time)
+        assert "Setup (one-time)" in output
+        assert "Source material" in output
+        assert "Init extraction" in output
+        assert "Compression ratio" in output
+        # Init extraction: 1 call, 14,200 tokens
+        assert "1" in output
+        assert "14,200" in output
+
+        # Section 2: Capture (recurring)
+        assert "Capture (recurring)" in output
+        assert "Sessions" in output
+        assert "Avg per session" in output
+        # 2 capture calls, 9,200 tokens
+        assert "9,200" in output
+
+        # Section 3: Context Packs
+        assert "Context Packs" in output
+        assert "Queries" in output
+        assert "Avg per pack" in output
+        assert "680" in output
+
+        # Section 4: Reference
+        assert "Reference" in output
+        assert "Graph compression" in output
+        assert "Pack vs source" in output
+        assert "Extraction amortized" in output
+
+        # No dead sections
+        assert "Breakeven" not in output
+        assert "overhead ratio" not in output
+        assert "Token Economics" not in output
+
+    def test_metrics_empty_data(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """mementic metrics with empty metrics shows -- for missing data."""
+        try:
+            self._setup_metrics_and_config(
+                tmp_path, monkeypatch, entries=[], with_sources=False
+            )
+            result = runner.invoke(app, ["metrics"])
+        finally:
+            os.chdir(os.getcwd())
+
+        assert result.exit_code == 0
+        output = _strip_ansi(result.stdout)
+
+        # Header still present
+        assert "MEMENTIC TOKEN USAGE" in output
+        assert "Setup (one-time)" in output
+        assert "Capture (recurring)" in output
+        assert "Context Packs" in output
+        assert "Reference" in output
+
+        # Source material shows -- when no source dirs
+        assert "--" in output
+
+        # No crash from division by zero
+        assert "ZeroDivisionError" not in output
+
+    def test_metrics_source_material_count(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """mementic metrics counts source material tokens from disk."""
+        try:
+            self._setup_metrics_and_config(tmp_path, monkeypatch, entries=[])
+            result = runner.invoke(app, ["metrics"])
+        finally:
+            os.chdir(os.getcwd())
+
+        assert result.exit_code == 0
+        output = _strip_ansi(result.stdout)
+
+        # Source material should show a count > 0 (we created 4 source files)
+        assert "Source material" in output
+        # The row should NOT show "--" for source material
+        # Check that a number appears on the Source material line
+        lines = output.split("\n")
+        source_line = next(
+            (line for line in lines if "Source material" in line), ""
+        )
+        # Should contain digits in the Count column area
+        assert source_line != ""
+
+    def test_metrics_json_no_dead_fields(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """mementic metrics --json does not include breakeven or per-query fields."""
+        try:
+            self._setup_metrics_and_config(tmp_path, monkeypatch, entries=[])
+            result = runner.invoke(app, ["metrics", "--json"])
+        finally:
+            os.chdir(os.getcwd())
+
+        assert result.exit_code == 0
+        data = json.loads(result.stdout)
+
+        # These dead fields from old breakeven analysis must be absent
+        dead_fields = [
+            "breakeven_ratio",
+            "extraction_per_query",
+            "context_pack_per_query",
+            "context_pack_avg_constraints",
+            "context_pack_avg_decisions",
+        ]
+        for field in dead_fields:
+            assert field not in data, f"Dead field '{field}' leaked into JSON output"

@@ -36,7 +36,7 @@ def populated_graph() -> GraphStore:
         title="Adopt pydantic",
         rationale="Validation",
         source="ADR-002",
-        status=DecisionStatus.PROPOSED,
+        status=DecisionStatus.ACCEPTED,
         created_at="2024-02-01T00:00:00Z",
         modified_at="2024-02-01T00:00:00Z",
         tags=["validation"],
@@ -118,34 +118,6 @@ class TestDecisionOperations:
         assert len(decisions) == 3
         titles = {d.title for d in decisions}
         assert titles == {"Use async", "Adopt pydantic", "Use SQLite"}
-
-    def test_get_pending_decisions(self, populated_graph: GraphStore) -> None:
-        pending = populated_graph.get_pending_decisions()
-        assert len(pending) == 1
-        assert pending[0].id == "d2"
-        assert pending[0].status == DecisionStatus.PROPOSED
-
-    def test_get_pending_constraints(self) -> None:
-        gs = GraphStore()
-        c_active = Constraint(
-            id="c1",
-            description="A constraint",
-            source="src",
-            status="active",
-            created_at="2024-01-01T00:00:00Z",
-        )
-        c_pending = Constraint(
-            id="c2",
-            description="A pending constraint",
-            source="src",
-            status="proposed",
-            created_at="2024-01-01T00:00:00Z",
-        )
-        gs.add_constraint(c_active)
-        gs.add_constraint(c_pending)
-        pending = gs.get_pending_constraints()
-        assert len(pending) == 1
-        assert pending[0].id == "c2"
 
     def test_get_all_constraints(self, populated_graph: GraphStore) -> None:
         constraints = populated_graph.get_all_constraints()
@@ -399,7 +371,7 @@ class TestIdempotentAdd:
         gs = GraphStore()
         d1 = Decision(
             id="d-update", title="Original", rationale="First",
-            source="test", status=DecisionStatus.PROPOSED,
+            source="test", status=DecisionStatus.ACCEPTED,
             created_at="2024-01-01T00:00:00Z",
             modified_at="2024-01-01T00:00:00Z",
         )
@@ -420,7 +392,7 @@ class TestIdempotentAdd:
         gs = GraphStore()
         d1 = Decision(
             id="d-type", title="Test", rationale="...",
-            source="test", status=DecisionStatus.PROPOSED,
+            source="test", status=DecisionStatus.ACCEPTED,
             created_at="2024-01-01T00:00:00Z",
             modified_at="2024-01-01T00:00:00Z",
         )
@@ -442,7 +414,7 @@ class TestIdempotentAdd:
         ))
         d = Decision(
             id="collision", title="Collision", rationale="...",
-            source="test", status=DecisionStatus.PROPOSED,
+            source="test", status=DecisionStatus.ACCEPTED,
             created_at="2024-01-01T00:00:00Z",
             modified_at="2024-01-01T00:00:00Z",
         )
@@ -459,7 +431,7 @@ class TestIdempotentAdd:
         ))
         c = Constraint(
             id="col", description="New constraint",
-            source="test", status="proposed",
+            source="test", status="active",
             created_at="2024-01-01T00:00:00Z",
         )
         with pytest.raises(ValueError, match="already exists as Decision"):
@@ -491,7 +463,7 @@ class TestIdempotentAdd:
         gs = GraphStore()
         c1 = Constraint(
             id="c-update", description="Old rule",
-            source="test", status="proposed",
+            source="test", status="active",
             created_at="2024-01-01T00:00:00Z",
         )
         c2 = Constraint(
@@ -532,7 +504,7 @@ class TestSQLitePersistence:
             title="Adopt pydantic",
             rationale="Validation",
             source="ADR-002",
-            status=DecisionStatus.PROPOSED,
+            status=DecisionStatus.ACCEPTED,
             created_at="2024-02-01T00:00:00Z",
             modified_at="2024-02-01T00:00:00Z",
             tags=["validation"],
@@ -573,8 +545,8 @@ class TestSQLitePersistence:
             }
             assert len(gs1.get_all_decisions()) == 2
             assert len(gs1.get_all_constraints()) == 1
-            assert len(gs1.get_pending_decisions()) == 1
-            assert gs1.get_pending_decisions()[0].id == "d2"
+            decision_ids = {d.id for d in gs1.get_all_decisions()}
+            assert decision_ids == {"d1", "d2"}
             gs1.close()
 
             # Round-trip through re-open
@@ -621,7 +593,7 @@ class TestSQLitePersistence:
                 title="First",
                 rationale="...",
                 source="test",
-                status=DecisionStatus.PROPOSED,
+                status=DecisionStatus.ACCEPTED,
                 created_at="2024-01-01T00:00:00Z",
                 modified_at="2024-01-01T00:00:00Z",
             )
@@ -656,7 +628,7 @@ class TestSQLitePersistence:
             ))
             d = Decision(
                 id="collision", title="X", rationale="...",
-                source="t", status=DecisionStatus.PROPOSED,
+                source="t", status=DecisionStatus.ACCEPTED,
                 created_at="2024-01-01T00:00:00Z",
                 modified_at="2024-01-01T00:00:00Z",
             )
@@ -809,7 +781,7 @@ class TestSQLiteAuditLog:
                 title="Test Audit",
                 rationale="...",
                 source="t",
-                status=DecisionStatus.PROPOSED,
+                status=DecisionStatus.ACCEPTED,
                 created_at="2024-01-01T00:00:00Z",
                 modified_at="2024-01-01T00:00:00Z",
             )
@@ -827,7 +799,7 @@ class TestSQLiteAuditLog:
             assert rows[0]["action"] == "add"
             details = json.loads(rows[0]["details"])
             assert details["title"] == "Test Audit"
-            assert details["status"] == "proposed"
+            assert details["status"] == "accepted"
             conn.close()
 
     def test_add_decision_modify_logs_audit(self) -> None:
@@ -840,7 +812,7 @@ class TestSQLiteAuditLog:
                 title="First",
                 rationale="...",
                 source="t",
-                status=DecisionStatus.PROPOSED,
+                status=DecisionStatus.ACCEPTED,
                 created_at="2024-01-01T00:00:00Z",
                 modified_at="2024-01-01T00:00:00Z",
             )
