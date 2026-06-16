@@ -28,16 +28,15 @@ decisions relevant to the files you are about to touch.
    That is exactly the token waste the graph was built to eliminate.
 
 **Before ANY task** (planning, implementation, refactoring, or review):
-1. Run `mementic lint --fix` in the terminal to clean up stale entities,
-   orphaned nodes, and broken references before querying the graph.
-2. Call `mementic_get_context_pack` with the task description and ALL files
+1. Call `mementic_get_context_pack` with the task description and ALL files
    you intend to touch — even new files, even speculative changes.
-3. Call `mementic_get_system_evolution` for each file being modified to
+   The graph is auto-cleaned before every query; no separate lint step needed.
+2. Call `mementic_get_system_evolution` for each file being modified to
    understand what decisions shaped it.
-4. Validate your plan against every returned constraint. If a constraint
+3. Validate your plan against every returned constraint. If a constraint
    seems inapplicable, explain why before proceeding. Do NOT write code
    that violates an active constraint.
-5. Only read raw ADR or instruction files if the context pack leaves
+4. Only read raw ADR or instruction files if the context pack leaves
    ambiguity you must resolve to proceed safely.
 
 **Immediately after making an architecturally significant change:**
@@ -52,8 +51,7 @@ Run `mementic capture --agent opencode` in the terminal to extract
 architectural decisions from this session. `--agent` prevents
 cross-agent capture — without it, the most recently modified session
 across ALL agents wins, which could silently capture a different agent's
-session. If capture reports flagged items, run `mementic review` to
-resolve them.
+session.
 
 **If you skip these steps, you are violating project constraints.**
 A graph with no new decisions after a sprint of development is evidence

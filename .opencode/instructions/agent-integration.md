@@ -46,11 +46,10 @@ Place this block in whichever file your agent reads first:
 ## Mementic Memory (HARD CONSTRAINT — ALWAYS ACTIVE)
 
 Before ANY task:
-1. Run `mementic lint --fix` in the terminal.
-2. Call `mementic_get_context_pack` with your task description and ALL files
-   you intend to touch.
-3. Validate your plan against every returned constraint.
-4. Only read raw ADR or instruction files if the context pack leaves ambiguity.
+1. Call `mementic_get_context_pack` with your task description and ALL files
+   you intend to touch. The graph is auto-cleaned before every query.
+2. Validate your plan against every returned constraint.
+3. Only read raw ADR or instruction files if the context pack leaves ambiguity.
 
 After completing a task:
 Run `mementic capture --agent <your-agent>` in the terminal to extract
