@@ -46,12 +46,14 @@ decisions relevant to the files you are about to touch.
    must enforce.
 3. Do not defer this — propose while the context is fresh.
 
-**After completing a task:**
-Run `mementic capture --agent opencode` in the terminal to extract
-architectural decisions from this session. `--agent` prevents
-cross-agent capture — without it, the most recently modified session
-across ALL agents wins, which could silently capture a different agent's
-session.
+**At the end of a session (after all tasks):**
+1. If you called `mementic_propose_decision` or `mementic_propose_constraint`
+   for every architecturally significant decision made during this session,
+   skip capture — those decisions are already in the graph.
+2. Only run `mementic capture --agent opencode` when there were architectural
+   discussions not captured via the inline proposal tools. At most once per
+   session. `--agent` prevents cross-agent capture — without it, the most
+   recently modified session across ALL agents wins.
 
 **If you skip these steps, you are violating project constraints.**
 A graph with no new decisions after a sprint of development is evidence
