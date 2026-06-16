@@ -15,7 +15,7 @@ from mementic.models import (
     GraphPayload,
 )
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 class GraphStore:
@@ -132,6 +132,24 @@ class GraphStore:
                     ON extraction_log(operation);
 
                 PRAGMA user_version = 1;
+            """)
+
+        if version < 2:
+            conn.executescript("""
+                CREATE TABLE IF NOT EXISTS audit_log (
+                    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                    entity_type   TEXT NOT NULL,
+                    entity_id     TEXT NOT NULL,
+                    action        TEXT NOT NULL,
+                    details       TEXT DEFAULT '{}',
+                    source        TEXT DEFAULT '',
+                    timestamp     TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_audit_log_entity
+                    ON audit_log(entity_type, entity_id);
+                CREATE INDEX IF NOT EXISTS idx_audit_log_time
+                    ON audit_log(timestamp);
+                PRAGMA user_version = 2;
             """)
 
     def _load_from_db(self) -> None:
@@ -260,7 +278,28 @@ class GraphStore:
     # Mutations (NetworkX + optional SQLite write-back)
     # ------------------------------------------------------------------
 
+    def _log_audit(
+        self,
+        entity_type: str,
+        entity_id: str,
+        action: str,
+        details: str | dict[str, Any] = "",
+        source: str = "",
+    ) -> None:
+        """Write an audit log entry to the SQLite database if connected."""
+        if self._conn is None:
+            return
+        now = datetime.now(timezone.utc).isoformat()
+        detail_str = json.dumps(details) if isinstance(details, dict) else details
+        self._conn.execute(
+            "INSERT INTO audit_log (entity_type, entity_id, action, details, source, timestamp) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (entity_type, entity_id, action, detail_str, source, now),
+        )
+        self._conn.commit()
+
     def add_decision(self, d: Decision) -> None:
+        is_new = d.id not in self._g
         if d.id in self._g:
             existing_type = self._g.nodes[d.id].get("node_type")
             if existing_type and existing_type != "Decision":
@@ -273,8 +312,13 @@ class GraphStore:
         else:
             self._g.add_node(d.id, node_type="Decision", payload=d.model_dump())
         self._write_back()
+        self._log_audit(
+            "decision", d.id, "add" if is_new else "modify",
+            {"title": d.title, "status": d.status.value},
+        )
 
     def add_constraint(self, c: Constraint) -> None:
+        is_new = c.id not in self._g
         if c.id in self._g:
             existing_type = self._g.nodes[c.id].get("node_type")
             if existing_type and existing_type != "Constraint":
@@ -289,8 +333,13 @@ class GraphStore:
                 c.id, node_type="Constraint", payload=c.model_dump()
             )
         self._write_back()
+        self._log_audit(
+            "constraint", c.id, "add" if is_new else "modify",
+            {"description": c.description, "status": c.status},
+        )
 
     def add_code_entity(self, e: CodeEntity) -> None:
+        is_new = e.id not in self._g
         if e.id in self._g:
             existing_type = self._g.nodes[e.id].get("node_type")
             if existing_type and existing_type != "CodeEntity":
@@ -305,10 +354,20 @@ class GraphStore:
                 e.id, node_type="CodeEntity", payload=e.model_dump()
             )
         self._write_back()
+        self._log_audit(
+            "entity", e.id, "add" if is_new else "modify",
+            {"type": e.type.value},
+        )
 
     def link(self, source_id: str, target_id: str, relation: str) -> None:
         self._g.add_edge(source_id, target_id, relation=relation)
         self._write_back()
+        self._log_audit(
+            "edge",
+            f"{source_id}→{target_id}",
+            "link",
+            {"source": source_id, "target": target_id, "relation": relation},
+        )
 
     # ------------------------------------------------------------------
     # Queries (SQLite when available, otherwise NetworkX)
@@ -345,25 +404,49 @@ class GraphStore:
         return result
 
     def get_decisions_for_entities(
-        self, paths: list[str],
+        self, paths: list[str], prefix_match: bool = False,
     ) -> list[Decision]:
         decisions: dict[str, Decision] = {}
 
         if self._conn is not None:
-            placeholders = ",".join("?" for _ in paths)
-            for row in self._conn.execute(
-                f"SELECT DISTINCT d.* FROM decisions d "
-                f"JOIN edges e ON d.id = e.source_id "
-                f"WHERE e.target_id IN ({placeholders})",
-                paths,
-            ):
-                decisions[row["id"]] = self._row_to_decision(row)
-            return list(decisions.values())
+            if prefix_match:
+                # Build WHERE clause with LIKE for prefix matching
+                conditions = []
+                params: list[str] = []
+                for p in paths:
+                    conditions.append(
+                        "e.target_id = ? OR e.target_id LIKE ? || '%'"
+                    )
+                    params.append(p)
+                    params.append(p)
+                where_clause = " OR ".join(conditions)
+                for row in self._conn.execute(
+                    f"SELECT DISTINCT d.* FROM decisions d "
+                    f"JOIN edges e ON d.id = e.source_id "
+                    f"WHERE ({where_clause})",
+                    params,
+                ):
+                    decisions[row["id"]] = self._row_to_decision(row)
+                return list(decisions.values())
+            else:
+                placeholders = ",".join("?" for _ in paths)
+                for row in self._conn.execute(
+                    f"SELECT DISTINCT d.* FROM decisions d "
+                    f"JOIN edges e ON d.id = e.source_id "
+                    f"WHERE e.target_id IN ({placeholders})",
+                    paths,
+                ):
+                    decisions[row["id"]] = self._row_to_decision(row)
+                return list(decisions.values())
 
         for node_id, attrs in self._g.nodes(data=True):
             if attrs.get("node_type") != "CodeEntity":
                 continue
-            if not any(node_id == p for p in paths):
+            matches = any(
+                node_id == p or (prefix_match and node_id.startswith(p))
+                for p in paths
+            )
+            if not matches:
                 continue
             for pred in self.get_predecessors(node_id):
                 pred_attrs = self._g.nodes[pred]
@@ -371,7 +454,9 @@ class GraphStore:
                     decisions[pred] = Decision(**pred_attrs["payload"])
         return list(decisions.values())
 
-    def get_evolution(self, entity_path: str) -> list[Decision]:
+    def get_evolution(
+        self, entity_path: str, prefix_match: bool = False,
+    ) -> list[Decision]:
         decisions: dict[str, Decision] = {}
 
         if self._conn is not None:
@@ -382,8 +467,7 @@ class GraphStore:
                 )
                 if any(
                     be == entity_path
-                    or be.startswith(entity_path)
-                    or entity_path.startswith(be)
+                    or (prefix_match and be.startswith(entity_path))
                     for be in bound_entities
                 ):
                     for erow in self._conn.execute(
@@ -404,7 +488,7 @@ class GraphStore:
             for erow in self._conn.execute("SELECT * FROM entities"):
                 if (
                     erow["id"] == entity_path
-                    or erow["id"].startswith(entity_path)
+                    or (prefix_match and erow["id"].startswith(entity_path))
                 ):
                     for edge_row in self._conn.execute(
                         "SELECT source_id FROM edges WHERE target_id = ?",
@@ -428,8 +512,7 @@ class GraphStore:
             bound_entities = attrs["payload"].get("bound_entities", [])
             if any(
                 be == entity_path
-                or be.startswith(entity_path)
-                or entity_path.startswith(be)
+                or (prefix_match and be.startswith(entity_path))
                 for be in bound_entities
             ):
                 for pred in self.get_predecessors(attrs["payload"]["id"]):
@@ -440,7 +523,9 @@ class GraphStore:
         for node_id, attrs in self._g.nodes(data=True):
             if attrs.get("node_type") != "CodeEntity":
                 continue
-            if node_id == entity_path or node_id.startswith(entity_path):
+            if node_id == entity_path or (
+                prefix_match and node_id.startswith(entity_path)
+            ):
                 for pred in self.get_predecessors(node_id):
                     pred_attrs = self._g.nodes[pred]
                     if pred_attrs.get("node_type") == "Decision":
@@ -591,8 +676,21 @@ class GraphStore:
     def get_node_payload(self, node_id: str) -> dict[str, Any]:
         return dict(self._g.nodes[node_id].get("payload", {}))
 
+    # Mapping from NetworkX node_type to audit_log entity_type
+    _ENTITY_TYPE_MAP: dict[str, str] = {
+        "Decision": "decision",
+        "Constraint": "constraint",
+        "CodeEntity": "entity",
+    }
+
     def set_node_payload(self, node_id: str, payload: dict[str, Any]) -> None:
         self._g.nodes[node_id]["payload"] = payload
+        node_type = self._g.nodes[node_id].get("node_type", "unknown")
+        entity_type = self._ENTITY_TYPE_MAP.get(node_type, node_type.lower())
+        self._log_audit(
+            entity_type, node_id, "modify",
+            {"changed_keys": list(payload.keys())},
+        )
 
     def iter_nodes(self) -> list[tuple[str, str, dict[str, Any]]]:
         """Return list of (node_id, node_type, payload) for all nodes."""

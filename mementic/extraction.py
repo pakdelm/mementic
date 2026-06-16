@@ -395,6 +395,7 @@ def extract_from_session(
     user_notes: str,
     config: LLMConfig,
     max_messages: int = 100,
+    custom_keywords: list[str] | None = None,
 ) -> tuple[ExtractionResult, UsageStats]:
     """
     Extract decisions from an agent session (log + diff + human notes).
@@ -409,14 +410,21 @@ def extract_from_session(
         user_notes: Optional human-provided notes.
         config: LLM configuration.
         max_messages: Max tail messages when no architecture keywords match.
+        custom_keywords: Additional architecture keywords to scan for,
+            merged with built-in ARCHITECTURE_KEYWORDS.
 
     Returns:
         A tuple of (ExtractionResult, UsageStats).
     """
     # Spec 10a: truncate session_log before building the prompt
     if session_log.strip():
+        keywords = (
+            ARCHITECTURE_KEYWORDS + custom_keywords
+            if custom_keywords
+            else ARCHITECTURE_KEYWORDS
+        )
         windows = _extract_architecture_windows(
-            session_log, ARCHITECTURE_KEYWORDS, context_messages=20
+            session_log, keywords, context_messages=20
         )
         # Cap: if windowing produces too much, fall back to tail.
         # 120K chars ≈ 30K tokens. More than that means the keywords

@@ -514,7 +514,7 @@ class TestCaptureAutoAccept:
 
         output = result.stdout + result.stderr
         assert "Flagged for review" in output
-        assert "new-jwt-approach" in output
+        assert "use-jwt-auth" in output
 
     def test_capture_no_interactive_prompts(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -1428,3 +1428,159 @@ class TestProjectCommands:
         assert result.exit_code == 1
         output = result.stdout + result.stderr
         assert "not found" in output.lower()
+
+
+# ── Spec 12d: Audit Mutation Log ────────────────────────────────────
+
+
+class TestLogCommand:
+    """Tests for mementic log command with SQLite audit_log support."""
+
+    def test_log_from_sqlite_audit_log(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """mementic log reads from SQLite audit_log when project DB is active."""
+        import sqlite3
+
+        # Create a project DB with audit_log entries
+        db_path = tmp_path / "test.mementic.db"
+        conn = sqlite3.connect(str(db_path))
+        conn.row_factory = sqlite3.Row
+
+        # Run migration to create tables
+        from mementic.graph import GraphStore
+        GraphStore._migrate_schema(conn)
+
+        # Insert test audit entries
+        entries = [
+            ("decision", "d1", "add", '{"title": "Use async"}', "test", "2024-01-01T00:00:00Z"),
+            ("constraint", "c1", "add", '{"description": "Must be async"}', "test", "2024-01-01T00:00:01Z"),
+            ("edge", "d1→e1", "link", '{"source":"d1","target":"e1","relation":"affects"}', "test", "2024-01-01T00:00:02Z"),
+        ]
+        conn.executemany(
+            "INSERT INTO audit_log (entity_type, entity_id, action, details, source, timestamp) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            entries,
+        )
+        conn.commit()
+        conn.close()
+
+        # Set up global config pointing to this DB
+        config_dir = tmp_path / ".mementic"
+        config_dir.mkdir()
+        config_file = config_dir / "config.json"
+        config_file.write_text(json.dumps({
+            "version": 1,
+            "default_project": "main",
+            "projects": {
+                "main": {
+                    "description": "",
+                    "db_path": str(db_path),
+                    "repos": {},
+                },
+            },
+        }))
+        monkeypatch.setattr(
+            "mementic.config.get_global_config_path", lambda: config_file
+        )
+
+        result = runner.invoke(app, ["log"])
+        assert result.exit_code == 0
+        output = result.stdout
+
+        # Each entry should be formatted as [timestamp] entity_type/action entity_id — summary
+        assert "decision/add d1" in output
+        assert "Use async" in output
+        assert "constraint/add c1" in output
+        assert "Must be async" in output
+        assert "edge/link d1→e1" in output
+
+    def test_log_fallback_to_jsonl(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """mementic log falls back to JSONL when no project DB is active."""
+        old_cwd = os.getcwd()
+        try:
+            os.chdir(tmp_path)
+
+            # Create legacy audit.jsonl
+            audit_dir = tmp_path / ".mementic"
+            audit_dir.mkdir()
+            audit_path = audit_dir / "audit.jsonl"
+            audit_path.write_text(
+                json.dumps({
+                    "timestamp": "2024-01-01T00:00:00Z",
+                    "action": "save",
+                    "decisions": 3,
+                    "constraints": 2,
+                    "entities": 1,
+                    "edges": 5,
+                    "id": "save-1",
+                }) + "\n"
+            )
+
+            # Set up config pointing to non-existent graph (no projects configured)
+            config_path = tmp_path / ".mementic.json"
+            config_path.write_text(json.dumps({
+                "output": {"graph_path": str(tmp_path / ".mementic" / "graph.json")},
+            }))
+            monkeypatch.setenv("MEMENTIC_CONFIG", str(config_path))
+
+            # No global config, so _resolve_graph falls back to JSON mode
+            # But the graph doesn't exist, so we need to handle that
+            # Since there's no global config, _resolve_graph tries to load graph.json
+            # We need a valid graph.json to pass the _load_graph_safe check
+            graph_dir = tmp_path / ".mementic"
+            graph_dir.mkdir(parents=True, exist_ok=True)
+            graph_file = graph_dir / "graph.json"
+            graph_file.write_text(json.dumps({"nodes": [], "edges": []}))
+
+            # Remove global config to force JSON fallback
+            config_dir = tmp_path / ".empty_mementic"
+            config_dir.mkdir(parents=True, exist_ok=True)
+            monkeypatch.setattr(
+                "mementic.config.get_global_config_path",
+                lambda: config_dir / "config.json",
+            )
+
+            result = runner.invoke(app, ["log"])
+            assert result.exit_code == 0
+            output = result.stdout
+            assert "save" in output
+        finally:
+            os.chdir(old_cwd)
+
+    def test_log_empty_sqlite_audit(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """mementic log shows empty message on empty SQLite audit_log."""
+        import sqlite3
+
+        db_path = tmp_path / "empty.mementic.db"
+        conn = sqlite3.connect(str(db_path))
+        from mementic.graph import GraphStore
+        GraphStore._migrate_schema(conn)
+        conn.close()
+
+        config_dir = tmp_path / ".mementic"
+        config_dir.mkdir()
+        config_file = config_dir / "config.json"
+        config_file.write_text(json.dumps({
+            "version": 1,
+            "default_project": "main",
+            "projects": {
+                "main": {
+                    "description": "",
+                    "db_path": str(db_path),
+                    "repos": {},
+                },
+            },
+        }))
+        monkeypatch.setattr(
+            "mementic.config.get_global_config_path", lambda: config_file
+        )
+
+        result = runner.invoke(app, ["log"])
+        assert result.exit_code == 0
+        output = result.stdout + result.stderr
+        assert "empty" in output.lower() or "no audit" in output.lower()

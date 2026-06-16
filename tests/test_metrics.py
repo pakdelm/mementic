@@ -106,6 +106,9 @@ class TestSummary:
         assert result["context_pack_avg_tokens"] == 0.0
         assert result["context_pack_avg_constraints"] == 0.0
         assert result["context_pack_avg_decisions"] == 0.0
+        assert result["extraction_per_query"] == 0
+        assert result["context_pack_per_query"] == 0
+        assert result["breakeven_ratio"] == 0.0
 
     def test_summary_aggregates_tokens(self, tmp_path: Path) -> None:
         """summary() correctly aggregates token counts across entries."""
@@ -242,6 +245,71 @@ class TestSummary:
         assert result["context_pack_queries"] == 1
         assert result["by_operation"]["capture"]["calls"] == 1
         assert result["by_operation"]["mcp_context_pack"]["calls"] == 1
+
+    # ── Spec 10c: breakeven analysis ─────────────────────────────
+
+    def test_summary_breakeven_fields_when_data_exists(self, tmp_path: Path) -> None:
+        """summary() returns breakeven fields computed from extraction vs context pack."""
+        store = UsageStore(path=str(tmp_path / "metrics.jsonl"))
+        # Extraction: one init (500 tokens) + one capture (500 tokens) = 1000 total
+        store.append(_make_entry(operation="init_adr", total_tokens=500))
+        store.append(_make_entry(operation="capture", total_tokens=500))
+        # Context pack queries: 2 calls, 200 tokens total, avg 100
+        store.append(_make_entry(operation="mcp_context_pack", total_tokens=100))
+        store.append(_make_entry(operation="mcp_context_pack", total_tokens=100))
+
+        result = store.summary()
+
+        # extraction_total_tokens = 1000, context_pack_queries = 2
+        # extraction_per_query = 1000 / 2 = 500
+        # context_pack_per_query = 200 / 2 = 100
+        # breakeven_ratio = 100 / 500 * 100 = 20.0%
+        assert result["extraction_per_query"] == 500
+        assert result["context_pack_per_query"] == 100
+        assert result["breakeven_ratio"] == 20.0
+
+    def test_summary_breakeven_zeros_when_no_queries(self, tmp_path: Path) -> None:
+        """summary() returns zero breakeven fields when no context pack queries yet."""
+        store = UsageStore(path=str(tmp_path / "metrics.jsonl"))
+        store.append(_make_entry(operation="init_adr", total_tokens=300))
+        store.append(_make_entry(operation="capture", total_tokens=200))
+
+        result = store.summary()
+
+        assert result["extraction_total_tokens"] == 500
+        assert result["context_pack_queries"] == 0
+        assert result["extraction_per_query"] == 0
+        assert result["context_pack_per_query"] == 0
+        assert result["breakeven_ratio"] == 0.0
+
+    def test_summary_breakeven_zeros_when_no_extraction(self, tmp_path: Path) -> None:
+        """summary() returns zero breakeven fields when no extraction tokens."""
+        store = UsageStore(path=str(tmp_path / "metrics.jsonl"))
+        store.append(_make_entry(operation="mcp_context_pack", total_tokens=100))
+
+        result = store.summary()
+
+        assert result["extraction_total_tokens"] == 0
+        assert result["context_pack_queries"] == 1
+        assert result["extraction_per_query"] == 0
+        assert result["context_pack_per_query"] == 0
+        assert result["breakeven_ratio"] == 0.0
+
+    def test_summary_no_negative_savings_field(self, tmp_path: Path) -> None:
+        """summary() never includes a negative savings ratio or similar fake field."""
+        store = UsageStore(path=str(tmp_path / "metrics.jsonl"))
+        store.append(_make_entry(operation="init_adr", total_tokens=100))
+        store.append(_make_entry(operation="mcp_context_pack", total_tokens=10))
+
+        result = store.summary()
+
+        # Honest breakeven fields exist
+        assert "extraction_per_query" in result
+        assert "context_pack_per_query" in result
+        assert "breakeven_ratio" in result
+        # No dishonest savings field
+        assert "avg_savings_ratio" not in result
+        assert "savings_ratio" not in result
 
 
 # ---------------------------------------------------------------------------

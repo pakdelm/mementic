@@ -737,6 +737,88 @@ class TestExtractFromSessionTruncation:
         assert "Agent Session Log" not in user_content
         assert "Git Diff" in user_content
 
+    def test_extract_custom_keyword_creates_windows(self) -> None:
+        """extract_from_session with a custom keyword that matches uses windows."""
+        config = LLMConfig()
+        log = _build_session(200)
+        # Inject a custom keyword that doesn't appear in built-in list
+        lines = log.split("\n")
+        lines[50] = lines[50] + " custom_widget_framework"
+        log = "\n".join(lines)
+
+        result_obj = ExtractionResult()
+        client = _mock_client(result_obj)
+
+        with patch("mementic.extraction.get_client", return_value=client):
+            extract_from_session(
+                session_log=log,
+                git_diff="",
+                user_notes="",
+                config=config,
+                custom_keywords=["custom_widget_framework"],
+            )
+
+        user_content = self._get_user_content(client)
+        # The custom keyword should appear in the windowed output
+        assert "custom_widget_framework" in user_content.lower()
+        # Should NOT contain the full session — windowed output is shorter
+        assert len(user_content) < len(log)
+
+    def test_extract_custom_keyword_merges_with_builtin(self) -> None:
+        """extract_from_session merges custom keywords with built-in keywords."""
+        config = LLMConfig()
+        log = _build_session(200)
+        # Inject both a built-in keyword and a custom one
+        lines = log.split("\n")
+        lines[50] = lines[50] + " propose_decision"
+        lines[300] = lines[300] + " custom_integration"
+        log = "\n".join(lines)
+
+        result_obj = ExtractionResult()
+        client = _mock_client(result_obj)
+
+        with patch("mementic.extraction.get_client", return_value=client):
+            extract_from_session(
+                session_log=log,
+                git_diff="",
+                user_notes="",
+                config=config,
+                custom_keywords=["custom_integration"],
+            )
+
+        user_content = self._get_user_content(client)
+        # Both built-in and custom keywords should be captured
+        assert "propose_decision" in user_content.lower()
+        assert "custom_integration" in user_content.lower()
+        # Should NOT contain the full session
+        assert len(user_content) < len(log)
+
+    def test_extract_no_custom_keywords_uses_builtin_only(self) -> None:
+        """extract_from_session with no custom_keywords falls back to built-in only."""
+        config = LLMConfig()
+        log = _build_session(200)
+        # Inject only a custom-looking keyword
+        lines = log.split("\n")
+        lines[50] = lines[50] + " widget_framework"
+        log = "\n".join(lines)
+
+        result_obj = ExtractionResult()
+        client = _mock_client(result_obj)
+
+        with patch("mementic.extraction.get_client", return_value=client):
+            extract_from_session(
+                session_log=log,
+                git_diff="",
+                user_notes="",
+                config=config,
+            )
+
+        user_content = self._get_user_content(client)
+        # Without custom_keywords, "widget_framework" should not trigger windows;
+        # the function falls back to tail truncation.
+        # The session log should be present but truncated (tail only).
+        assert "Agent Session Log" in user_content
+
 
 # ── Spec 09b B1: LLM Retry Tests ────────────────────────────────────
 

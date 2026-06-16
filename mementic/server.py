@@ -83,6 +83,7 @@ async def get_context_pack(
     task_description: str,
     affected_files: list[str],
     project: str | None = None,
+    prefix_match: bool = False,
 ) -> str:
     """Return all relevant Decisions and Constraints for a given task.
 
@@ -93,13 +94,19 @@ async def get_context_pack(
         affected_files: List of file paths that will be affected.
         project: Optional project name to target.  When ``None``,
             auto-resolution is attempted.
+        prefix_match: If True, use prefix matching for entity paths
+            (e.g. directory-level) instead of exact match.
 
     Returns:
         Formatted markdown with relevant architectural context.
     """
     graph, cfg = _load_graph(project)
-    constraints = graph.get_constraints_for_entities(affected_files)
-    decisions = graph.get_decisions_for_entities(affected_files)
+    constraints = graph.get_constraints_for_entities(
+        affected_files, prefix_match=prefix_match
+    )
+    decisions = graph.get_decisions_for_entities(
+        affected_files, prefix_match=prefix_match
+    )
     pack_text = format_context_pack(task_description, decisions, constraints)
     pack_tokens = count_tokens(pack_text)
     entry = MetricsEntry(
@@ -226,6 +233,7 @@ async def propose_constraint(
 async def get_system_evolution(
     entity_path: str,
     project: str | None = None,
+    prefix_match: bool = False,
 ) -> str:
     """Trace all decisions that affected a specific code entity.
 
@@ -233,12 +241,14 @@ async def get_system_evolution(
         entity_path: Path of the code entity to trace.
         project: Optional project name to target.  When ``None``,
             auto-resolution is attempted.
+        prefix_match: If True, use prefix matching for entity paths
+            instead of exact match.
 
     Returns:
         Markdown summary of all decisions affecting the entity.
     """
     graph, cfg = _load_graph(project)
-    decisions = graph.get_evolution(entity_path)
+    decisions = graph.get_evolution(entity_path, prefix_match=prefix_match)
 
     if not decisions:
         return f"No architectural decisions found for {entity_path}."

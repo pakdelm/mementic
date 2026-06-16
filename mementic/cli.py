@@ -314,6 +314,11 @@ def capture(
         None, "--project",
         help="Target project name",
     ),
+    keyword: list[str] = typer.Option(
+        [], "--keyword", "-k",
+        help="Custom architecture keywords to scan for (repeatable). "
+             "Merged with built-in keywords for session windowing.",
+    ),
 ) -> None:
     """Extract architectural decisions from an agent session.
 
@@ -415,7 +420,8 @@ def capture(
 
     try:
         extraction, _usage = extract_from_session(
-            session_text, git_diff, notes or "", cfg.llm, max_messages=tail
+            session_text, git_diff, notes or "", cfg.llm,
+            max_messages=tail, custom_keywords=keyword or None,
         )
     except RuntimeError as e:
         typer.echo(str(e), err=True)
@@ -428,18 +434,25 @@ def capture(
     # ── Load or create graph (project-aware) ──
     is_project = False
     project_display: str | None = None
-    if project is not None:
-        try:
-            proj_name, global_cfg = resolve_project(project)
-            proj_entry = global_cfg.projects[proj_name]
-            db_path = Path(proj_entry.db_path).expanduser()
-            graph = GraphStore(db_path=db_path)
-            is_project = True
-            project_display = proj_name
-        except ValueError as e:
-            typer.echo(str(e), err=True)
+
+    # Resolve project: explicit flag → default project → JSON fallback
+    try:
+        proj_name, global_cfg = resolve_project(project)
+        proj_entry = global_cfg.projects[proj_name]
+        db_path = Path(proj_entry.db_path).expanduser()
+        graph = GraphStore(db_path=db_path)
+        is_project = True
+        project_display = proj_name
+    except ValueError:
+        if project is not None:
+            # Explicit --project that doesn't exist
+            typer.echo(
+                f"Project '{project}' not found. Use 'mementic project list' "
+                f"to see configured projects.",
+                err=True,
+            )
             raise typer.Exit(code=1)
-    else:
+        # No projects configured — fall back to legacy graph.json
         graph_path = cfg.output.graph_path
         if Path(graph_path).exists():
             try:
@@ -453,6 +466,12 @@ def capture(
     # ── Conflict detection ──
     from mementic.format import slugify
 
+    # Replace LLM-generated IDs (dec-001, etc.) with deterministic slugs
+    for d in extraction.decisions:
+        d.id = slugify(d.title, max_length=80)
+    for c in extraction.constraints:
+        c.id = slugify(c.description, max_length=80)
+
     conflicts = detect_conflicts(
         graph,
         extraction.decisions,
@@ -465,7 +484,7 @@ def capture(
     flagged = 0
 
     for d in extraction.decisions:
-        if slugify(d.title, max_length=80) in conflicting_existing_slugs:
+        if d.id in conflicting_existing_slugs:
             d.status = DecisionStatus.PROPOSED
             flagged += 1
         else:
@@ -508,7 +527,7 @@ def capture(
     if flagged:
         typer.echo(f"  Flagged for review: {flagged}")
         for d in extraction.decisions:
-            if slugify(d.title, max_length=80) in conflicting_existing_slugs:
+            if d.id in conflicting_existing_slugs:
                 typer.echo(f"    - [{d.id}] {d.title}")
         typer.echo()
         typer.echo("  Run 'mementic review' to resolve flagged conflicts.")
@@ -638,8 +657,51 @@ def query(
 
 
 @app.command()
-def log(n: int = 20) -> None:
-    """Show recent graph mutations."""
+def log(
+    n: int = typer.Option(
+        20, "--n", "-n", help="Number of log entries to show",
+    ),
+    project: str | None = typer.Option(
+        None, "--project",
+        help="Target project name",
+    ),
+) -> None:
+    """Show recent graph mutations from the audit log."""
+    graph, _cfg = _resolve_graph(project)
+
+    if graph._conn is not None:
+        rows = graph._conn.execute(
+            "SELECT * FROM audit_log ORDER BY id DESC LIMIT ?", (n,)
+        ).fetchall()
+        if not rows:
+            typer.echo("Audit log is empty. Run init or capture first.")
+            raise typer.Exit()
+        for row in rows:
+            entity_type = row["entity_type"]
+            action = row["action"]
+            entity_id = row["entity_id"]
+            timestamp = row["timestamp"]
+            details_str: str = row["details"]
+            try:
+                details = json.loads(details_str)
+            except (json.JSONDecodeError, TypeError):
+                details = details_str
+            if isinstance(details, dict) and "title" in details:
+                summary = details["title"]
+            elif isinstance(details, dict) and "description" in details:
+                summary = details["description"]
+            elif isinstance(details, dict) and "relation" in details:
+                summary = f"{details.get('source', '')} → {details.get('target', '')} ({details['relation']})"
+            elif isinstance(details, str):
+                summary = details
+            else:
+                summary = "-"
+            typer.echo(
+                f"[{timestamp}] {entity_type}/{action} {entity_id} — {summary}"
+            )
+        return
+
+    # Fallback: read legacy JSONL audit log
     audit_path = Path(".mementic/audit.jsonl")
     if not audit_path.exists():
         typer.echo("No audit log found. Run init or capture first.")
@@ -1034,6 +1096,33 @@ def metrics(
         typer.echo(
             f"    avg pack:    {cp_avg:>10,.0f} tokens/query"
         )
+
+        # ── Section 3: Breakeven Analysis ──
+        typer.echo()
+        typer.echo("  Breakeven analysis")
+        if cp_queries > 0:
+            extraction_per_query = summary["extraction_per_query"]
+            context_pack_per_query = summary["context_pack_per_query"]
+            overhead_ratio = summary["breakeven_ratio"]
+            typer.echo(
+                f"    extraction cost/query:  {extraction_per_query:>7,.0f} tokens"
+            )
+            typer.echo(
+                f"    context pack/query:     {context_pack_per_query:>7,.0f} tokens"
+            )
+            typer.echo(
+                f"    overhead ratio:         {overhead_ratio:>6.1f}%  "
+                f"(context pack as % of extraction cost)"
+            )
+        else:
+            typer.echo(
+                "    No context pack queries yet. Breakeven data will accumulate "
+                "as agents"
+            )
+            typer.echo(
+                "    call get_context_pack. Run this command again after a few "
+                "sessions."
+            )
 
     if reset:
         if typer.confirm("Delete all metrics?"):

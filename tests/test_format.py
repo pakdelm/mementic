@@ -134,10 +134,10 @@ class TestFormatContextPack:
         )
 
         assert output.count("- [C]") == 2
-        assert "... and 3 more constraints" in output
+        assert "... and 3 more constraints omitted" in output
 
         assert output.count("* Decision") == 2
-        assert "... and 3 more decisions" in output
+        assert "... and 3 more decisions omitted" in output
 
     def test_format_shows_remaining_count(self) -> None:
         constraints = [
@@ -149,7 +149,19 @@ class TestFormatContextPack:
         output = format_context_pack(
             "Task", [], constraints, max_constraints=3
         )
-        assert "... and 4 more constraints" in output
+        assert "... and 4 more constraints omitted" in output
+        assert "Use mementic query --entity <path> for full list." in output
+
+    def test_format_truncation_note_only_when_truncated(self) -> None:
+        """No truncation note when items are within the cap."""
+        constraints = [
+            make_constraint(id="c-1", description="Only one", enforced_by="")
+        ]
+        output = format_context_pack(
+            "Task", [], constraints, max_constraints=5
+        )
+        assert "more constraints omitted" not in output
+        assert "Use mementic query" not in output
 
     def test_compact_format_output(self) -> None:
         constraints = [make_constraint(description="Must use double quotes")]
