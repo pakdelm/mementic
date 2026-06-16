@@ -301,12 +301,9 @@ def init(
         )
         typer.echo(f"Project '{project_name}' initialized.")
 
-    # Log extraction costs to metrics (prefer project db connection)
-    if all_usage:
-        if graph._conn is not None:
-            store = UsageStore(conn=graph._conn)
-        else:
-            store = UsageStore(path=".mementic/metrics.jsonl")
+    # Log extraction costs to metrics (project database only)
+    if all_usage and graph._conn is not None:
+        store = UsageStore(conn=graph._conn)
         for usage in all_usage:
             if usage.total_tokens > 0 or usage.status != "success":
                 entry = MetricsEntry(
@@ -561,14 +558,11 @@ def capture(
     else:
         typer.echo(f"  Written to {graph_path}")
 
-    # Log capture metrics
-    metrics_path: str = ".mementic/metrics.jsonl"
-    if is_project and project_display:
-        metrics_path = str(
-            Path("~/.mementic/projects").expanduser()
-            / f"{project_display}_metrics.jsonl"
-        )
-    metrics_store = UsageStore(path=metrics_path)
+    # Log capture metrics (project database only)
+    if graph._conn is not None:
+        metrics_store = UsageStore(conn=graph._conn)
+    else:
+        metrics_store = UsageStore(path=".mementic/metrics.jsonl")  # legacy fallback
     entry = MetricsEntry(
         timestamp=timestamp(),
         operation="capture",
@@ -995,19 +989,14 @@ def metrics(
     ),
 ) -> None:
     """Display aggregated token usage metrics."""
-    metrics_path = ".mementic/metrics.jsonl"
-    if project is not None:
-        try:
-            proj_name, _global_cfg = resolve_project(project)
-            metrics_path = str(
-                Path("~/.mementic/projects").expanduser()
-                / f"{proj_name}_metrics.jsonl"
-            )
-        except ValueError as e:
-            typer.echo(str(e), err=True)
-            raise typer.Exit(code=1)
+    try:
+        graph, _cfg = _resolve_graph(project)
+        store = UsageStore(conn=graph._conn) if graph._conn else UsageStore()
+    except typer.Exit:
+        if project is not None:
+            raise  # explicit --project not found: propagate error
+        store = UsageStore()  # no project configured — empty store
 
-    store = UsageStore(path=metrics_path)
     summary = store.summary()
 
     if json_output:
@@ -1096,7 +1085,7 @@ def metrics(
             typer.echo(f"  {label:<28}  {value}")
 
         # ── Render ──
-        sep = "═" * 56
+        sep = "=" * 56
         typer.echo(sep)
         typer.echo("                  MEMENTIC TOKEN USAGE")
         typer.echo(sep)

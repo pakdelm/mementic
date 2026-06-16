@@ -28,8 +28,6 @@ from mementic.models import (
 
 mcp = FastMCP("Mementic")
 
-_metrics_store = UsageStore()
-
 
 def _load_graph(project: str | None = None) -> tuple[GraphStore, MementicConfig]:
     """Load the knowledge graph, preferring the project database over legacy JSON.
@@ -132,11 +130,9 @@ async def get_context_pack(
         status="success",
     )
 
-    if graph._conn:
+    if graph._conn is not None:
         metrics_store = UsageStore(conn=graph._conn)
-    else:
-        metrics_store = _metrics_store
-    metrics_store.append(entry)
+        metrics_store.append(entry)
 
     return pack_text
 
