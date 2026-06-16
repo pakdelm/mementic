@@ -28,9 +28,13 @@ class GraphStore:
 
     def __init__(self, db_path: str | Path | None = None) -> None:
         self._g: nx.DiGraph = nx.DiGraph()
-        self._db_path = Path(db_path) if db_path else None
         self._conn: sqlite3.Connection | None = None
-        if self._db_path:
+        self._db_path: Path | None = None
+        self._in_memory = db_path == ":memory:"
+        if self._in_memory:
+            self._ensure_db()
+        elif db_path:
+            self._db_path = Path(db_path)
             self._ensure_db()
 
     def close(self) -> None:
@@ -45,9 +49,12 @@ class GraphStore:
 
     def _ensure_db(self) -> None:
         """Open the SQLite database, apply migrations, and load data into NetworkX."""
-        assert self._db_path is not None
-        self._db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._conn = sqlite3.connect(str(self._db_path))
+        if self._in_memory:
+            self._conn = sqlite3.connect(":memory:")
+        else:
+            assert self._db_path is not None
+            self._db_path.parent.mkdir(parents=True, exist_ok=True)
+            self._conn = sqlite3.connect(str(self._db_path))
         self._conn.row_factory = sqlite3.Row
         self._migrate_schema(self._conn)
         self._load_from_db()
