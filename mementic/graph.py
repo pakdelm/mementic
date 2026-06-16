@@ -69,7 +69,7 @@ class GraphStore:
                 CREATE TABLE IF NOT EXISTS decisions (
                     id TEXT PRIMARY KEY,
                     title TEXT NOT NULL,
-                    status TEXT NOT NULL DEFAULT 'proposed',
+                    status TEXT NOT NULL DEFAULT 'accepted',
                     rationale TEXT DEFAULT '',
                     source TEXT DEFAULT '',
                     repo TEXT DEFAULT '',
@@ -224,7 +224,7 @@ class GraphStore:
                         (
                             payload.get("id", node_id),
                             payload.get("title", ""),
-                            payload.get("status", "proposed"),
+                            payload.get("status", "accepted"),
                             payload.get("rationale", ""),
                             payload.get("source", ""),
                             payload.get("repo", ""),

@@ -102,7 +102,7 @@ async def get_context_pack(
         prefix_match: If True, use prefix matching for entity paths
             (e.g. directory-level) instead of exact match.
         max_tokens: Maximum token budget for the constraint + decision lines.
-            Defaults to 1200.
+            Defaults to 1000.
 
     Returns:
         Formatted markdown with relevant architectural context.
@@ -252,7 +252,7 @@ async def get_system_evolution(
         prefix_match: If True, use prefix matching for entity paths
             instead of exact match.
         max_tokens: Maximum token budget for the compact-formatted lines.
-            Defaults to 1200.
+            Defaults to 1000.
 
     Returns:
         Markdown summary of all decisions affecting the entity.

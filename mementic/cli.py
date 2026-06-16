@@ -501,14 +501,11 @@ def capture(
 
     # Add only NEW and UPDATED decisions (skipped are not added)
     for d in extraction.decisions:
-        # Check if this decision should be added (not skipped)
-        # auto_resolve_capture sets status to ACCEPTED for all non-skipped
         if not graph.has_node(d.id) or d.status == DecisionStatus.ACCEPTED:
-            # Rule 1 (new) or Rule 3 (updated): add to graph
-            # For updated, the existing was already deprecated by auto_resolve_capture
             if graph.has_node(d.id):
-                # Rule 3: existing node is deprecated; update payload to accepted
-                graph.set_node_payload(d.id, d.model_dump())
+                # Rule 3: existing Decision is deprecated; overwrite with accepted
+                # add_decision handles cross-type collision safety (raises ValueError)
+                graph.add_decision(d)
             else:
                 # Rule 1: new node
                 graph.add_decision(d)
@@ -524,8 +521,8 @@ def capture(
         if not graph.has_node(c.id):
             graph.add_constraint(c)
         elif c.status == "active":
-            # Updated constraint: existing was deprecated, update payload
-            graph.set_node_payload(c.id, c.model_dump())
+            # Updated constraint: existing was deprecated; add_constraint handles update
+            graph.add_constraint(c)
         # Skipped: don't add
 
         for entity_path in c.bound_entities:
@@ -606,6 +603,7 @@ def context(
     the specified files, then formats them as a context pack for agent injection.
     """
     graph, _cfg = _resolve_graph(project)
+    graph.clean_dead_references()
 
     constraints = graph.get_constraints_for_entities(
         files, prefix_match=prefix, annotate_overlap=True
@@ -630,6 +628,7 @@ def query(
 ) -> None:
     """Search decisions, constraints, and entities in the graph."""
     graph, _cfg = _resolve_graph(project)
+    graph.clean_dead_references()
 
     if entity:
         decisions = graph.get_evolution(entity)
@@ -872,7 +871,7 @@ def list_cmd(
 
     Examples:
         mementic list decisions
-        mementic list decisions --status proposed
+        mementic list decisions --status accepted
         mementic list decisions -n 10
         mementic list constraints
         mementic list entities --stale

@@ -71,8 +71,12 @@ def auto_resolve_capture(
             counts["new_decisions"] += 1
             continue
 
-        # Existing node found — check payload
+        # Existing node found — verify it's actually a Decision (not Constraint/Entity)
         payload = graph.get_node_payload(decision.id)
+        if "rationale" not in payload:
+            # Cross-type ID collision — treat as new (don't corrupt other node types)
+            counts["new_decisions"] += 1
+            continue
         existing_rationale: str = payload.get("rationale", "")
         overlap = _word_overlap(decision.rationale, existing_rationale)
         if overlap >= 0.8:
@@ -95,6 +99,10 @@ def auto_resolve_capture(
                 continue
 
             payload = graph.get_node_payload(constraint.id)
+            if "description" not in payload:
+                # Cross-type ID collision — treat as new
+                counts["new_constraints"] += 1
+                continue
             existing_desc: str = payload.get("description", "")
             overlap = _word_overlap(constraint.description, existing_desc)
             if overlap >= 0.8:

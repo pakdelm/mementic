@@ -42,22 +42,26 @@ def check_health(graph: GraphStore | None = None) -> list[HealthItem]:
     """
     items: list[HealthItem] = []
 
-    # 1. Config check
-    config_path = Path(".mementic.json")
-    if config_path.exists():
+    # 1. Config check (project-aware: global config or legacy)
+    from mementic.config import get_global_config_path
+
+    global_config = get_global_config_path()
+    legacy_config = Path(".mementic.json")
+    if global_config.exists() or legacy_config.exists():
         items.append(HealthItem(label="Config", status="ok"))
     else:
         items.append(
             HealthItem(
                 label="Config",
                 status="fail",
-                hint="No .mementic.json found. Run 'mementic init' first.",
+                hint="No config found. Run 'mementic init' first.",
             )
         )
 
     # 2. API key check (presence only — no validation call)
     api_key = (
-        os.environ.get("DEEPSEEK_API_KEY")
+        os.environ.get("MEMENTIC_API_KEY")
+        or os.environ.get("DEEPSEEK_API_KEY")
         or os.environ.get("OPENAI_API_KEY")
         or os.environ.get("OPENROUTER_API_KEY")
     )

@@ -99,19 +99,13 @@ mementic capture --session /path/to/session.log --notes "Migrated Redis to Valke
 ```
 
 Extracts architectural decisions from the agent session log + git diff.
-Decisions are auto-accepted unless the conflict detector flags them
-(slug collision or overlapping entities with divergent rationale).
-Flagged items are set to `proposed` — run `mementic review` to resolve them.
+Decisions are auto-resolved against the existing graph: new slugs are
+accepted, duplicates are skipped, and conflicting changes deprecated existing
+entries. No manual review required.
 Tracks the last captured commit so subsequent captures only diff new changes.
 Runs without git (warns and uses notes only).
 
-### 5. Review and accept proposals
-
-```bash
-mementic review
-```
-
-### 6. View audit log
+### 5. View audit log
 
 ```bash
 mementic log
@@ -137,13 +131,13 @@ Register the MCP server in `opencode.json`:
 
 The agent automatically discovers these MCP tools:
 - `get_context_pack` — load constraints before starting work
-- `propose_decision` — record architectural decisions for review
+- `propose_decision` — record architectural decisions
 - `propose_constraint` — record new constraints
 - `get_system_evolution` — trace decision history of a code entity
 
 OpenCode custom commands are also available in the TUI:
 - `/mementic-context <task>` — load constraints before working
-- `/mementic-capture` — record session decisions for review
+- `/mementic-capture` — record session decisions
 
 
 ## Agent enforcement
@@ -188,18 +182,16 @@ conflicts, run `mementic review` to resolve them.
 ## CLI reference
 
 | Command | Description |
-|---|---|
+|---|---|---|
 | `mementic init [--config PATH] [--interactive] [--force]` | Auto-bootstrap config and initialize graph |
-| `mementic capture [--session PATH] [--notes TEXT]` | Extract decisions from session (auto-accepts, flags conflicts) |
+| `mementic capture [--session PATH] [--notes TEXT]` | Extract decisions from session (auto-resolves: new/skip/update) |
 | `mementic context --task TEXT --files FILE...` | Generate context pack with relevant constraints and decisions |
 | `mementic query [--entity PATH] [--search TERM] [--depth N]` | Search graph |
 | `mementic list [decisions\|constraints\|entities] [--status] [-n N]` | Browse graph in scannable format |
 | `mementic deprecate <id> [--reason TEXT]` | Retire a decision (don't edit history) |
-| `mementic lint [--fix]` | Check graph health (5 deterministic rules, zero LLM cost) |
-| `mementic review` | Resolve conflict-flagged proposals |
 | `mementic graph [-o PATH] [-O] [--filter TYPE]` | Generate interactive HTML visualization |
-| `mementic metrics [--json] [--reset]` | Show token usage, activity breakdown, and breakeven analysis |
-| `mementic status [--verbose/-v]` | Show graph stats; `--verbose` adds token usage totals |
+| `mementic metrics [--json] [--reset]` | Show token usage across four sections |
+| `mementic status` | Show health checklist (config, API key, graph, session provider) |
 | `mementic log` | Show recent graph mutations |
 | `mementic server` | Start MCP server (stdio) |
 
