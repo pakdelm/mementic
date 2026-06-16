@@ -792,7 +792,7 @@ class TestSQLitePersistence:
             assert expected.issubset(tables)
 
             version = conn.execute("PRAGMA user_version").fetchone()[0]
-            assert version == 2
+            assert version == 3
             conn.close()
 
 

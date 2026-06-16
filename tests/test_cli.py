@@ -245,9 +245,9 @@ class TestInitInteractive:
     """Tests for mementic init --interactive."""
 
     def test_init_interactive_updates_config(
-        self, tmp_path: Path
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """mementic init --interactive prompts user and updates config."""
+        """mementic init --interactive prompts user and updates global config."""
         old_cwd = os.getcwd()
         try:
             os.chdir(tmp_path)
@@ -255,8 +255,17 @@ class TestInitInteractive:
             config_path.write_text(json.dumps({
                 "sources": {},
                 "output": {"graph_path": str(tmp_path / ".mementic" / "graph.json")},
+            }))
+
+            # Set up global config so interactive mode writes to it
+            global_config_path = tmp_path / "global_config.json"
+            global_config_path.write_text(json.dumps({
+                "version": 1,
+                "default_project": "main",
+                "projects": {},
                 "llm": {"provider": "deepseek", "model": "deepseek-chat"},
             }))
+            monkeypatch.setenv("MEMENTIC_GLOBAL_CONFIG", str(global_config_path))
 
             with patch("mementic.cli.run_init", return_value=(MagicMock(), [])):
                 result = runner.invoke(
@@ -266,14 +275,17 @@ class TestInitInteractive:
                 )
 
             assert result.exit_code == 0
-            loaded = json.loads(config_path.read_text())
-            assert loaded["llm"]["provider"] == "openai"
-            assert loaded["llm"]["model"] == "gpt-4o"
+            # LLM config should be in global config, not .mementic.json
+            local = json.loads(config_path.read_text())
+            assert "llm" not in local
+            global_cfg = json.loads(global_config_path.read_text())
+            assert global_cfg["llm"]["provider"] == "openai"
+            assert global_cfg["llm"]["model"] == "gpt-4o"
         finally:
             os.chdir(old_cwd)
 
     def test_init_interactive_defaults_kept_on_empty_input(
-        self, tmp_path: Path
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """mementic init --interactive with empty inputs keeps defaults."""
         old_cwd = os.getcwd()
@@ -283,8 +295,17 @@ class TestInitInteractive:
             config_path.write_text(json.dumps({
                 "sources": {},
                 "output": {"graph_path": str(tmp_path / ".mementic" / "graph.json")},
+            }))
+
+            # Set up global config
+            global_config_path = tmp_path / "global_config.json"
+            global_config_path.write_text(json.dumps({
+                "version": 1,
+                "default_project": "main",
+                "projects": {},
                 "llm": {"provider": "deepseek", "model": "deepseek-chat"},
             }))
+            monkeypatch.setenv("MEMENTIC_GLOBAL_CONFIG", str(global_config_path))
 
             with patch("mementic.cli.run_init", return_value=(MagicMock(), [])):
                 result = runner.invoke(
@@ -294,9 +315,9 @@ class TestInitInteractive:
                 )
 
             assert result.exit_code == 0
-            loaded = json.loads(config_path.read_text())
-            assert loaded["llm"]["provider"] == "deepseek"
-            assert loaded["llm"]["model"] == "deepseek-chat"
+            global_cfg = json.loads(global_config_path.read_text())
+            assert global_cfg["llm"]["provider"] == "deepseek"
+            assert global_cfg["llm"]["model"] == "deepseek-chat"
         finally:
             os.chdir(old_cwd)
 
@@ -1075,10 +1096,7 @@ class TestCaptureNoGit:
             "mementic.cli._run_git_diff",
             return_value=("", 1),  # git not found (rc=1)
         ), patch(
-            "mementic.cli._load_checkpoint", return_value="abc123",
-        ), patch(
-            "mementic.cli.subprocess.run",
-            side_effect=FileNotFoundError,  # git rev-parse also fails
+            "mementic.graph.GraphStore.get_capture_checkpoint", return_value="",
         ), patch(
             "mementic.cli.extract_from_session",
             return_value=(mock_result, mock_usage),
@@ -1134,7 +1152,7 @@ class TestCaptureNoGit:
         ), patch(
             "mementic.cli._run_git_diff", return_value=("", 128),
         ), patch(
-            "mementic.cli._load_checkpoint", return_value="abc123",
+            "mementic.graph.GraphStore.get_capture_checkpoint", return_value="",
         ), patch(
             "mementic.cli.extract_from_session",
             return_value=(mock_result, mock_usage),
@@ -1188,7 +1206,7 @@ class TestCaptureNoGit:
         with patch(
             "mementic.session.get_registry", return_value=mock_registry,
         ), patch(
-            "mementic.cli._load_checkpoint", return_value="abc123",
+            "mementic.graph.GraphStore.get_capture_checkpoint", return_value="abc123",
         ), patch(
             "mementic.cli.subprocess.run",
             return_value=subprocess.CompletedProcess(
@@ -1247,7 +1265,7 @@ class TestCaptureNoGit:
         with patch(
             "mementic.session.get_registry", return_value=mock_registry,
         ), patch(
-            "mementic.cli._load_checkpoint", return_value="old123",
+            "mementic.graph.GraphStore.get_capture_checkpoint", return_value="old123",
         ), patch(
             "mementic.cli.subprocess.run",
             return_value=subprocess.CompletedProcess(
