@@ -171,7 +171,7 @@ def format_context_pack(
     task: str,
     decisions: list[tuple[Decision, int]],
     constraints: list[tuple[Constraint, int]],
-    max_tokens: int = 1200,
+    max_tokens: int = 1000,
 ) -> str:
     """Produces structured, token-budgeted markdown for agent context injection.
 
@@ -252,7 +252,7 @@ def format_context_pack(
 def format_evolution(
     entity_path: str,
     decisions: list[tuple[Decision, int]],
-    max_tokens: int = 1200,
+    max_tokens: int = 1000,
 ) -> str:
     """Format evolution trace for a code entity using compact provenance lines.
 

@@ -989,8 +989,9 @@ def metrics(
     ),
 ) -> None:
     """Display aggregated token usage metrics."""
+    cfg: MementicConfig | None = None
     try:
-        graph, _cfg = _resolve_graph(project)
+        graph, cfg = _resolve_graph(project)
         store = UsageStore(conn=graph._conn) if graph._conn else UsageStore()
     except typer.Exit:
         if project is not None:
@@ -1003,35 +1004,35 @@ def metrics(
         typer.echo(json.dumps(summary, indent=2, default=str))
     else:
         # ── Lazy source material counting (Task 2.2) ──
-        cfg = load_config()
         source_file_count = 0
         source_tokens = 0
 
-        # Count ADR files
-        for adr_source in cfg.sources.adr_dirs:
-            if Path(adr_source.path).is_dir():
-                adrs = scan_adr_dir(adr_source.path)
-                for adr in adrs:
-                    try:
-                        text = Path(adr.path).read_text(encoding="utf-8")
-                        source_tokens += count_tokens(text)
-                        source_file_count += 1
-                    except Exception:  # noqa: S110
-                        pass
+        if cfg is not None:
+            # Count ADR files
+            for adr_source in cfg.sources.adr_dirs:
+                if Path(adr_source.path).is_dir():
+                    adrs = scan_adr_dir(adr_source.path)
+                    for adr in adrs:
+                        try:
+                            text = Path(adr.path).read_text(encoding="utf-8")
+                            source_tokens += count_tokens(text)
+                            source_file_count += 1
+                        except Exception:  # noqa: S110
+                            pass
 
-        # Count instruction files (all agent types — same reader)
-        for source_list in (
-            cfg.sources.opencode_instructions,
-            cfg.sources.claude_instructions,
-            cfg.sources.cursor_instructions,
-            cfg.sources.windsurf_instructions,
-        ):
-            for source in source_list:
-                if Path(source.path).is_dir():
-                    instructions = scan_opencode_instructions(source.path)
-                    for instr in instructions:
-                        source_tokens += count_tokens(instr.content)
-                        source_file_count += 1
+            # Count instruction files (all agent types — same reader)
+            for source_list in (
+                cfg.sources.opencode_instructions,
+                cfg.sources.claude_instructions,
+                cfg.sources.cursor_instructions,
+                cfg.sources.windsurf_instructions,
+            ):
+                for source in source_list:
+                    if Path(source.path).is_dir():
+                        instructions = scan_opencode_instructions(source.path)
+                        for instr in instructions:
+                            source_tokens += count_tokens(instr.content)
+                            source_file_count += 1
 
         source_available = source_tokens > 0
 

@@ -88,7 +88,7 @@ async def get_context_pack(
     affected_files: list[str],
     project: str | None = None,
     prefix_match: bool = False,
-    max_tokens: int = 1200,
+    max_tokens: int = 1000,
 ) -> str:
     """Return all relevant Decisions and Constraints for a given task.
 
@@ -241,7 +241,7 @@ async def get_system_evolution(
     entity_path: str,
     project: str | None = None,
     prefix_match: bool = False,
-    max_tokens: int = 1200,
+    max_tokens: int = 1000,
 ) -> str:
     """Trace all decisions that affected a specific code entity.
 
