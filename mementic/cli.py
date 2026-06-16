@@ -13,6 +13,7 @@ load_dotenv()
 
 from mementic.config import (  # noqa: E402
     RepoEntry,
+    get_global_config_path,
     load_config,
     load_global_config,
     resolve_project,
@@ -31,8 +32,6 @@ if TYPE_CHECKING:
     from mementic.lint import LintFinding  # noqa: F401
 
 app = typer.Typer(help="Mementic — semantic memory for engineering teams and AI agents")
-
-CHECKPOINT_FILE = ".mementic/checkpoint"
 
 
 def _load_graph_safe(graph_path: str) -> GraphStore:
@@ -94,23 +93,6 @@ def _resolve_graph(project: str | None = None) -> tuple[GraphStore, "MementicCon
         # No projects configured — fall back to legacy graph.json
 
     return _load_graph_safe(cfg.output.graph_path), cfg
-
-
-def _load_checkpoint() -> str:
-    p = Path(CHECKPOINT_FILE)
-    return p.read_text().strip() if p.exists() else ""
-
-
-def _save_checkpoint() -> None:
-    try:
-        result = subprocess.run(
-            ["git", "rev-parse", "HEAD"], capture_output=True, text=True
-        )
-        if result.returncode == 0:
-            Path(CHECKPOINT_FILE).parent.mkdir(parents=True, exist_ok=True)
-            Path(CHECKPOINT_FILE).write_text(result.stdout.strip())
-    except FileNotFoundError:
-        pass  # git not found — not important at this point
 
 
 def _run_git_diff(reference: str) -> tuple[str, int]:
@@ -205,14 +187,13 @@ def init(
         auto_config: dict[str, Any] = {
             "sources": {k: v for k, v in discovered.items() if v},
             "output": {"graph_path": "./.mementic/graph.json"},
-            "llm": {"provider": "deepseek", "model": "deepseek-chat"},
         }
         config_file.write_text(json.dumps(auto_config, indent=2))
         typer.echo(f"Created {config_path}")
 
     if interactive:
-        typer.echo("Interactive setup is available. Edit .mementic.json directly:")
-        typer.echo(f"  {config_file.absolute()}")
+        typer.echo("Interactive setup — writing to ~/.mementic/config.json")
+        typer.echo(f"  Global config: {get_global_config_path()}")
         typer.echo("Supported LLM providers: deepseek, openai, openrouter, ollama")
         provider = typer.prompt(
             "LLM provider", default="deepseek"
@@ -220,13 +201,13 @@ def init(
         model = typer.prompt(
             f"Model for '{provider}'", default="deepseek-chat"
         )
-        # Reload and update config
-        cfg_data = json.loads(config_file.read_text())
-        cfg_data.setdefault("llm", {})["provider"] = provider
-        cfg_data.setdefault("llm", {})["model"] = model
-        cfg_data.setdefault("llm", {})["extraction_model"] = model
-        config_file.write_text(json.dumps(cfg_data, indent=2))
-        typer.echo(f"Updated {config_path}")
+        # Write to global config
+        global_cfg = load_global_config()
+        global_cfg.llm.provider = provider
+        global_cfg.llm.model = model
+        global_cfg.llm.extraction_model = model
+        save_global_config(global_cfg)
+        typer.echo(f"Updated {get_global_config_path()}")
 
     # Auto-detect repo if not explicitly given
     effective_repo = repo
@@ -368,7 +349,44 @@ def capture(
 
     session_text = Path(session).read_text()
 
-    checkpoint = _load_checkpoint()
+    # ── Load or create graph early (needed for checkpoint query) ──
+    is_project = False
+    project_display: str | None = None
+    repo_path = str(Path.cwd())
+
+    try:
+        proj_name, global_cfg = resolve_project(project)
+        proj_entry = global_cfg.projects[proj_name]
+        db_path = Path(proj_entry.db_path).expanduser()
+        graph = GraphStore(db_path=db_path)
+        is_project = True
+        project_display = proj_name
+        # Use registered repo path if available, else CWD
+        for name, repo_entry in proj_entry.repos.items():
+            if Path(repo_entry.path).resolve() == Path(repo_path).resolve():
+                repo_path = repo_entry.path
+                break
+    except ValueError:
+        if project is not None:
+            typer.echo(
+                f"Project '{project}' not found. Use 'mementic project list' "
+                f"to see configured projects.",
+                err=True,
+            )
+            raise typer.Exit(code=1)
+        # No projects configured — fall back to legacy graph.json
+        graph_path = cfg.output.graph_path
+        if Path(graph_path).exists():
+            try:
+                graph = _load_graph_safe(graph_path)
+            except typer.Exit:
+                typer.echo("Starting with empty graph.", err=True)
+                graph = GraphStore()
+        else:
+            graph = GraphStore()
+
+    # ── Compute git diff (incremental via SQLite checkpoint) ──
+    checkpoint = graph.get_capture_checkpoint(repo_path)
     got_diff = False
     if checkpoint:
         # Check if there are new commits since last capture
@@ -430,38 +448,6 @@ def capture(
     if not extraction.decisions and not extraction.constraints:
         typer.echo("No architectural decisions or constraints found.")
         raise typer.Exit()
-
-    # ── Load or create graph (project-aware) ──
-    is_project = False
-    project_display: str | None = None
-
-    # Resolve project: explicit flag → default project → JSON fallback
-    try:
-        proj_name, global_cfg = resolve_project(project)
-        proj_entry = global_cfg.projects[proj_name]
-        db_path = Path(proj_entry.db_path).expanduser()
-        graph = GraphStore(db_path=db_path)
-        is_project = True
-        project_display = proj_name
-    except ValueError:
-        if project is not None:
-            # Explicit --project that doesn't exist
-            typer.echo(
-                f"Project '{project}' not found. Use 'mementic project list' "
-                f"to see configured projects.",
-                err=True,
-            )
-            raise typer.Exit(code=1)
-        # No projects configured — fall back to legacy graph.json
-        graph_path = cfg.output.graph_path
-        if Path(graph_path).exists():
-            try:
-                graph = _load_graph_safe(graph_path)
-            except typer.Exit:
-                typer.echo("Starting with empty graph.", err=True)
-                graph = GraphStore()
-        else:
-            graph = GraphStore()
 
     # ── Conflict detection ──
     from mementic.format import slugify
@@ -557,7 +543,16 @@ def capture(
     metrics_store.append(entry)
 
     if got_diff:
-        _save_checkpoint()
+        try:
+            head_result = subprocess.run(
+                ["git", "rev-parse", "HEAD"], capture_output=True, text=True
+            )
+            if head_result.returncode == 0:
+                graph.set_capture_checkpoint(
+                    repo_path, head_result.stdout.strip()
+                )
+        except FileNotFoundError:
+            pass  # git not available — skip
 
 
 @app.command()

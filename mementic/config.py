@@ -212,7 +212,7 @@ class LLMConfig(BaseModel):
                 f"Mementic requires an API key for provider '{self.provider}'.\n"
                 f"  Set the environment variable: {env_var}\n"
                 f"  Example: export {env_var}=\"your-key-here\"\n\n"
-                f"  Or switch to a different provider in .mementic.json:\n"
+                f"  Or switch to a different provider in ~/.mementic/config.json:\n"
                 f"  {{ \"llm\": {{ \"provider\": \"ollama\" }} }} (local, no key needed)\n"
                 f"  {{ \"llm\": {{ \"provider\": \"openai\", \"model\": \"gpt-4o\" }} }}"
             )
@@ -230,10 +230,15 @@ class MementicConfig(BaseModel):
 
 
 def load_config(path: str = ".mementic.json") -> MementicConfig:
-    """Load and validate config from a JSON file.
+    """Load and validate config from a JSON file, merging global overrides.
 
     If no explicit path is given, checks the MEMENTIC_CONFIG environment
     variable first, then falls back to .mementic.json.
+
+    When the per-repo config is missing ``llm`` or ``sessions`` sections,
+    the values from ``~/.mementic/config.json`` (the global config) are
+    used as fallbacks.  This allows migrating shared configuration out of
+    per-repo files without breaking existing setups.
 
     Args:
         path: Path to the JSON configuration file. If the default
@@ -265,7 +270,22 @@ def load_config(path: str = ".mementic.json") -> MementicConfig:
         )
         return MementicConfig()
 
-    return MementicConfig.model_validate(data)
+    config = MementicConfig.model_validate(data)
+
+    # Merge global fallbacks for missing shared sections
+    if data.get("llm") and data.get("sessions"):
+        return config  # both present — no merge needed
+    try:
+        global_cfg = load_global_config()
+    except Exception:
+        return config  # global config unavailable, use what we have
+
+    if not data.get("llm"):
+        config.llm = global_cfg.llm
+    if not data.get("sessions"):
+        config.sessions = global_cfg.sessions
+
+    return config
 
 
 # ── Global config models ──────────────────────────────────────────────
@@ -302,8 +322,9 @@ class GlobalConfig(BaseModel):
     """Global project configuration stored at ``~/.mementic/config.json``.
 
     This file defines named projects, each with its own database and
-    registered repos.  It sits above the per-repo ``.mementic.json``
-    files, which only describe *what to scan* in an individual repo.
+    registered repos.  It also holds shared configuration (LLM provider,
+    session discovery) that was previously duplicated across per-repo
+    ``.mementic.json`` files.
 
     Attributes:
         version: Schema version of the config file.
@@ -311,11 +332,18 @@ class GlobalConfig(BaseModel):
             ``--project`` flag is given.
         projects: Mapping of project names to ProjectEntry objects.
             Empty when no config file exists yet (first run).
+        llm: Shared LLM provider configuration. When set, this is the
+            fallback for per-repo configs that lack their own ``llm`` section.
+        sessions: Shared session discovery configuration. When set, this
+            is the fallback for per-repo configs that lack their own
+            ``sessions`` section.
     """
 
     version: int = 1
     default_project: str = "main"
     projects: dict[str, ProjectEntry] = Field(default_factory=dict)
+    llm: LLMConfig = Field(default_factory=LLMConfig)
+    sessions: SessionsConfig = Field(default_factory=SessionsConfig)
 
 
 # ── Global config I/O ────────────────────────────────────────────────

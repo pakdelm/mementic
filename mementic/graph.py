@@ -15,7 +15,7 @@ from mementic.models import (
     GraphPayload,
 )
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 
 class GraphStore:
@@ -150,6 +150,13 @@ class GraphStore:
                 CREATE INDEX IF NOT EXISTS idx_audit_log_time
                     ON audit_log(timestamp);
                 PRAGMA user_version = 2;
+            """)
+
+        if version < 3:
+            conn.executescript("""
+                ALTER TABLE project_sources
+                ADD COLUMN last_captured_commit TEXT DEFAULT '';
+                PRAGMA user_version = 3;
             """)
 
     def _load_from_db(self) -> None:
@@ -757,3 +764,49 @@ class GraphStore:
             "entities": entities,
             "edges": self._g.number_of_edges(),
         }
+
+    # ------------------------------------------------------------------
+    # Capture checkpoint (stored in project_sources)
+    # ------------------------------------------------------------------
+
+    def get_capture_checkpoint(self, repo_path: str) -> str:
+        """Return the last captured git commit SHA for a repo.
+
+        Args:
+            repo_path: Absolute path to the repository.
+
+        Returns:
+            The commit SHA string, or empty string if never captured.
+        """
+        if self._conn is None:
+            return ""
+        row = self._conn.execute(
+            "SELECT last_captured_commit FROM project_sources WHERE repo_path = ?",
+            (repo_path,),
+        ).fetchone()
+        return row[0] if row else ""
+
+    def set_capture_checkpoint(self, repo_path: str, commit: str) -> None:
+        """Set the last captured git commit SHA for a repo.
+
+        Uses INSERT OR REPLACE against the UNIQUE constraint on repo_path.
+        If the repo isn't registered yet, creates a row.  If it exists,
+        updates the commit and bumps ingested_at.
+
+        Args:
+            repo_path: Absolute path to the repository.
+            commit: The git commit SHA to store.
+        """
+        if self._conn is None:
+            return
+        now = datetime.now(timezone.utc).isoformat()
+        self._conn.execute(
+            """INSERT OR REPLACE INTO project_sources
+               (repo_path, label, ingested_at, last_captured_commit)
+               VALUES (?, ?, COALESCE(
+                   (SELECT ingested_at FROM project_sources WHERE repo_path = ?),
+                   ?
+               ), ?)""",
+            (repo_path, "", repo_path, now, commit),
+        )
+        self._conn.commit()
