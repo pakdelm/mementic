@@ -4,7 +4,7 @@ import json
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal, overload
 
 import networkx as nx
 
@@ -28,9 +28,13 @@ class GraphStore:
 
     def __init__(self, db_path: str | Path | None = None) -> None:
         self._g: nx.DiGraph = nx.DiGraph()
-        self._db_path = Path(db_path) if db_path else None
         self._conn: sqlite3.Connection | None = None
-        if self._db_path:
+        self._db_path: Path | None = None
+        self._in_memory = db_path == ":memory:"
+        if self._in_memory:
+            self._ensure_db()
+        elif db_path:
+            self._db_path = Path(db_path)
             self._ensure_db()
 
     def close(self) -> None:
@@ -45,9 +49,12 @@ class GraphStore:
 
     def _ensure_db(self) -> None:
         """Open the SQLite database, apply migrations, and load data into NetworkX."""
-        assert self._db_path is not None
-        self._db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._conn = sqlite3.connect(str(self._db_path))
+        if self._in_memory:
+            self._conn = sqlite3.connect(":memory:")
+        else:
+            assert self._db_path is not None
+            self._db_path.parent.mkdir(parents=True, exist_ok=True)
+            self._conn = sqlite3.connect(str(self._db_path))
         self._conn.row_factory = sqlite3.Row
         self._migrate_schema(self._conn)
         self._load_from_db()
@@ -62,7 +69,7 @@ class GraphStore:
                 CREATE TABLE IF NOT EXISTS decisions (
                     id TEXT PRIMARY KEY,
                     title TEXT NOT NULL,
-                    status TEXT NOT NULL DEFAULT 'proposed',
+                    status TEXT NOT NULL DEFAULT 'accepted',
                     rationale TEXT DEFAULT '',
                     source TEXT DEFAULT '',
                     repo TEXT DEFAULT '',
@@ -217,7 +224,7 @@ class GraphStore:
                         (
                             payload.get("id", node_id),
                             payload.get("title", ""),
-                            payload.get("status", "proposed"),
+                            payload.get("status", "accepted"),
                             payload.get("rationale", ""),
                             payload.get("source", ""),
                             payload.get("repo", ""),
@@ -380,40 +387,102 @@ class GraphStore:
     # Queries (SQLite when available, otherwise NetworkX)
     # ------------------------------------------------------------------
 
+    @overload
     def get_constraints_for_entities(
-        self, paths: list[str], prefix_match: bool = False
-    ) -> list[Constraint]:
+        self, paths: list[str], prefix_match: bool = False, *,
+        annotate_overlap: Literal[False] = False,
+    ) -> list[Constraint]: ...
+    @overload
+    def get_constraints_for_entities(
+        self, paths: list[str], prefix_match: bool = False, *,
+        annotate_overlap: Literal[True],
+    ) -> list[tuple[Constraint, int]]: ...
+    def get_constraints_for_entities(
+        self, paths: list[str], prefix_match: bool = False, *,
+        annotate_overlap: bool = False,
+    ) -> list[Constraint] | list[tuple[Constraint, int]]:
+        """Return constraints whose bound_entities match any of the given paths.
+
+        Args:
+            paths: Entity paths to match against constraint bound_entities.
+            prefix_match: If True, use prefix matching (be.startswith(p))
+                instead of exact match.
+            annotate_overlap: If True, return list of (Constraint, overlap_score)
+                tuples. Overlap score is the count of bound_entities that
+                match the given paths.
+
+        Returns:
+            List of Constraint objects, or list of (Constraint, int) tuples
+            when annotate_overlap=True.
+        """
         seen: set[str] = set()
-        result: list[Constraint] = []
+        items: list[tuple[Constraint, int]] = []
 
         if self._conn is not None:
             for row in self._conn.execute("SELECT * FROM constraints"):
                 bound_entities: list[str] = json.loads(row["bound_entities"])
+                overlap = 0
                 for be in bound_entities:
                     for p in paths:
                         if be == p or (prefix_match and be.startswith(p)):
-                            if row["id"] not in seen:
-                                seen.add(row["id"])
-                                result.append(self._row_to_constraint(row))
-                            break
-            return result
+                            overlap += 1
+                            break  # count each bound_entity at most once
+                if overlap > 0 and row["id"] not in seen:
+                    seen.add(row["id"])
+                    items.append((self._row_to_constraint(row), overlap))
+            if annotate_overlap:
+                return items
+            return [c for c, _ in items]
 
         for _node_id, attrs in self._g.nodes(data=True):
             if attrs.get("node_type") != "Constraint":
                 continue
             bound_entities = attrs["payload"].get("bound_entities", [])
+            overlap = 0
             for be in bound_entities:
                 for p in paths:
                     if be == p or (prefix_match and be.startswith(p)):
-                        if attrs["payload"]["id"] not in seen:
-                            seen.add(attrs["payload"]["id"])
-                            result.append(Constraint(**attrs["payload"]))
-        return result
+                        overlap += 1
+                        break
+            if overlap > 0 and attrs["payload"]["id"] not in seen:
+                seen.add(attrs["payload"]["id"])
+                items.append((Constraint(**attrs["payload"]), overlap))
+        if annotate_overlap:
+            return items
+        return [c for c, _ in items]
 
+    @overload
     def get_decisions_for_entities(
-        self, paths: list[str], prefix_match: bool = False,
-    ) -> list[Decision]:
-        decisions: dict[str, Decision] = {}
+        self, paths: list[str], prefix_match: bool = False, *,
+        annotate_overlap: Literal[False] = False,
+    ) -> list[Decision]: ...
+    @overload
+    def get_decisions_for_entities(
+        self, paths: list[str], prefix_match: bool = False, *,
+        annotate_overlap: Literal[True],
+    ) -> list[tuple[Decision, int]]: ...
+    def get_decisions_for_entities(
+        self, paths: list[str], prefix_match: bool = False, *,
+        annotate_overlap: bool = False,
+    ) -> list[Decision] | list[tuple[Decision, int]]:
+        """Return decisions directly linked to entity nodes matching paths.
+
+        Only returns decisions with direct edges to matching entity nodes
+        (no transitive constraint-based expansion).
+
+        Args:
+            paths: Entity paths to find related decisions for.
+            prefix_match: If True, use prefix matching (entity_id.startswith(p))
+                instead of exact match.
+            annotate_overlap: If True, return list of (Decision, overlap_score)
+                tuples. Overlap score is the count of entity IDs linked to
+                the decision that match the given paths.
+
+        Returns:
+            List of Decision objects, or list of (Decision, int) tuples
+            when annotate_overlap=True.
+        """
+        items: dict[str, tuple[Decision, int]] = {}
 
         if self._conn is not None:
             if prefix_match:
@@ -428,23 +497,29 @@ class GraphStore:
                     params.append(p)
                 where_clause = " OR ".join(conditions)
                 for row in self._conn.execute(
-                    f"SELECT DISTINCT d.* FROM decisions d "
+                    f"SELECT d.*, COUNT(DISTINCT e.target_id) as overlap "
+                    f"FROM decisions d "
                     f"JOIN edges e ON d.id = e.source_id "
-                    f"WHERE ({where_clause})",
+                    f"WHERE ({where_clause}) "
+                    f"GROUP BY d.id",
                     params,
                 ):
-                    decisions[row["id"]] = self._row_to_decision(row)
-                return list(decisions.values())
+                    items[row["id"]] = (self._row_to_decision(row), row["overlap"])
             else:
                 placeholders = ",".join("?" for _ in paths)
                 for row in self._conn.execute(
-                    f"SELECT DISTINCT d.* FROM decisions d "
+                    f"SELECT d.*, COUNT(DISTINCT e.target_id) as overlap "
+                    f"FROM decisions d "
                     f"JOIN edges e ON d.id = e.source_id "
-                    f"WHERE e.target_id IN ({placeholders})",
+                    f"WHERE e.target_id IN ({placeholders}) "
+                    f"GROUP BY d.id",
                     paths,
                 ):
-                    decisions[row["id"]] = self._row_to_decision(row)
-                return list(decisions.values())
+                    items[row["id"]] = (self._row_to_decision(row), row["overlap"])
+
+            if annotate_overlap:
+                return list(items.values())
+            return [dec for dec, _ in items.values()]
 
         for node_id, attrs in self._g.nodes(data=True):
             if attrs.get("node_type") != "CodeEntity":
@@ -458,38 +533,83 @@ class GraphStore:
             for pred in self.get_predecessors(node_id):
                 pred_attrs = self._g.nodes[pred]
                 if pred_attrs.get("node_type") == "Decision":
-                    decisions[pred] = Decision(**pred_attrs["payload"])
-        return list(decisions.values())
+                    if pred not in items:
+                        items[pred] = (Decision(**pred_attrs["payload"]), 1)
+                    else:
+                        dec, prev = items[pred]
+                        items[pred] = (dec, prev + 1)
 
+        if annotate_overlap:
+            return list(items.values())
+        return [dec for dec, _ in items.values()]
+
+    @overload
     def get_evolution(
-        self, entity_path: str, prefix_match: bool = False,
-    ) -> list[Decision]:
-        decisions: dict[str, Decision] = {}
+        self, entity_path: str, prefix_match: bool = False, *,
+        annotate_overlap: Literal[False] = False,
+    ) -> list[Decision]: ...
+    @overload
+    def get_evolution(
+        self, entity_path: str, prefix_match: bool = False, *,
+        annotate_overlap: Literal[True],
+    ) -> list[tuple[Decision, int]]: ...
+    def get_evolution(
+        self, entity_path: str, prefix_match: bool = False, *,
+        annotate_overlap: bool = False,
+    ) -> list[Decision] | list[tuple[Decision, int]]:
+        """Return decisions that shaped the given entity path.
+
+        Finds decisions via two paths:
+        1. Decisions linked to constraints whose bound_entities match
+           the entity path.
+        2. Decisions directly linked to entity nodes matching the path.
+
+        Args:
+            entity_path: The entity path to trace evolution for.
+            prefix_match: If True, use prefix matching instead of exact match.
+            annotate_overlap: If True, return list of (Decision, overlap_score)
+                tuples. Overlap score is the count of bound entities or
+                matched entity paths that match entity_path.
+
+        Returns:
+            List of Decision objects, or list of (Decision, int) tuples
+            when annotate_overlap=True.
+        """
+        items: dict[str, tuple[Decision, int]] = {}
 
         if self._conn is not None:
+            def _add_decision(dec_id: str, overlap_delta: int) -> None:
+                if dec_id not in items:
+                    drow = self._conn.execute(  # type: ignore[union-attr]
+                        "SELECT * FROM decisions WHERE id = ?",
+                        (dec_id,),
+                    ).fetchone()
+                    if drow:
+                        items[drow["id"]] = (
+                            self._row_to_decision(drow),
+                            overlap_delta,
+                        )
+                else:
+                    dec, prev = items[dec_id]
+                    items[dec_id] = (dec, prev + overlap_delta)
+
             # Part 1: decisions linked via constraints bound to entity_path
             for crow in self._conn.execute("SELECT * FROM constraints"):
                 bound_entities: list[str] = json.loads(
                     crow["bound_entities"]
                 )
-                if any(
-                    be == entity_path
-                    or (prefix_match and be.startswith(entity_path))
+                match_count = sum(
+                    1
                     for be in bound_entities
-                ):
+                    if be == entity_path
+                    or (prefix_match and be.startswith(entity_path))
+                )
+                if match_count > 0:
                     for erow in self._conn.execute(
                         "SELECT source_id FROM edges WHERE target_id = ?",
                         (crow["id"],),
                     ):
-                        if erow["source_id"] not in decisions:
-                            drow = self._conn.execute(
-                                "SELECT * FROM decisions WHERE id = ?",
-                                (erow["source_id"],),
-                            ).fetchone()
-                            if drow:
-                                decisions[drow["id"]] = (
-                                    self._row_to_decision(drow)
-                                )
+                        _add_decision(erow["source_id"], match_count)
 
             # Part 2: decisions directly linked to matching entity nodes
             for erow in self._conn.execute("SELECT * FROM entities"):
@@ -501,31 +621,32 @@ class GraphStore:
                         "SELECT source_id FROM edges WHERE target_id = ?",
                         (erow["id"],),
                     ):
-                        if edge_row["source_id"] not in decisions:
-                            drow = self._conn.execute(
-                                "SELECT * FROM decisions WHERE id = ?",
-                                (edge_row["source_id"],),
-                            ).fetchone()
-                            if drow:
-                                decisions[drow["id"]] = (
-                                    self._row_to_decision(drow)
-                                )
+                        _add_decision(edge_row["source_id"], 1)
 
-            return list(decisions.values())
+            if annotate_overlap:
+                return list(items.values())
+            return [dec for dec, _ in items.values()]
 
+        # NetworkX path
         for _node_id, attrs in self._g.nodes(data=True):
             if attrs.get("node_type") != "Constraint":
                 continue
             bound_entities = attrs["payload"].get("bound_entities", [])
-            if any(
-                be == entity_path
-                or (prefix_match and be.startswith(entity_path))
+            match_count = sum(
+                1
                 for be in bound_entities
-            ):
+                if be == entity_path
+                or (prefix_match and be.startswith(entity_path))
+            )
+            if match_count > 0:
                 for pred in self.get_predecessors(attrs["payload"]["id"]):
                     pred_attrs = self._g.nodes[pred]
                     if pred_attrs.get("node_type") == "Decision":
-                        decisions[pred] = Decision(**pred_attrs["payload"])
+                        if pred not in items:
+                            items[pred] = (Decision(**pred_attrs["payload"]), match_count)
+                        else:
+                            dec, prev = items[pred]
+                            items[pred] = (dec, prev + match_count)
 
         for node_id, attrs in self._g.nodes(data=True):
             if attrs.get("node_type") != "CodeEntity":
@@ -536,9 +657,15 @@ class GraphStore:
                 for pred in self.get_predecessors(node_id):
                     pred_attrs = self._g.nodes[pred]
                     if pred_attrs.get("node_type") == "Decision":
-                        decisions[pred] = Decision(**pred_attrs["payload"])
+                        if pred not in items:
+                            items[pred] = (Decision(**pred_attrs["payload"]), 1)
+                        else:
+                            dec, prev = items[pred]
+                            items[pred] = (dec, prev + 1)
 
-        return list(decisions.values())
+        if annotate_overlap:
+            return list(items.values())
+        return [dec for dec, _ in items.values()]
 
     def get_all_decisions(self) -> list[Decision]:
         if self._conn is not None:
@@ -562,36 +689,6 @@ class GraphStore:
             Constraint(**attrs["payload"])
             for _node_id, attrs in self._g.nodes(data=True)
             if attrs.get("node_type") == "Constraint"
-        ]
-
-    def get_pending_decisions(self) -> list[Decision]:
-        if self._conn is not None:
-            return [
-                self._row_to_decision(row)
-                for row in self._conn.execute(
-                    "SELECT * FROM decisions WHERE status = 'proposed'"
-                )
-            ]
-        return [
-            Decision(**attrs["payload"])
-            for _node_id, attrs in self._g.nodes(data=True)
-            if attrs.get("node_type") == "Decision"
-            and attrs["payload"].get("status") == "proposed"
-        ]
-
-    def get_pending_constraints(self) -> list[Constraint]:
-        if self._conn is not None:
-            return [
-                self._row_to_constraint(row)
-                for row in self._conn.execute(
-                    "SELECT * FROM constraints WHERE status = 'proposed'"
-                )
-            ]
-        return [
-            Constraint(**attrs["payload"])
-            for _node_id, attrs in self._g.nodes(data=True)
-            if attrs.get("node_type") == "Constraint"
-            and attrs["payload"].get("status") == "proposed"
         ]
 
     # ------------------------------------------------------------------
@@ -764,6 +861,120 @@ class GraphStore:
             "entities": entities,
             "edges": self._g.number_of_edges(),
         }
+
+    # ------------------------------------------------------------------
+    # Graph cleaning — deterministic dead-reference removal
+    # ------------------------------------------------------------------
+
+    def clean_dead_references(self) -> dict[str, int]:
+        """Clean dead references from the graph. Deterministic, zero network cost.
+
+        Called transparently before every get_context_pack and get_system_evolution
+        query. The agent never knows it ran.
+
+        Returns:
+            Dict with action counts: 'dead_bindings_removed', 'constraints_deprecated',
+            'stale_entities_removed', 'orphaned_entities_removed',
+            'orphaned_enforced_by_cleared', 'status_inconsistencies_resolved'.
+        """
+        counts: dict[str, int] = {
+            "dead_bindings_removed": 0,
+            "constraints_deprecated": 0,
+            "stale_entities_removed": 0,
+            "orphaned_entities_removed": 0,
+            "orphaned_enforced_by_cleared": 0,
+            "status_inconsistencies_resolved": 0,
+        }
+
+        # ── Step 1: Dead bindings removed from constraints ──
+        existing_ids: set[str] = {nid for nid, _, _ in self.iter_nodes()}
+        for nid, ntype, payload in self.iter_nodes():
+            if ntype != "Constraint":
+                continue
+            bound_entities: list[str] = payload.get("bound_entities", [])
+            if not bound_entities:
+                continue
+            filtered = [be for be in bound_entities if be in existing_ids]
+            removed = len(bound_entities) - len(filtered)
+            if removed > 0:
+                payload["bound_entities"] = filtered
+                self.set_node_payload(nid, payload)
+                counts["dead_bindings_removed"] += removed
+
+        # ── Step 2: Constraints with zero remaining bindings deprecated ──
+        for nid, ntype, payload in self.iter_nodes():
+            if ntype != "Constraint":
+                continue
+            bound_entities = payload.get("bound_entities", [])
+            if not bound_entities and payload.get("status") != "deprecated":
+                payload["status"] = "deprecated"
+                self.set_node_payload(nid, payload)
+                counts["constraints_deprecated"] += 1
+
+        # ── Step 3: Stale entities removed ──
+        # Only FILE-type entities are checked for disk existence.
+        # CLASS/FUNCTION/MODULE entities have compound IDs (e.g.
+        # "src/mod.py:MyClass") that are not valid filesystem paths.
+        stale_ids: list[str] = []
+        for nid, ntype, payload in self.iter_nodes():
+            if ntype != "CodeEntity":
+                continue
+            if payload.get("type") == "file" and not Path(nid).exists():
+                stale_ids.append(nid)
+
+        for nid in stale_ids:
+            self._g.remove_node(nid)  # also removes incident edges
+            counts["stale_entities_removed"] += 1
+
+        # ── Step 4: Orphaned entities removed ──
+        edge_targets: set[str] = {tgt for _, tgt, _ in self.iter_edges()}
+
+        orphan_ids: list[str] = []
+        for nid, ntype, _payload in self.iter_nodes():
+            if ntype != "CodeEntity":
+                continue
+            if nid not in edge_targets:
+                orphan_ids.append(nid)
+
+        for nid in orphan_ids:
+            self._g.remove_node(nid)
+            counts["orphaned_entities_removed"] += 1
+
+        # ── Step 5: Orphaned enforced_by references cleared ──
+        decision_ids: set[str] = {
+            nid for nid, ntype, _ in self.iter_nodes() if ntype == "Decision"
+        }
+        for nid, ntype, payload in self.iter_nodes():
+            if ntype != "Constraint":
+                continue
+            enforced_by = payload.get("enforced_by", "")
+            if enforced_by and enforced_by not in decision_ids:
+                payload["enforced_by"] = ""
+                self.set_node_payload(nid, payload)
+                counts["orphaned_enforced_by_cleared"] += 1
+
+        # ── Step 6: Status inconsistency resolved ──
+        deprecated_decision_ids: set[str] = {
+            nid
+            for nid, ntype, payload in self.iter_nodes()
+            if ntype == "Decision" and payload.get("status") == "deprecated"
+        }
+        for nid, ntype, payload in self.iter_nodes():
+            if ntype != "Constraint":
+                continue
+            enforced_by = payload.get("enforced_by", "")
+            if (
+                enforced_by in deprecated_decision_ids
+                and payload.get("status") == "active"
+            ):
+                payload["status"] = "deprecated"
+                self.set_node_payload(nid, payload)
+                counts["status_inconsistencies_resolved"] += 1
+
+        # ── Persist after all mutations ──
+        self._write_back()
+
+        return counts
 
     # ------------------------------------------------------------------
     # Capture checkpoint (stored in project_sources)

@@ -9,9 +9,7 @@ from pydantic import BaseModel, Field, model_validator
 
 
 class DecisionStatus(str, Enum):
-    PROPOSED = "proposed"
     ACCEPTED = "accepted"
-    SUPERSEDED = "superseded"
     DEPRECATED = "deprecated"
     REJECTED = "rejected"
 

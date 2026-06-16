@@ -159,8 +159,8 @@ def generate_html_graph(
         node_degree = degree.get(node_id, 0)
         size = max(8, min(40, 10 + node_degree * 2))
 
-        # Border: heavier for proposed, normal for accepted
-        border_width = 3 if status == "proposed" else 2
+        # Border: normal for all statuses
+        border_width = 2
 
         kwargs: dict[str, object] = {
             "label": label,

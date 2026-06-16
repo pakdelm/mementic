@@ -8,7 +8,13 @@ from pathlib import Path
 from mcp.server.fastmcp import FastMCP
 
 from mementic.config import MementicConfig, load_config
-from mementic.format import count_tokens, format_context_pack, slugify, timestamp
+from mementic.format import (
+    count_tokens,
+    format_context_pack,
+    format_evolution,
+    slugify,
+    timestamp,
+)
 from mementic.graph import GraphStore
 from mementic.metrics import UsageStore
 from mementic.models import (
@@ -21,8 +27,6 @@ from mementic.models import (
 )
 
 mcp = FastMCP("Mementic")
-
-_metrics_store = UsageStore()
 
 
 def _load_graph(project: str | None = None) -> tuple[GraphStore, MementicConfig]:
@@ -84,6 +88,7 @@ async def get_context_pack(
     affected_files: list[str],
     project: str | None = None,
     prefix_match: bool = False,
+    max_tokens: int = 1000,
 ) -> str:
     """Return all relevant Decisions and Constraints for a given task.
 
@@ -96,18 +101,23 @@ async def get_context_pack(
             auto-resolution is attempted.
         prefix_match: If True, use prefix matching for entity paths
             (e.g. directory-level) instead of exact match.
+        max_tokens: Maximum token budget for the constraint + decision lines.
+            Defaults to 1000.
 
     Returns:
         Formatted markdown with relevant architectural context.
     """
     graph, cfg = _load_graph(project)
+    graph.clean_dead_references()
     constraints = graph.get_constraints_for_entities(
-        affected_files, prefix_match=prefix_match
+        affected_files, prefix_match=prefix_match, annotate_overlap=True
     )
     decisions = graph.get_decisions_for_entities(
-        affected_files, prefix_match=prefix_match
+        affected_files, prefix_match=prefix_match, annotate_overlap=True
     )
-    pack_text = format_context_pack(task_description, decisions, constraints)
+    pack_text = format_context_pack(
+        task_description, decisions, constraints, max_tokens=max_tokens
+    )
     pack_tokens = count_tokens(pack_text)
     entry = MetricsEntry(
         timestamp=timestamp(),
@@ -120,11 +130,9 @@ async def get_context_pack(
         status="success",
     )
 
-    if graph._conn:
+    if graph._conn is not None:
         metrics_store = UsageStore(conn=graph._conn)
-    else:
-        metrics_store = _metrics_store
-    metrics_store.append(entry)
+        metrics_store.append(entry)
 
     return pack_text
 
@@ -136,9 +144,9 @@ async def propose_decision(
     rejected_alternatives: list[str] | None = None,
     affected_entities: list[str] | None = None,
 ) -> str:
-    """Propose a new architectural decision for human review.
+    """Propose a new architectural decision.
 
-    Will be saved with status 'proposed' and must be accepted via `mementic review`.
+    Will be saved with status 'accepted'.
 
     Args:
         title: Short title for the decision.
@@ -159,7 +167,7 @@ async def propose_decision(
         rationale=rationale,
         rejected_alternatives=rejected_alternatives or [],
         source=f"agent-proposal:{now}",
-        status=DecisionStatus.PROPOSED,
+        status=DecisionStatus.ACCEPTED,
         author="opencode",
         created_at=now,
         modified_at=now,
@@ -177,8 +185,7 @@ async def propose_decision(
 
     _save_graph(graph, cfg)
     return (
-        f"Decision '{title}' saved for review (status: proposed). "
-        "Use `mementic review` to accept."
+        f"Decision '{title}' saved (status: accepted)."
     )
 
 
@@ -189,7 +196,7 @@ async def propose_constraint(
     decision_id: str | None = None,
     id: str | None = None,
 ) -> str:
-    """Propose a new constraint for human review.
+    """Propose a new constraint.
 
     Args:
         description: Description of the constraint.
@@ -204,7 +211,7 @@ async def propose_constraint(
     graph, cfg = _load_graph()
     repo = _repo_from_env()
 
-    constraint_id = id or slugify(description, max_length=80)
+    constraint_id = id or slugify(description, max_length=30)
 
     now = timestamp()
     constraint = Constraint(
@@ -213,7 +220,7 @@ async def propose_constraint(
         bound_entities=bound_entities,
         enforced_by=decision_id or "",
         source=f"agent-proposal:{now}",
-        status="proposed",
+        status="active",
         created_at=now,
         repo=repo,
     )
@@ -226,7 +233,7 @@ async def propose_constraint(
         graph.link(constraint.id, entity_path, "binds_to")
 
     _save_graph(graph, cfg)
-    return f"Constraint '{constraint.id}' saved for review."
+    return f"Constraint '{constraint.id}' saved."
 
 
 @mcp.tool()
@@ -234,6 +241,7 @@ async def get_system_evolution(
     entity_path: str,
     project: str | None = None,
     prefix_match: bool = False,
+    max_tokens: int = 1000,
 ) -> str:
     """Trace all decisions that affected a specific code entity.
 
@@ -243,20 +251,15 @@ async def get_system_evolution(
             auto-resolution is attempted.
         prefix_match: If True, use prefix matching for entity paths
             instead of exact match.
+        max_tokens: Maximum token budget for the compact-formatted lines.
+            Defaults to 1000.
 
     Returns:
         Markdown summary of all decisions affecting the entity.
     """
     graph, cfg = _load_graph(project)
-    decisions = graph.get_evolution(entity_path, prefix_match=prefix_match)
-
-    if not decisions:
-        return f"No architectural decisions found for {entity_path}."
-
-    lines = [f"## Evolution of {entity_path}\n"]
-    for d in decisions:
-        lines.append(f"- [{d.created_at}] **{d.title}**: {d.rationale}")
-        if d.rejected_alternatives:
-            lines.append(f"  Rejected: {', '.join(d.rejected_alternatives)}")
-
-    return "\n".join(lines)
+    graph.clean_dead_references()
+    decisions = graph.get_evolution(
+        entity_path, prefix_match=prefix_match, annotate_overlap=True
+    )
+    return format_evolution(entity_path, decisions, max_tokens=max_tokens)

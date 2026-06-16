@@ -1,15 +1,15 @@
-"""Conflict detection engine for Mementic capture.
+"""Auto-resolve capture conflicts for Mementic capture.
 
-Two deterministic rules, zero API cost:
-1. Slug collision: slugify(title) matches existing accepted decision ID.
-2. Entity overlap: overlapping affected entities + substantially different rationales.
+Three deterministic rules, zero API cost:
+1. New slug (no existing with same ID) → ACCEPT.
+2. Same slug, same content → SKIP (duplicate).
+3. Same slug, different content → deprecate existing, ACCEPT new.
 """
 
 from __future__ import annotations
 
-from mementic.format import slugify
 from mementic.graph import GraphStore
-from mementic.models import Decision
+from mementic.models import Constraint, Decision, DecisionStatus
 
 
 def _word_overlap(text_a: str, text_b: str) -> float:
@@ -27,75 +27,89 @@ def _word_overlap(text_a: str, text_b: str) -> float:
     return len(words_a & words_b) / len(words_a | words_b)
 
 
-def detect_conflicts(
+def auto_resolve_capture(
     graph: GraphStore,
-    proposed: list[Decision],
-    affected_entities: dict[str, list[str]] | None = None,
-) -> list[Decision]:
-    """Detect conflicts between proposed decisions and existing accepted ones.
+    proposed_decisions: list[Decision],
+    proposed_constraints: list[Constraint] | None = None,
+) -> dict[str, int]:
+    """Auto-resolve captured decisions and constraints against the existing graph.
+
+    Three rules (applied to both decisions and constraints):
+    1. New slug (no existing node with same ID) → ACCEPT.
+    2. Same slug, same content → SKIP (duplicate).
+    3. Same slug, different content → deprecate existing, ACCEPT new.
+
+    For decisions, "content" is the ``rationale`` field (compared via _word_overlap
+    with threshold 0.8).  For constraints, "content" is the ``description`` field.
 
     Args:
         graph: The current knowledge graph.
-        proposed: Newly extracted decisions to check for conflicts.
-        affected_entities: Optional mapping of decision ID → its affected file paths.
-            When provided, each proposed decision is only checked against its own
-            entities. When None (legacy), all decisions share the same entity set
-            which may produce false positives.
+        proposed_decisions: Newly extracted decisions.
+        proposed_constraints: Newly extracted constraints (optional).
 
     Returns:
-        List of existing accepted Decision objects that conflict with
-        the proposed decisions. An empty list means no conflicts.
-
-    Implements two deterministic rules:
-    1. Slug collision — slugified title matches an existing accepted ID.
-    2. Entity overlap — proposed entities overlap with an existing decision's
-       entities, AND the rationales differ substantially (<50% word overlap).
+        Dict with counts:
+        ``{'new_decisions': N, 'updated_decisions': N, 'skipped_decisions': N,
+           'new_constraints': N, 'updated_constraints': N, 'skipped_constraints': N}``
     """
-    conflicts: list[Decision] = []
-    existing = graph.get_all_decisions()
+    counts: dict[str, int] = {
+        "new_decisions": 0,
+        "updated_decisions": 0,
+        "skipped_decisions": 0,
+        "new_constraints": 0,
+        "updated_constraints": 0,
+        "skipped_constraints": 0,
+    }
 
-    # Only compare against accepted decisions
-    accepted = [d for d in existing if d.status == "accepted"]
+    # ------------------------------------------------------------------
+    # Decisions
+    # ------------------------------------------------------------------
+    for decision in proposed_decisions:
+        decision.status = DecisionStatus.ACCEPTED
+        if not graph.has_node(decision.id):
+            # Rule 1 — new slug
+            counts["new_decisions"] += 1
+            continue
 
-    for p in proposed:
-        p_slug = slugify(p.title, max_length=80)
-        p_entities = (affected_entities or {}).get(p.id, [])
+        # Existing node found — verify it's actually a Decision (not Constraint/Entity)
+        payload = graph.get_node_payload(decision.id)
+        if "rationale" not in payload:
+            # Cross-type ID collision — treat as new (don't corrupt other node types)
+            counts["new_decisions"] += 1
+            continue
+        existing_rationale: str = payload.get("rationale", "")
+        overlap = _word_overlap(decision.rationale, existing_rationale)
+        if overlap >= 0.8:
+            # Rule 2 — same content → skip
+            counts["skipped_decisions"] += 1
+        else:
+            # Rule 3 — different content → deprecate existing, accept new
+            payload["status"] = DecisionStatus.DEPRECATED.value
+            graph.set_node_payload(decision.id, payload)
+            counts["updated_decisions"] += 1
 
-        for existing_d in accepted:
-            # Rule 1: Slug collision
-            if p_slug == existing_d.id:
-                conflicts.append(existing_d)
+    # ------------------------------------------------------------------
+    # Constraints
+    # ------------------------------------------------------------------
+    if proposed_constraints:
+        for constraint in proposed_constraints:
+            constraint.status = "active"
+            if not graph.has_node(constraint.id):
+                counts["new_constraints"] += 1
                 continue
 
-            # Rule 2: Entity overlap + rationale divergence
-            # Get the entities the existing decision affects
-            existing_entities: set[str] = set()
-            for _nid, ntype, _payload in graph.iter_nodes():
-                if ntype != "CodeEntity":
-                    continue
-                for pred in graph.get_predecessors(_nid):
-                    if pred == existing_d.id:
-                        existing_entities.add(_nid)
-
-            # If no existing entities to compare, skip
-            if not existing_entities:
+            payload = graph.get_node_payload(constraint.id)
+            if "description" not in payload:
+                # Cross-type ID collision — treat as new
+                counts["new_constraints"] += 1
                 continue
+            existing_desc: str = payload.get("description", "")
+            overlap = _word_overlap(constraint.description, existing_desc)
+            if overlap >= 0.8:
+                counts["skipped_constraints"] += 1
+            else:
+                payload["status"] = "deprecated"
+                graph.set_node_payload(constraint.id, payload)
+                counts["updated_constraints"] += 1
 
-            proposed_set = set(p_entities)
-            overlap = existing_entities & proposed_set
-            if not overlap:
-                continue
-
-            # Check rationale similarity
-            overlap_ratio = _word_overlap(p.rationale, existing_d.rationale)
-            if overlap_ratio < 0.5:
-                conflicts.append(existing_d)
-
-    # Deduplicate conflicts
-    seen: set[str] = set()
-    result: list[Decision] = []
-    for d in conflicts:
-        if d.id not in seen:
-            seen.add(d.id)
-            result.append(d)
-    return result
+    return counts

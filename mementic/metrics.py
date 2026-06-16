@@ -29,11 +29,6 @@ def _empty_summary() -> dict:
         "context_pack_queries": 0,
         "context_pack_total_tokens": 0,
         "context_pack_avg_tokens": 0.0,
-        "context_pack_avg_constraints": 0.0,
-        "context_pack_avg_decisions": 0.0,
-        "extraction_per_query": 0,
-        "context_pack_per_query": 0,
-        "breakeven_ratio": 0.0,
     }
 
 
@@ -145,8 +140,7 @@ class UsageStore:
             extraction_init_calls, extraction_init_tokens,
             extraction_capture_calls, extraction_capture_tokens,
             extraction_total_tokens, context_pack_queries,
-            context_pack_total_tokens, context_pack_avg_tokens,
-            context_pack_avg_constraints, context_pack_avg_decisions.
+            context_pack_total_tokens, context_pack_avg_tokens.
         """
         entries = self.read_all()
         if not entries:
@@ -179,7 +173,7 @@ class UsageStore:
                 model_counter[e.model] += 1
             status_counter[e.status] += 1
 
-            if e.operation in ("init_adr", "init_freeform"):
+            if e.operation in ("init_adr", "init_freeform", "init"):
                 extraction_init_calls += 1
                 extraction_init_tokens += e.total_tokens
             elif e.operation == "capture":
@@ -198,20 +192,6 @@ class UsageStore:
             context_pack_total_tokens / context_pack_queries if context_pack_queries > 0 else 0.0
         )
 
-        # ── Breakeven analysis ──
-        if extraction_total_tokens > 0 and context_pack_queries > 0:
-            extraction_per_query = extraction_total_tokens / context_pack_queries
-            context_pack_per_query = (
-                context_pack_total_tokens / context_pack_queries
-            )
-            breakeven_ratio = (
-                context_pack_per_query / extraction_per_query * 100
-            )
-        else:
-            extraction_per_query = 0
-            context_pack_per_query = 0
-            breakeven_ratio = 0.0
-
         return {
             "total_calls": total_calls,
             "total_input_tokens": total_input,
@@ -228,11 +208,6 @@ class UsageStore:
             "context_pack_queries": context_pack_queries,
             "context_pack_total_tokens": context_pack_total_tokens,
             "context_pack_avg_tokens": context_pack_avg_tokens,
-            "context_pack_avg_constraints": 0.0,
-            "context_pack_avg_decisions": 0.0,
-            "extraction_per_query": round(extraction_per_query, 0),
-            "context_pack_per_query": round(context_pack_per_query, 0),
-            "breakeven_ratio": round(breakeven_ratio, 1),
         }
 
     def reset(self) -> None:
