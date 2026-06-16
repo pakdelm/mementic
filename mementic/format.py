@@ -70,7 +70,10 @@ def format_context_pack(
             )
         remaining = len(constraints) - len(shown)
         if remaining > 0:
-            lines.append(f"... and {remaining} more constraints")
+            lines.append(
+                f"... and {remaining} more constraints omitted. "
+                f"Use mementic query --entity <path> for full list."
+            )
 
     if decisions:
         lines.append("")
@@ -83,6 +86,9 @@ def format_context_pack(
                 lines.append(f"  Rejected: {', '.join(d.rejected_alternatives)}")
         remaining = len(decisions) - len(shown_d)
         if remaining > 0:
-            lines.append(f"... and {remaining} more decisions")
+            lines.append(
+                f"... and {remaining} more decisions omitted. "
+                f"Use mementic query --entity <path> for full list."
+            )
 
     return "\n".join(lines)

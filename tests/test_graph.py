@@ -255,9 +255,55 @@ class TestTraversal:
         assert "d1" not in ids
 
     def test_get_evolution_prefix(self, populated_graph: GraphStore) -> None:
-        evolution = populated_graph.get_evolution("src/models/base.py:BaseModel")
+        evolution = populated_graph.get_evolution(
+            "src/models/", prefix_match=True
+        )
         ids = {d.id for d in evolution}
         assert "d2" in ids
+        assert "d3" in ids
+
+    def test_get_evolution_exact_match_only(
+        self, populated_graph: GraphStore
+    ) -> None:
+        # Exact match: only the exact path returns results
+        evolution = populated_graph.get_evolution("src/models/")
+        assert len(evolution) == 0
+
+        evolution = populated_graph.get_evolution("src/services/io.py")
+        assert {d.id for d in evolution} == {"d1"}
+
+    def test_get_evolution_prefix_opt_in(
+        self, populated_graph: GraphStore
+    ) -> None:
+        # With prefix_match=True, directory prefix matches work
+        evolution = populated_graph.get_evolution(
+            "src/services/", prefix_match=True
+        )
+        assert {d.id for d in evolution} == {"d1"}
+
+        # Class entity with no direct edges: exact match finds the entity
+        # but it has no predecessors, so no decisions
+        evolution = populated_graph.get_evolution(
+            "src/models/base.py:BaseModel"
+        )
+        assert len(evolution) == 0
+
+    def test_decisions_for_entities_prefix_match(
+        self, populated_graph: GraphStore
+    ) -> None:
+        # Exact match (default) for partial path returns nothing
+        decisions = populated_graph.get_decisions_for_entities(
+            ["src/models/"]
+        )
+        assert len(decisions) == 0
+
+        # prefix_match=True matches directory prefixes
+        decisions = populated_graph.get_decisions_for_entities(
+            ["src/models/"], prefix_match=True
+        )
+        ids = {d.id for d in decisions}
+        assert "d3" in ids
+        # d2 links to entities via constraint, not directly, so not included
 
 
 class TestSaveLoad:
@@ -673,9 +719,12 @@ class TestSQLitePersistence:
             evo = gs.get_evolution("src/services/io.py")
             assert {d.id for d in evo} == {"d1"}
 
-            # Prefix match on constraint bound_entities:
-            # src/services/io.py starts with src/services/
+            # Exact match only: directory prefix returns nothing
             evo = gs.get_evolution("src/services/")
+            assert len(evo) == 0
+
+            # Prefix match opt-in
+            evo = gs.get_evolution("src/services/", prefix_match=True)
             assert {d.id for d in evo} == {"d1"}
             gs.close()
 
@@ -709,6 +758,16 @@ class TestSQLitePersistence:
             # No transitive through constraints
             decisions = gs.get_decisions_for_entities(["nonexistent"])
             assert len(decisions) == 0
+
+            # Prefix match: directory-level
+            decisions = gs.get_decisions_for_entities(
+                ["src/"], prefix_match=True
+            )
+            assert {d.id for d in decisions} == {"d-sql"}
+
+            # Exact match for directory returns nothing
+            decisions = gs.get_decisions_for_entities(["src/"])
+            assert len(decisions) == 0
             gs.close()
 
     def test_migration_creates_tables(self) -> None:
@@ -728,10 +787,231 @@ class TestSQLitePersistence:
             }
             expected = {
                 "decisions", "constraints", "entities", "edges",
-                "project_sources", "extraction_log",
+                "project_sources", "extraction_log", "audit_log",
             }
             assert expected.issubset(tables)
 
             version = conn.execute("PRAGMA user_version").fetchone()[0]
-            assert version == 1
+            assert version == 2
             conn.close()
+
+
+class TestSQLiteAuditLog:
+    """Tests that verify audit_log entries are written on mutations."""
+
+    def test_add_decision_logs_audit(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "test.db"
+            gs = GraphStore(db_path=str(db_path))
+
+            d = Decision(
+                id="d-audit",
+                title="Test Audit",
+                rationale="...",
+                source="t",
+                status=DecisionStatus.PROPOSED,
+                created_at="2024-01-01T00:00:00Z",
+                modified_at="2024-01-01T00:00:00Z",
+            )
+            gs.add_decision(d)
+            gs.close()
+
+            conn = sqlite3.connect(str(db_path))
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                "SELECT * FROM audit_log WHERE entity_id = ? ORDER BY id",
+                ("d-audit",),
+            ).fetchall()
+            assert len(rows) == 1
+            assert rows[0]["entity_type"] == "decision"
+            assert rows[0]["action"] == "add"
+            details = json.loads(rows[0]["details"])
+            assert details["title"] == "Test Audit"
+            assert details["status"] == "proposed"
+            conn.close()
+
+    def test_add_decision_modify_logs_audit(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "test.db"
+            gs = GraphStore(db_path=str(db_path))
+
+            d1 = Decision(
+                id="d-audit",
+                title="First",
+                rationale="...",
+                source="t",
+                status=DecisionStatus.PROPOSED,
+                created_at="2024-01-01T00:00:00Z",
+                modified_at="2024-01-01T00:00:00Z",
+            )
+            d2 = Decision(
+                id="d-audit",
+                title="Second",
+                rationale="...",
+                source="t",
+                status=DecisionStatus.ACCEPTED,
+                created_at="2024-01-02T00:00:00Z",
+                modified_at="2024-01-02T00:00:00Z",
+            )
+            gs.add_decision(d1)
+            gs.add_decision(d2)
+            gs.close()
+
+            conn = sqlite3.connect(str(db_path))
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                "SELECT * FROM audit_log WHERE entity_id = ? ORDER BY id",
+                ("d-audit",),
+            ).fetchall()
+            assert len(rows) == 2
+            assert rows[0]["action"] == "add"
+            assert rows[1]["action"] == "modify"
+            conn.close()
+
+    def test_add_constraint_logs_audit(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "test.db"
+            gs = GraphStore(db_path=str(db_path))
+
+            c = Constraint(
+                id="c-audit",
+                description="A new constraint",
+                source="t",
+                status="active",
+                created_at="2024-01-01T00:00:00Z",
+            )
+            gs.add_constraint(c)
+            gs.close()
+
+            conn = sqlite3.connect(str(db_path))
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                "SELECT * FROM audit_log WHERE entity_id = ?",
+                ("c-audit",),
+            ).fetchall()
+            assert len(rows) == 1
+            assert rows[0]["entity_type"] == "constraint"
+            assert rows[0]["action"] == "add"
+            details = json.loads(rows[0]["details"])
+            assert details["description"] == "A new constraint"
+            assert details["status"] == "active"
+            conn.close()
+
+    def test_add_code_entity_logs_audit(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "test.db"
+            gs = GraphStore(db_path=str(db_path))
+
+            e = CodeEntity(
+                id="src/test.py",
+                type=EntityType.FILE,
+                repo="my-repo",
+            )
+            gs.add_code_entity(e)
+            gs.close()
+
+            conn = sqlite3.connect(str(db_path))
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                "SELECT * FROM audit_log WHERE entity_id = ?",
+                ("src/test.py",),
+            ).fetchall()
+            assert len(rows) == 1
+            assert rows[0]["entity_type"] == "entity"
+            assert rows[0]["action"] == "add"
+            details = json.loads(rows[0]["details"])
+            assert details["type"] == "file"
+            conn.close()
+
+    def test_link_logs_audit(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "test.db"
+            gs = GraphStore(db_path=str(db_path))
+
+            d = Decision(
+                id="d-edge",
+                title="Edge test",
+                rationale="...",
+                source="t",
+                status=DecisionStatus.ACCEPTED,
+                created_at="2024-01-01T00:00:00Z",
+                modified_at="2024-01-01T00:00:00Z",
+            )
+            e = CodeEntity(
+                id="src/edge.py",
+                type=EntityType.FILE,
+                repo="",
+            )
+            gs.add_decision(d)
+            gs.add_code_entity(e)
+            gs.link("d-edge", "src/edge.py", "affects")
+            gs.close()
+
+            conn = sqlite3.connect(str(db_path))
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                "SELECT * FROM audit_log WHERE entity_type = ? ORDER BY id",
+                ("edge",),
+            ).fetchall()
+            assert len(rows) == 1
+            assert rows[0]["action"] == "link"
+            details = json.loads(rows[0]["details"])
+            assert details["source"] == "d-edge"
+            assert details["target"] == "src/edge.py"
+            assert details["relation"] == "affects"
+            conn.close()
+
+    def test_set_node_payload_logs_audit(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "test.db"
+            gs = GraphStore(db_path=str(db_path))
+
+            d = Decision(
+                id="d-mod",
+                title="Payload Test",
+                rationale="...",
+                source="t",
+                status=DecisionStatus.ACCEPTED,
+                created_at="2024-01-01T00:00:00Z",
+                modified_at="2024-01-01T00:00:00Z",
+            )
+            gs.add_decision(d)
+
+            # Clear audit entries from add_decision to isolate set_node_payload test
+            conn = gs._conn
+            assert conn is not None
+            conn.execute("DELETE FROM audit_log")
+            conn.commit()
+
+            gs.set_node_payload("d-mod", {"title": "Updated Payload", "status": "accepted"})
+            gs.close()
+
+            conn2 = sqlite3.connect(str(db_path))
+            conn2.row_factory = sqlite3.Row
+            rows = conn2.execute(
+                "SELECT * FROM audit_log WHERE entity_id = ? ORDER BY id",
+                ("d-mod",),
+            ).fetchall()
+            assert len(rows) == 1
+            assert rows[0]["entity_type"] == "decision"
+            assert rows[0]["action"] == "modify"
+            details = json.loads(rows[0]["details"])
+            assert "changed_keys" in details
+            conn2.close()
+
+    def test_audit_log_not_written_without_conn(self) -> None:
+        """Mutation methods don't crash when no SQLite connection is active."""
+        gs = GraphStore()  # No db_path
+        d = Decision(
+            id="d-noaudit",
+            title="No Audit",
+            rationale="...",
+            source="t",
+            status=DecisionStatus.ACCEPTED,
+            created_at="2024-01-01T00:00:00Z",
+            modified_at="2024-01-01T00:00:00Z",
+        )
+        gs.add_decision(d)  # Should not raise
+        gs.link("d-noaudit", "d-noaudit", "self")
+        gs.set_node_payload("d-noaudit", {"x": 1})
+        # No assertions needed — just verifying no crash
