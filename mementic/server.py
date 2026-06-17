@@ -43,8 +43,7 @@ def _load_graph(project: str | None = None) -> tuple[GraphStore, MementicConfig]
     Returns:
         A tuple of (GraphStore, MementicConfig).
     """
-    config_path = os.environ.get("MEMENTIC_CONFIG", ".mementic.json")
-    cfg = load_config(config_path)
+    cfg = load_config(repo_path=_repo_from_env())
 
     # Try project database first
     try:

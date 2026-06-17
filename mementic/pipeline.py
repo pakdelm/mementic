@@ -1,18 +1,23 @@
 from __future__ import annotations
 
-import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from mementic.config import load_config
+from mementic.config import MementicConfig, load_config
+from mementic.deterministic import (
+    extract_constraints_from_consequences,
+    extract_from_markdown,
+    extract_from_session_deterministic,
+)
 from mementic.extraction import (
     extract_from_adr_consequences,
     extract_from_codebase_summary,
     extract_from_freeform,
+    extract_from_session,
 )
-from mementic.format import slugify
+from mementic.format import find_file_paths, slugify
 from mementic.graph import GraphStore
 from mementic.models import (
     CodeEntity,
@@ -24,7 +29,7 @@ from mementic.models import (
     UsageStats,
 )
 from mementic.sources.adr import scan_adr_dir
-from mementic.sources.codebase import scan_codebase_structure
+from mementic.sources.codebase import collect_markdown_files, scan_codebase_structure
 from mementic.sources.opencode import scan_opencode_instructions
 
 
@@ -33,12 +38,6 @@ def _entity_id(repo_path: str | None, relative_path: str) -> str:
     if repo_path:
         return f"{repo_path}::{relative_path}"
     return relative_path
-
-
-def find_file_paths(text: str) -> list[str]:
-    """Find potential file paths in text matching common source file patterns."""
-    pattern = r"[\w/\-]+\.(?:py|ts|js|java|go|rs|rb|yaml|yml|json|toml|md)\b"
-    return list(set(re.findall(pattern, text)))
 
 
 def _status_from_adr(status: str) -> DecisionStatus:
@@ -163,18 +162,111 @@ def _backfill_decision_edges(
     return count
 
 
+def _zero_usage() -> UsageStats:
+    """Return a zero-token UsageStats for deterministic extraction calls."""
+    return UsageStats(model="deterministic", status="success")
+
+
+def _should_use_llm(cfg: MementicConfig) -> bool:
+    """Check if LLM extraction should be attempted based on mode and key presence."""
+    mode = cfg.llm.extraction_mode
+    if mode == "deterministic":
+        return False
+    if mode == "llm":
+        return True
+    # auto: use LLM only if key is present
+    return cfg.llm.get_api_key() is not None
+
+
+def _extract_markdown(
+    content: str, source_label: str, cfg: MementicConfig
+) -> tuple[ExtractionResult, UsageStats]:
+    """Dispatch markdown extraction by mode. Falls back to deterministic on LLM failure."""
+    if not _should_use_llm(cfg):
+        return extract_from_markdown(content, source_label), _zero_usage()
+    try:
+        return extract_from_freeform(content, source_label, cfg.llm)
+    except Exception:
+        if cfg.llm.extraction_mode == "llm":
+            raise
+        sys.stderr.write("LLM unavailable, falling back to deterministic.\n")
+        return extract_from_markdown(content, source_label), _zero_usage()
+
+
+def _extract_consequences(
+    consequences_text: str,
+    source_label: str,
+    decision_id: str,
+    cfg: MementicConfig,
+) -> tuple[list[Constraint], UsageStats]:
+    """Dispatch ADR consequences extraction by mode."""
+    if not _should_use_llm(cfg):
+        return (
+            extract_constraints_from_consequences(
+                consequences_text, source_label, decision_id
+            ),
+            _zero_usage(),
+        )
+    try:
+        return extract_from_adr_consequences(consequences_text, cfg.llm)
+    except Exception:
+        if cfg.llm.extraction_mode == "llm":
+            raise
+        sys.stderr.write("LLM unavailable, falling back to deterministic.\n")
+        return (
+            extract_constraints_from_consequences(
+                consequences_text, source_label, decision_id
+            ),
+            _zero_usage(),
+        )
+
+
+def _extract_session(
+    session_log: str,
+    git_diff: str,
+    user_notes: str,
+    cfg: MementicConfig,
+    max_messages: int = 50,
+    custom_keywords: list[str] | None = None,
+) -> tuple[ExtractionResult, UsageStats]:
+    """Dispatch session extraction by mode."""
+    if not _should_use_llm(cfg):
+        result = extract_from_session_deterministic(
+            session_log, git_diff, user_notes, max_messages, custom_keywords
+        )
+        return result, _zero_usage()
+    try:
+        return extract_from_session(
+            session_log,
+            git_diff,
+            user_notes,
+            cfg.llm,
+            max_messages=max_messages,
+            custom_keywords=custom_keywords,
+        )
+    except Exception:
+        if cfg.llm.extraction_mode == "llm":
+            raise
+        sys.stderr.write("LLM unavailable, falling back to deterministic.\n")
+        result = extract_from_session_deterministic(
+            session_log, git_diff, user_notes, max_messages, custom_keywords
+        )
+        return result, _zero_usage()
+
+
 def run_init(
-    config_path: str = ".mementic.json",
     repo_path: str | None = None,
     no_scan: bool = False,
     db_path: str | None = None,
+    project: str | None = None,
 ) -> tuple[GraphStore, list[UsageStats]]:
     """Initialize the knowledge graph from all configured sources.
 
     When ``repo_path`` is provided (or CWD is auto-detected as a codebase),
     a deterministic structural scan runs first to detect architectural
     patterns from the codebase itself. This is skipped when ``no_scan``
-    is True or when no codebase indicators are found.
+    is True, when no codebase indicators are found, or when LLM extraction
+    is unavailable (the structural scan has no deterministic equivalent).
 
     When ``db_path`` is provided, the graph is persisted to SQLite instead
     of the legacy JSON file.  Entity IDs are namespaced with the repo path
@@ -182,22 +274,23 @@ def run_init(
     entities.
 
     Args:
-        config_path: Path to .mementic.json config.
         repo_path: Optional path to the repository root for codebase scanning.
         no_scan: If True, skip the codebase structural scan.
         db_path: Optional path to a SQLite database for persistent storage.
+        project: Optional project name to scope the loaded configuration.
 
     Returns:
         A tuple of (GraphStore, list[UsageStats]) — usage stats from all
         LLM extraction calls made during init.
     """
-    cfg = load_config(config_path)
+    cfg = load_config(repo_path=repo_path, project=project)
     graph = GraphStore(db_path=db_path) if db_path else GraphStore()
     all_usage: list[UsageStats] = []
 
-    # Phase 1: Codebase structural scan (Spec 12a) — cold-start killer
-    # Only runs when repo_path is explicitly provided (auto-detection is CLI concern)
-    if repo_path and not no_scan:
+    # Phase 1: Codebase structural scan (Spec 12a) — cold-start killer.
+    # Only runs when repo_path is explicitly provided (auto-detection is CLI
+    # concern) and an LLM is available (no deterministic equivalent exists).
+    if repo_path and not no_scan and _should_use_llm(cfg):
         summary = scan_codebase_structure(repo_path)
         if summary.strip():
             result, usage = extract_from_codebase_summary(summary, cfg.llm)
@@ -211,6 +304,14 @@ def run_init(
                 graph, result, source_path=f"repo:{repo_path}",
                 repo_path=repo_path,
             )
+
+    # Phase 0: Repo-wide markdown scan (Spec 15) — deterministic-friendly cold start
+    if repo_path:
+        md_files = collect_markdown_files(repo_path)
+        for md_relpath, md_content in md_files:
+            result, usage = _extract_markdown(md_content, md_relpath, cfg)
+            all_usage.append(usage)
+            _ingest_result(graph, result, source_path=md_relpath, repo_path=repo_path)
 
     for adr_source in cfg.sources.adr_dirs:
         if not Path(adr_source.path).is_dir():
@@ -237,7 +338,9 @@ def run_init(
             _add_decision_dedup(graph, decision)
 
             if adr.consequences.strip():
-                constraints, usage = extract_from_adr_consequences(adr.consequences, cfg.llm)
+                constraints, usage = _extract_consequences(
+                    adr.consequences, adr.path, decision_id, cfg
+                )
                 all_usage.append(usage)
                 for c in constraints:
                     c.repo = repo_path or ""
@@ -263,7 +366,7 @@ def run_init(
             continue
         instructions = scan_opencode_instructions(oc_source.path)
         for instr in instructions:
-            result, usage = extract_from_freeform(instr.content, instr.path, cfg.llm)
+            result, usage = _extract_markdown(instr.content, instr.path, cfg)
             all_usage.append(usage)
             _ingest_result(graph, result, instr.path, repo_path=repo_path)
 
@@ -275,21 +378,21 @@ def run_init(
             continue
         instructions = scan_opencode_instructions(claude_source.path)
         for instr in instructions:
-            result, usage = extract_from_freeform(instr.content, instr.path, cfg.llm)
+            result, usage = _extract_markdown(instr.content, instr.path, cfg)
             all_usage.append(usage)
             _ingest_result(graph, result, instr.path, repo_path=repo_path)
 
     for cursor_source in cfg.sources.cursor_instructions:
         instructions = scan_opencode_instructions(cursor_source.path)
         for instr in instructions:
-            result, usage = extract_from_freeform(instr.content, instr.path, cfg.llm)
+            result, usage = _extract_markdown(instr.content, instr.path, cfg)
             all_usage.append(usage)
             _ingest_result(graph, result, instr.path, repo_path=repo_path)
 
     for windsurf_source in cfg.sources.windsurf_instructions:
         instructions = scan_opencode_instructions(windsurf_source.path)
         for instr in instructions:
-            result, usage = extract_from_freeform(instr.content, instr.path, cfg.llm)
+            result, usage = _extract_markdown(instr.content, instr.path, cfg)
             all_usage.append(usage)
             _ingest_result(graph, result, instr.path, repo_path=repo_path)
 

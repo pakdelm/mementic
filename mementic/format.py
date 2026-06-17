@@ -29,6 +29,19 @@ def count_tokens(text: str) -> int:
         return len(text) // 4
 
 
+def find_file_paths(text: str) -> list[str]:
+    """Find potential file paths in text matching common source file patterns.
+
+    Args:
+        text: The text to scan for file paths.
+
+    Returns:
+        A list of unique file path strings found in the text.
+    """
+    pattern = r"[\w/\-]+\.(?:py|ts|js|java|go|rs|rb|yaml|yml|json|toml|md)\b"
+    return list(set(re.findall(pattern, text)))
+
+
 def slugify(text: str, max_length: int | None = None) -> str:
     """Convert text to URL-friendly ID. Lowercase, hyphens, strip special chars.
 

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import os
 
 from mementic.graph import GraphStore
@@ -196,43 +195,49 @@ class TestGenerateHtmlGraph:
 class TestGraphCommandCli:
     """Tests for the mementic graph CLI command."""
 
-    def test_graph_command_writes_file(self, tmp_path) -> None:
+    @staticmethod
+    def _populate_project_db() -> None:
+        """Create a decision in the registered project's SQLite db.
+
+        Uses the global config pointed at by MEMENTIC_GLOBAL_CONFIG
+        (set up by the tmp_global_config fixture) to resolve the
+        project's db_path, then writes a single decision through a
+        GraphStore backed by that database.
+        """
+        from mementic.config import resolve_project
+        from mementic.models import Decision, DecisionStatus
+
+        proj_name, global_cfg = resolve_project(None)
+        db_path = global_cfg.projects[proj_name].db_path
+
+        gs = GraphStore(db_path=db_path)
+        gs.add_decision(
+            Decision(
+                id="d1",
+                title="Test decision",
+                rationale="For testing",
+                source="test",
+                status=DecisionStatus.ACCEPTED,
+                created_at="2024-01-01T00:00:00Z",
+                modified_at="2024-01-01T00:00:00Z",
+            )
+        )
+        gs.close()
+
+    def test_graph_command_writes_file(self, tmp_global_config, tmp_path) -> None:
         """mementic graph -o writes the HTML file to the specified path."""
         from typer.testing import CliRunner
 
         from mementic.cli import app
 
+        _config_path, repo_path = tmp_global_config
+        self._populate_project_db()
+
         runner = CliRunner()
         old_cwd = os.getcwd()
         try:
-            os.chdir(tmp_path)
+            os.chdir(repo_path)
             output_file = tmp_path / "test_graph.html"
-
-            config = {
-                "sources": {"adr_dirs": [], "opencode_instructions": []},
-                "output": {"graph_path": str(tmp_path / ".mementic" / "graph.json")},
-                "llm": {"provider": "deepseek", "model": "deepseek-chat"},
-            }
-
-            (tmp_path / ".mementic").mkdir(parents=True, exist_ok=True)
-            (tmp_path / ".mementic.json").write_text(json.dumps(config))
-
-            from mementic.graph import GraphStore
-            from mementic.models import Decision, DecisionStatus
-
-            gs = GraphStore()
-            gs.add_decision(
-                Decision(
-                    id="d1",
-                    title="Test decision",
-                    rationale="For testing",
-                    source="test",
-                    status=DecisionStatus.ACCEPTED,
-                    created_at="2024-01-01T00:00:00Z",
-                    modified_at="2024-01-01T00:00:00Z",
-                )
-            )
-            gs.save(str(tmp_path / ".mementic" / "graph.json"))
 
             result = runner.invoke(
                 app,
@@ -247,42 +252,21 @@ class TestGraphCommandCli:
         finally:
             os.chdir(old_cwd)
 
-    def test_graph_command_invalid_filter_exits_with_error(self, tmp_path) -> None:
+    def test_graph_command_invalid_filter_exits_with_error(
+        self, tmp_global_config, tmp_path
+    ) -> None:
         """Invalid --filter value produces an error message."""
         from typer.testing import CliRunner
 
         from mementic.cli import app
 
+        _config_path, repo_path = tmp_global_config
+        self._populate_project_db()
+
         runner = CliRunner()
         old_cwd = os.getcwd()
         try:
-            os.chdir(tmp_path)
-
-            config = {
-                "sources": {"adr_dirs": [], "opencode_instructions": []},
-                "output": {"graph_path": str(tmp_path / ".mementic" / "graph.json")},
-                "llm": {"provider": "deepseek", "model": "deepseek-chat"},
-            }
-
-            (tmp_path / ".mementic").mkdir(parents=True, exist_ok=True)
-            (tmp_path / ".mementic.json").write_text(json.dumps(config))
-
-            from mementic.graph import GraphStore
-            from mementic.models import Decision, DecisionStatus
-
-            gs = GraphStore()
-            gs.add_decision(
-                Decision(
-                    id="d1",
-                    title="Test",
-                    rationale="Test",
-                    source="test",
-                    status=DecisionStatus.ACCEPTED,
-                    created_at="2024-01-01T00:00:00Z",
-                    modified_at="2024-01-01T00:00:00Z",
-                )
-            )
-            gs.save(str(tmp_path / ".mementic" / "graph.json"))
+            os.chdir(repo_path)
 
             result = runner.invoke(
                 app,

@@ -6,6 +6,7 @@ import json
 import os
 import sys
 from pathlib import Path
+from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -31,6 +32,7 @@ __all__ = [
     "get_provider_config",
     "load_config",
     "load_global_config",
+    "migrate_legacy_config",
     "resolve_project",
     "save_global_config",
 ]
@@ -164,6 +166,7 @@ class LLMConfig(BaseModel):
     provider: str = DEFAULT_PROVIDER
     model: str = DEFAULT_MODEL
     extraction_model: str = DEFAULT_MODEL
+    extraction_mode: Literal["auto", "deterministic", "llm"] = "auto"
 
     @model_validator(mode="after")
     def _validate_provider(self: LLMConfig) -> LLMConfig:
@@ -229,63 +232,68 @@ class MementicConfig(BaseModel):
     llm: LLMConfig = Field(default_factory=LLMConfig)
 
 
-def load_config(path: str = ".mementic.json") -> MementicConfig:
-    """Load and validate config from a JSON file, merging global overrides.
+def load_config(repo_path: str | None = None, project: str | None = None) -> MementicConfig:
+    """Assemble MementicConfig from global config + repo entry.
 
-    If no explicit path is given, checks the MEMENTIC_CONFIG environment
-    variable first, then falls back to .mementic.json.
-
-    When the per-repo config is missing ``llm`` or ``sessions`` sections,
-    the values from ``~/.mementic/config.json`` (the global config) are
-    used as fallbacks.  This allows migrating shared configuration out of
-    per-repo files without breaking existing setups.
+    No longer reads .mementic.json. Sources come from the RepoEntry
+    matching repo_path in the global config. LLM and sessions come
+    from the global config.
 
     Args:
-        path: Path to the JSON configuration file. If the default
-            (".mementic.json") and MEMENTIC_CONFIG is set, that variable
-            is used instead.
+        repo_path: Path to the repository root. When None or not matching
+            a registered repo, returns defaults with empty sources.
+        project: Optional project name to resolve within.
 
     Returns:
-        A validated MementicConfig instance. Returns defaults for missing fields
-        or when the file does not exist.
-
-    Raises:
-        ValidationError: If the JSON file contains invalid field types, values,
-            or an unknown LLM provider.
+        A composed MementicConfig.
     """
-    # Respect MEMENTIC_CONFIG env var when no explicit path given
-    if path == ".mementic.json":
-        path = os.environ.get("MEMENTIC_CONFIG", path)
-
-    config_file = Path(path)
-    if not config_file.is_file():
-        return MementicConfig()
-
-    try:
-        data = json.loads(config_file.read_text(encoding="utf-8"))
-    except json.JSONDecodeError:
-        sys.stderr.write(
-            f"Config file {config_file} is corrupt. "
-            "Run 'mementic init' to regenerate.\n"
-        )
-        return MementicConfig()
-
-    config = MementicConfig.model_validate(data)
-
-    # Merge global fallbacks for missing shared sections
-    if data.get("llm") and data.get("sessions"):
-        return config  # both present — no merge needed
     try:
         global_cfg = load_global_config()
     except Exception:
-        return config  # global config unavailable, use what we have
+        return MementicConfig()
 
-    if not data.get("llm"):
-        config.llm = global_cfg.llm
-    if not data.get("sessions"):
-        config.sessions = global_cfg.sessions
+    if repo_path is None:
+        return MementicConfig(
+            llm=global_cfg.llm,
+            sessions=global_cfg.sessions,
+        )
 
-    return config
+    try:
+        resolved_repo = Path(repo_path).resolve()
+    except (OSError, ValueError):
+        return MementicConfig(
+            llm=global_cfg.llm,
+            sessions=global_cfg.sessions,
+        )
+
+    # Choose which projects to search
+    if project is not None:
+        proj_entries = global_cfg.projects.get(project)
+        if proj_entries is None:
+            return MementicConfig(
+                llm=global_cfg.llm,
+                sessions=global_cfg.sessions,
+            )
+        projects_to_search = [(project, proj_entries)]
+    else:
+        projects_to_search = list(global_cfg.projects.items())
+
+    for _proj_name, proj_entry in projects_to_search:
+        for repo_entry in proj_entry.repos.values():
+            try:
+                if Path(repo_entry.path).resolve() == resolved_repo:
+                    return MementicConfig(
+                        sources=repo_entry.sources,
+                        llm=global_cfg.llm,
+                        sessions=global_cfg.sessions,
+                    )
+            except (OSError, ValueError):
+                continue
+
+    return MementicConfig(
+        llm=global_cfg.llm,
+        sessions=global_cfg.sessions,
+    )
 
 
 # ── Global config models ──────────────────────────────────────────────
@@ -301,6 +309,7 @@ class RepoEntry(BaseModel):
 
     path: str
     label: str = ""
+    sources: Sources = Field(default_factory=Sources)
 
 
 class ProjectEntry(BaseModel):
@@ -474,3 +483,71 @@ def _default_global_config() -> GlobalConfig:
     ``graph.json``.
     """
     return GlobalConfig()
+
+
+def migrate_legacy_config(repo_path: str | None = None) -> bool:
+    """Migrate .mementic.json to global config if it exists.
+
+    On first mementic init after upgrade, if .mementic.json exists in CWD,
+    read its sources, register the repo in ~/.mementic/config.json with
+    those sources, then rename .mementic.json to .mementic.json.bak.
+
+    Args:
+        repo_path: Path to the repository. Defaults to CWD.
+
+    Returns:
+        True if migration occurred, False if no .mementic.json found.
+    """
+    try:
+        repo_path = repo_path or str(Path.cwd())
+        legacy_file = Path(".mementic.json")
+        if not legacy_file.is_file():
+            return False
+
+        try:
+            data = json.loads(legacy_file.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            sys.stderr.write(
+                f"Warning: {legacy_file} is corrupt; skipping migration.\n"
+            )
+            return False
+
+        sources_data = data.get("sources")
+        if sources_data:
+            sources = Sources.model_validate(sources_data)
+        else:
+            sources = Sources()
+
+        try:
+            global_cfg = load_global_config()
+        except Exception:
+            global_cfg = _default_global_config()
+
+        # Ensure a default project exists
+        if not global_cfg.projects:
+            global_cfg.projects["main"] = ProjectEntry(
+                db_path="~/.mementic/projects/main.mementic.db",
+            )
+            global_cfg.default_project = "main"
+
+        default_proj = global_cfg.projects[global_cfg.default_project]
+        repo_abs = str(Path(repo_path).resolve())
+        repo_name = Path(repo_abs).name
+        default_proj.repos[repo_abs] = RepoEntry(
+            path=repo_abs,
+            label=repo_name,
+            sources=sources,
+        )
+
+        save_global_config(global_cfg)
+        legacy_file.rename(legacy_file.with_suffix(".json.bak"))
+        sys.stderr.write(
+            "Migrated .mementic.json to ~/.mementic/config.json "
+            "(backup at .mementic.json.bak)\n"
+        )
+        return True
+    except Exception as exc:  # noqa: BLE001 — never crash init over migration
+        sys.stderr.write(
+            f"Warning: .mementic.json migration failed: {exc}\n"
+        )
+        return False
