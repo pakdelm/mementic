@@ -60,8 +60,14 @@ def _truncate_entity_list(entities: list[str], max_chars: int = 80) -> str:
     """Join entity paths with ``", "``, truncating with ``"..."`` past a limit.
 
     Guards against a single item with many bound files blowing the token
-    budget. The ellipsis is appended *after* truncation, so the returned
-    string may be up to ``max_chars + 3`` characters long.
+    budget. Truncation happens at the last complete ``, `` separator at or
+    before ``max_chars`` so a path is never split mid-token — a partial path
+    like ``src/modu...`` could be mistaken for a real file by the LLM. If no
+    separator exists before ``max_chars`` (a single very long path), a hard
+    character-boundary cut is used as a fallback.
+
+    The ellipsis is appended *after* truncation, so the returned string may
+    be up to ``max_chars + 3`` characters long.
 
     Args:
         entities: List of entity path strings.
@@ -74,7 +80,12 @@ def _truncate_entity_list(entities: list[str], max_chars: int = 80) -> str:
     """
     joined = ", ".join(entities)
     if len(joined) > max_chars:
-        return joined[:max_chars] + "..."
+        cut = joined.rfind(", ", 0, max_chars)
+        if cut == -1:
+            # No separator before the limit: single very long path. Fall
+            # back to a hard character-boundary cut.
+            return joined[:max_chars] + "..."
+        return joined[:cut] + "..."
     return joined
 
 

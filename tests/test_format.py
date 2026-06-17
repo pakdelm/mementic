@@ -693,3 +693,26 @@ class TestCompactEntityEnrichment:
 
     def test_truncate_entity_list_empty(self) -> None:
         assert _truncate_entity_list([]) == ""
+
+    def test_truncate_entity_list_at_separator_boundary(self) -> None:
+        """Truncation cuts at the last `, ` boundary, not mid-token.
+
+        Regression: previously used ``joined[:max_chars]``, which could split
+        a path like ``src/modu...`` leaving a partial path that looks real.
+        """
+        entities = ["src/very/deep/module/path_one.py",
+                    "src/very/deep/module/path_two.py",
+                    "src/very/deep/module/path_three.py"]
+        result = _truncate_entity_list(entities, max_chars=50)
+        assert result.endswith("...")
+        # No partial path token should appear: every comma-delimited segment
+        # in the output must be a complete entry from the input.
+        body = result[:-3]  # drop the ellipsis
+        for segment in body.split(", "):
+            assert segment in entities, f"partial path leaked: {segment!r}"
+
+    def test_truncate_entity_list_single_long_path_fallback(self) -> None:
+        """When no separator fits, fall back to a hard char-boundary cut."""
+        long_path = "a" * 200
+        result = _truncate_entity_list([long_path], max_chars=50)
+        assert result == "a" * 50 + "..."

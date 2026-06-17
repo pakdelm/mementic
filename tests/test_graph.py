@@ -749,6 +749,51 @@ class TestSQLitePersistence:
         assert rows["d-sup"] == "deprecated"
         gs.close()
 
+    def test_migration_v4_normalizes_mixedcase_statuses(self, tmp_path: Path) -> None:
+        """v4 migration matches legacy statuses case-insensitively.
+
+        Regression: the original migration used exact-match ``WHERE status =
+        'proposed'`` while the Decision validator coerces case-insensitively.
+        Hand-edited rows like ``Proposed`` / ``SUPERSEDED`` slipped past the
+        migration but got normalized in-memory, producing SQLite/NetworkX
+        drift until the next write-back.
+        """
+        db_path = tmp_path / "mixedcase.db"
+
+        conn = sqlite3.connect(str(db_path))
+        conn.row_factory = sqlite3.Row
+        GraphStore._migrate_schema(conn)
+        # Roll back to v3 and insert mixed-case legacy statuses.
+        conn.execute("PRAGMA user_version = 3")
+        conn.execute(
+            "INSERT INTO decisions (id, title, status, rationale, source, repo, "
+            "affected_entities, rejected_alternatives, author, tags, "
+            "created_at, modified_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            ("d-prop", "Proposed", "Proposed", "r", "t", "", "[]", "[]",
+             "unknown", "[]", "2024-01-01T00:00:00Z", "2024-01-01T00:00:00Z"),
+        )
+        conn.execute(
+            "INSERT INTO decisions (id, title, status, rationale, source, repo, "
+            "affected_entities, rejected_alternatives, author, tags, "
+            "created_at, modified_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            ("d-sup", "Superseded", "SUPERSEDED", "r", "t", "", "[]", "[]",
+             "unknown", "[]", "2024-01-01T00:00:00Z", "2024-01-01T00:00:00Z"),
+        )
+        conn.commit()
+        conn.close()
+
+        gs = GraphStore(db_path=db_path)
+        assert gs._conn is not None
+        rows = {
+            row["id"]: row["status"]
+            for row in gs._conn.execute("SELECT id, status FROM decisions")
+        }
+        assert rows["d-prop"] == "accepted"
+        assert rows["d-sup"] == "deprecated"
+        gs.close()
+
     def test_clean_dead_references_normalizes_legacy_status(self) -> None:
         """Step 7 of clean_dead_references normalizes legacy Decision statuses."""
         gs = GraphStore()  # NetworkX-only mode, no db_path

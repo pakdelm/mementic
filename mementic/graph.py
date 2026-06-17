@@ -169,9 +169,12 @@ class GraphStore:
         if version < 4:
             conn.executescript(
                 """
-                -- Normalize legacy DecisionStatus values removed in Spec 13
-                UPDATE decisions SET status = 'deprecated' WHERE status = 'superseded';
-                UPDATE decisions SET status = 'accepted' WHERE status = 'proposed';
+                -- Normalize legacy DecisionStatus values removed in Spec 13.
+                -- LOWER() matches the case-insensitive coercion in the
+                -- Decision validator, so hand-edited rows like 'Proposed'
+                -- or 'SUPERSEDED' are migrated too.
+                UPDATE decisions SET status = 'deprecated' WHERE LOWER(status) = 'superseded';
+                UPDATE decisions SET status = 'accepted' WHERE LOWER(status) = 'proposed';
                 PRAGMA user_version = 4;
                 """
             )

@@ -692,8 +692,21 @@ class TestStripSessionNoise:
         """Plain text without opencode log metadata passes through unchanged."""
         raw = "Just a normal sentence.\nAnother line here."
         cleaned = _strip_session_noise(raw)
-        assert "Just a normal sentence." in cleaned
-        assert "Another line here." in cleaned
+        # Byte-identity, not just containment: non-opencode text must not be
+        # mutated (no blank-line stripping, no hash= heuristic).
+        assert cleaned == raw
+
+    def test_non_opencode_hash_line_preserved(self) -> None:
+        """Non-opencode text with `hash=` but no `message=` is not dropped.
+
+        Regression: previously the `hash=` heuristic fired on any input,
+        which would silently drop a Claude-style transcript line like
+        ``[agent] checked the hash=abc123 commit``.
+        """
+        raw = "[agent] checked the hash=abc123 commit\n[user] ok"
+        cleaned = _strip_session_noise(raw)
+        assert cleaned == raw
+        assert "hash=abc123" in cleaned
 
     def test_empty_input(self) -> None:
         """Empty string returns empty string."""

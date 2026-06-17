@@ -55,8 +55,13 @@ _LOG_PREFIX_PATTERN = re.compile(
 def _strip_session_noise(text: str) -> str:
     """Strip opencode operational log noise from session text.
 
+    Only operates on text in opencode log format (at least one line carries
+    the ``timestamp=... level=... run=...`` prefix). Plain text without that
+    marker is returned unchanged so non-opencode sessions (Claude-style
+    ``[user]`` / ``[agent]`` transcripts, freeform notes) are not mutated.
+
     Removes: timestamp/level/run prefixes, tracking lines (hash/cwd/git
-    metadata), and permission evaluation lines.  Keeps message content.
+    metadata), and blank lines. Keeps message content.
 
     Args:
         text: Raw session log text.
@@ -65,6 +70,13 @@ def _strip_session_noise(text: str) -> str:
         Cleaned text, or original if not in opencode log format.
     """
     if not text.strip():
+        return text
+
+    # Detect opencode log format: at least one line carries the prefix.
+    # Without this guard, blank-line stripping and the hash= heuristic would
+    # mutate non-opencode text (e.g. drop a Claude-style line mentioning a
+    # git hash that has no `message=` field).
+    if not any(_LOG_PREFIX_PATTERN.search(line) for line in text.split("\n")):
         return text
 
     lines = text.split("\n")
