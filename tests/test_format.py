@@ -9,6 +9,7 @@ from mementic.format import (
     _compact_constraint_line,
     _compact_decision_line,
     _compact_evolution_line,
+    _truncate_entity_list,
     count_tokens,
     format_context_pack,
     format_evolution,
@@ -52,7 +53,7 @@ def make_constraint(
     return Constraint(
         id=id,
         description=description,
-        bound_entities=["src/io.py"],
+        bound_entities=[],
         enforced_by=enforced_by,
         source=source,
         status=status,
@@ -619,3 +620,76 @@ class TestCountTokens:
         """With tiktoken available, returns a positive count for real text."""
         result = count_tokens("the quick brown fox jumps over the lazy dog")
         assert result > 0
+
+
+# ======================================================================
+# Compact entity enrichment (bound / affects)
+# ======================================================================
+
+
+def _make_constraint_with_entities(bound_entities: list[str]) -> Constraint:
+    """Build a Constraint with explicit bound_entities for enrichment tests."""
+    return Constraint(
+        id="c-1",
+        description="Hard rule",
+        bound_entities=bound_entities,
+        enforced_by="d-1",
+        source="test",
+        status="active",
+        created_at="2024-01-01T00:00:00Z",
+    )
+
+
+def _make_decision_with_entities(affected_entities: list[str]) -> Decision:
+    """Build a Decision with explicit affected_entities for enrichment tests."""
+    return Decision(
+        id="d-1",
+        title="Title",
+        rationale="Why",
+        rejected_alternatives=[],
+        source="test",
+        status=DecisionStatus.ACCEPTED,
+        created_at="2024-01-01T00:00:00Z",
+        modified_at="2024-01-01T00:00:00Z",
+        affected_entities=affected_entities,
+    )
+
+
+class TestCompactEntityEnrichment:
+    def test_compact_constraint_line_includes_bound_entities(self) -> None:
+        c_obj = _make_constraint_with_entities(["models.py"])
+        line = _compact_constraint_line(c_obj)
+        assert "bound: models.py" in line
+
+    def test_compact_constraint_line_omits_bound_when_empty(self) -> None:
+        c_obj = _make_constraint_with_entities([])
+        line = _compact_constraint_line(c_obj)
+        assert "bound:" not in line
+
+    def test_compact_decision_line_includes_affected_entities(self) -> None:
+        d_obj = _make_decision_with_entities(["cli.py"])
+        line = _compact_decision_line(d_obj)
+        assert "affects: cli.py" in line
+
+    def test_compact_decision_line_omits_affects_when_empty(self) -> None:
+        d_obj = _make_decision_with_entities([])
+        line = _compact_decision_line(d_obj)
+        assert "affects:" not in line
+
+    def test_compact_line_truncates_long_entity_list(self) -> None:
+        long_paths = [f"src/very/deep/module/path_{i}.py" for i in range(20)]
+        c_obj = _make_constraint_with_entities(long_paths)
+        line = _compact_constraint_line(c_obj)
+        assert "..." in line
+
+        # Extract the bound portion (after "bound: " up to the closing paren)
+        start = line.index("bound: ") + len("bound: ")
+        end = line.rindex(")")
+        bound_portion = line[start:end]
+        assert len(bound_portion) <= 83  # 80 + 3 for the ellipsis
+
+    def test_truncate_entity_list_short(self) -> None:
+        assert _truncate_entity_list(["a.py", "b.py"]) == "a.py, b.py"
+
+    def test_truncate_entity_list_empty(self) -> None:
+        assert _truncate_entity_list([]) == ""

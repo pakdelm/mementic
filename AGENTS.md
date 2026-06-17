@@ -7,53 +7,42 @@ This is a Python project.
 This project dogfoods Mementic as its own architectural memory layer. These rules
 are not optional. They apply to **every task, every session, no exceptions.**
 
-**Why:** The instruction files, ADRs, and specs are the *source* of architectural
-knowledge. The graph is the *compressed index*. Reading all source files before
-every task wastes tokens. Instead, the graph returns only the constraints and
-decisions relevant to the files you are about to touch.
-
-**Token discipline — primary vs. secondary sources, in order:**
-
-1. **Primary (always):** the context pack from `mementic_get_context_pack`.
-   It is the compressed index. It costs a fraction of the tokens that raw ADR
-   and instruction files would. Read it first, every time.
-
-2. **Secondary (only when needed):** the raw ADR and instruction files on disk.
-   Use them to resolve ambiguity, verify a constraint's full rationale, or find
-   details the context pack omitted. If the context pack says nothing relevant
-   to the files you're touching, do not read ADRs just to check — you have
-   your answer.
-
-3. **Never:** read all ADRs and instruction files as a batch before every task.
-   That is exactly the token waste the graph was built to eliminate.
+The context pack replaces reading **ADRs, specs, and instruction files** — it
+tells you WHAT rules exist. It does NOT replace reading the **code you are about
+to edit** — that tells you WHERE the change goes. Read code surgically: grep/glob
+to the exact function, then read that section. Never batch-read ADRs or specs;
+that is the token waste the graph eliminates.
 
 **Before ANY task** (planning, implementation, refactoring, or review):
 1. Call `mementic_get_context_pack` with the task description and ALL files
    you intend to touch — even new files, even speculative changes.
-   The graph is auto-cleaned before every query; no separate lint step needed.
-2. Call `mementic_get_system_evolution` for each file being modified to
-   understand what decisions shaped it.
-3. Validate your plan against every returned constraint. If a constraint
-   seems inapplicable, explain why before proceeding. Do NOT write code
+2. **Sufficiency gate — output these two lines before any further reads:**
+   1. `Context pack says:` — 1-2 sentence summary (or "returned nothing relevant").
+   2. `Files I still need to read and why:` — every code file you will open,
+      each with a one-clause justification. If a file is not on this list,
+      do not read it.
+3. Call `mementic_get_system_evolution` for each file being modified.
+4. Validate your plan against every returned constraint. Do NOT write code
    that violates an active constraint.
-4. Only read raw ADR or instruction files if the context pack leaves
+5. Only read raw ADR or instruction files if the context pack leaves
    ambiguity you must resolve to proceed safely.
 
-**Immediately after making an architecturally significant change:**
-1. Call `mementic_propose_decision` with title, rationale, rejected
-   alternatives, and affected entities.
-2. Call `mementic_propose_constraint` for any new rules future agents
-   must enforce.
-3. Do not defer this — propose while the context is fresh.
+**If the context pack fails:** State the error explicitly, fall back to
+targeted reads only (grep first, read specific sections), and report the
+failure to the user. Do not silently read entire files wholesale.
 
-**At the end of a session (after all tasks):**
-1. If you called `mementic_propose_decision` or `mementic_propose_constraint`
-   for every architecturally significant decision made during this session,
-   skip capture — those decisions are already in the graph.
-2. Only run `mementic capture --agent opencode` when there were architectural
-   discussions not captured via the inline proposal tools. At most once per
-   session. `--agent` prevents cross-agent capture — without it, the most
-   recently modified session across ALL agents wins.
+**Proposing decisions/constraints is cheap (SQLite writes, no LLM). Capture is
+expensive (LLM extraction). Use the right one:**
+
+- **Inline proposals — always, no gate.** When you make a decision or establish
+  a rule, call `mementic_propose_decision` / `mementic_propose_constraint`
+  immediately. No judgment call about "architectural significance" — if it's
+  worth remembering, propose it. If it's not, don't.
+- **`mementic capture` — user-triggered, not agent-triggered.** Capture runs
+  LLM extraction on the session log. It exists for sessions where architectural
+  discussions happened but were NOT proposed inline (e.g., a design
+  conversation that never produced an explicit proposal). The user decides when
+  that's worth the extraction cost — do not run it yourself mid-task.
 
 **If you skip these steps, you are violating project constraints.**
 A graph with no new decisions after a sprint of development is evidence

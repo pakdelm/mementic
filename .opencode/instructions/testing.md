@@ -4,6 +4,13 @@
 
 - Use `pytest` as the test runner.
 - Use `pytest-cov` for coverage reporting.
+- Use `pytest-xdist` for parallel test execution (`-n auto`).
+
+## Running Tests
+
+- Full suite (parallel): `uv run pytest -n auto`
+- Single test (sequential, for debugging): `uv run pytest -xvs path/to/test_file.py::test_name`
+- With coverage: `uv run pytest -n auto --cov --cov-report=term-missing`
 
 ## Test Organization
 
@@ -22,4 +29,4 @@
 ## Coverage
 
 - Aim for >80% line coverage on new code.
-- Run `pytest --cov --cov-report=term-missing` to check.
+- Run `uv run pytest -n auto --cov --cov-report=term-missing` to check.

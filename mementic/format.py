@@ -56,15 +56,44 @@ def timestamp() -> str:
 # ---------------------------------------------------------------------------
 
 
+def _truncate_entity_list(entities: list[str], max_chars: int = 80) -> str:
+    """Join entity paths with ``", "``, truncating with ``"..."`` past a limit.
+
+    Guards against a single item with many bound files blowing the token
+    budget. The ellipsis is appended *after* truncation, so the returned
+    string may be up to ``max_chars + 3`` characters long.
+
+    Args:
+        entities: List of entity path strings.
+        max_chars: Maximum character count of the joined string before
+            truncation is applied.
+
+    Returns:
+        The joined string, or a truncated copy ending in ``"..."`` if the
+        joined form exceeds ``max_chars``. Returns ``""`` for an empty list.
+    """
+    joined = ", ".join(entities)
+    if len(joined) > max_chars:
+        return joined[:max_chars] + "..."
+    return joined
+
+
 def _compact_constraint_line(c: Constraint) -> str:
     """Format a constraint as a compact single-line marker.
 
     Drops the ``[C]`` prefix and ``(enforced by: X)`` suffix to save tokens
-    while preserving the description and ID reference.
+    while preserving the description and ID reference. When the constraint
+    has bound entities, they are appended as ``(bound: a.py, b.py)`` so agents
+    can see *where* the rule applies without reading files. Long entity lists
+    are truncated via :func:`_truncate_entity_list`.
 
     Returns:
-        ``- {description} (#{id})``
+        ``- {description} (#{id})`` when no bound entities, otherwise
+        ``- {description} (#{id}, bound: {entities})``.
     """
+    if c.bound_entities:
+        entities = _truncate_entity_list(c.bound_entities)
+        return f"- {c.description} (#{c.id}, bound: {entities})"
     return f"- {c.description} (#{c.id})"
 
 
@@ -72,11 +101,18 @@ def _compact_decision_line(d: Decision) -> str:
     """Format a decision as a compact single-line marker.
 
     Drops title, date, and rejected alternatives to save tokens while
-    preserving the rationale and ID reference.
+    preserving the rationale and ID reference. When the decision has
+    affected entities, they are appended as ``(affects: a.py, b.py)`` so
+    agents can see *where* the decision applies without reading files. Long
+    entity lists are truncated via :func:`_truncate_entity_list`.
 
     Returns:
-        ``- {rationale} (#{id})``
+        ``- {rationale} (#{id})`` when no affected entities, otherwise
+        ``- {rationale} (#{id}, affects: {entities})``.
     """
+    if d.affected_entities:
+        entities = _truncate_entity_list(d.affected_entities)
+        return f"- {d.rationale} (#{d.id}, affects: {entities})"
     return f"- {d.rationale} (#{d.id})"
 
 

@@ -12,6 +12,7 @@ build/
 
 # Mementic runtime (graph lives at ~/.mementic/projects/)
 .mementic/
+audit.jsonl
 
 # IDE
 .vscode/

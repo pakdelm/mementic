@@ -38,13 +38,29 @@ class Decision(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def _migrate_legacy_fields(cls, data: Any) -> Any:
-        """Accept legacy ``timestamp`` field in place of ``created_at``
-        and ``modified_at`` for backward compatibility with old JSON payloads."""
+        """Accept legacy field names and coerce legacy status values.
+
+        Migrates the legacy ``timestamp`` field to ``created_at``/``modified_at``
+        and coerces legacy ``DecisionStatus`` values removed in Spec 13
+        (``proposed``/``superseded``) into their current equivalents before
+        enum validation runs.
+        """
         if isinstance(data, dict):
+            # Legacy timestamp → created_at/modified_at
             ts = data.pop("timestamp", None)
             if ts is not None:
                 data.setdefault("created_at", ts)
                 data.setdefault("modified_at", ts)
+            # Coerce legacy DecisionStatus values removed in Spec 13
+            status = data.get("status")
+            if isinstance(status, str):
+                status_lower = status.lower()
+                if status_lower == "proposed":
+                    data["status"] = "accepted"
+                elif status_lower == "superseded":
+                    data["status"] = "deprecated"
+                elif status_lower not in ("accepted", "deprecated", "rejected"):
+                    data["status"] = "accepted"
         return data
 
 

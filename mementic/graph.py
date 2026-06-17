@@ -15,7 +15,7 @@ from mementic.models import (
     GraphPayload,
 )
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 
 class GraphStore:
@@ -165,6 +165,16 @@ class GraphStore:
                 ADD COLUMN last_captured_commit TEXT DEFAULT '';
                 PRAGMA user_version = 3;
             """)
+
+        if version < 4:
+            conn.executescript(
+                """
+                -- Normalize legacy DecisionStatus values removed in Spec 13
+                UPDATE decisions SET status = 'deprecated' WHERE status = 'superseded';
+                UPDATE decisions SET status = 'accepted' WHERE status = 'proposed';
+                PRAGMA user_version = 4;
+                """
+            )
 
     def _load_from_db(self) -> None:
         """Load all rows from SQLite into the in-memory NetworkX graph."""
@@ -725,30 +735,6 @@ class GraphStore:
         )
         tmp.replace(p)
 
-        audit_path = p.parent / "audit.jsonl"
-        entry = {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "action": "save",
-            "decisions": sum(
-                1
-                for _, a in self._g.nodes(data=True)
-                if a.get("node_type") == "Decision"
-            ),
-            "constraints": sum(
-                1
-                for _, a in self._g.nodes(data=True)
-                if a.get("node_type") == "Constraint"
-            ),
-            "entities": sum(
-                1
-                for _, a in self._g.nodes(data=True)
-                if a.get("node_type") == "CodeEntity"
-            ),
-            "edges": self._g.number_of_edges(),
-        }
-        with audit_path.open("a") as f:
-            f.write(json.dumps(entry) + "\n")
-
     @classmethod
     def load(cls, path: str) -> GraphStore:
         data = json.loads(Path(path).read_text())
@@ -875,7 +861,8 @@ class GraphStore:
         Returns:
             Dict with action counts: 'dead_bindings_removed', 'constraints_deprecated',
             'stale_entities_removed', 'orphaned_entities_removed',
-            'orphaned_enforced_by_cleared', 'status_inconsistencies_resolved'.
+            'orphaned_enforced_by_cleared', 'status_inconsistencies_resolved',
+            'legacy_statuses_normalized'.
         """
         counts: dict[str, int] = {
             "dead_bindings_removed": 0,
@@ -884,6 +871,7 @@ class GraphStore:
             "orphaned_entities_removed": 0,
             "orphaned_enforced_by_cleared": 0,
             "status_inconsistencies_resolved": 0,
+            "legacy_statuses_normalized": 0,
         }
 
         # ── Step 1: Dead bindings removed from constraints ──
@@ -970,6 +958,26 @@ class GraphStore:
                 payload["status"] = "deprecated"
                 self.set_node_payload(nid, payload)
                 counts["status_inconsistencies_resolved"] += 1
+
+        # ── Step 7: Normalize legacy Decision statuses ──
+        for nid, ntype, payload in self.iter_nodes():
+            if ntype != "Decision":
+                continue
+            status = payload.get("status", "")
+            if isinstance(status, str):
+                status_lower = status.lower()
+                if status_lower == "proposed":
+                    payload["status"] = "accepted"
+                    self.set_node_payload(nid, payload)
+                    counts["legacy_statuses_normalized"] += 1
+                elif status_lower == "superseded":
+                    payload["status"] = "deprecated"
+                    self.set_node_payload(nid, payload)
+                    counts["legacy_statuses_normalized"] += 1
+                elif status_lower not in ("accepted", "deprecated", "rejected"):
+                    payload["status"] = "accepted"
+                    self.set_node_payload(nid, payload)
+                    counts["legacy_statuses_normalized"] += 1
 
         # ── Persist after all mutations ──
         self._write_back()

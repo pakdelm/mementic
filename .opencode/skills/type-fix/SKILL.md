@@ -21,7 +21,7 @@ description: Use when fixing mypy type errors. Works through errors systematical
 5. Re-run mypy after each file to confirm the fix didn't introduce new errors.
 6. When all errors are fixed, run the test suite:
    ```
-   uv run pytest
+   uv run pytest -n auto
    ```
 
 ## Rules
