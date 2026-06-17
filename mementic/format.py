@@ -55,8 +55,12 @@ def timestamp() -> str:
 # Compact format helpers
 # ---------------------------------------------------------------------------
 
+# Max character width for the joined entity list in compact format lines.
+# Truncation happens at a ``, `` boundary so a path is never split mid-token.
+_MAX_ENTITY_LIST_CHARS = 80
 
-def _truncate_entity_list(entities: list[str], max_chars: int = 80) -> str:
+
+def _truncate_entity_list(entities: list[str], max_chars: int = _MAX_ENTITY_LIST_CHARS) -> str:
     """Join entity paths with ``", "``, truncating with ``"..."`` past a limit.
 
     Guards against a single item with many bound files blowing the token
@@ -89,7 +93,7 @@ def _truncate_entity_list(entities: list[str], max_chars: int = 80) -> str:
     return joined
 
 
-def _compact_constraint_line(c: Constraint) -> str:
+def _compact_constraint_line(constraint: Constraint) -> str:
     """Format a constraint as a compact single-line marker.
 
     Drops the ``[C]`` prefix and ``(enforced by: X)`` suffix to save tokens
@@ -102,13 +106,14 @@ def _compact_constraint_line(c: Constraint) -> str:
         ``- {description} (#{id})`` when no bound entities, otherwise
         ``- {description} (#{id}, bound: {entities})``.
     """
-    if c.bound_entities:
-        entities = _truncate_entity_list(c.bound_entities)
-        return f"- {c.description} (#{c.id}, bound: {entities})"
-    return f"- {c.description} (#{c.id})"
+    bound_suffix = ""
+    if constraint.bound_entities:
+        entities = _truncate_entity_list(constraint.bound_entities)
+        bound_suffix = f", bound: {entities}"
+    return f"- {constraint.description} (#{constraint.id}{bound_suffix})"
 
 
-def _compact_decision_line(d: Decision) -> str:
+def _compact_decision_line(decision: Decision) -> str:
     """Format a decision as a compact single-line marker.
 
     Drops title, date, and rejected alternatives to save tokens while
@@ -121,10 +126,11 @@ def _compact_decision_line(d: Decision) -> str:
         ``- {rationale} (#{id})`` when no affected entities, otherwise
         ``- {rationale} (#{id}, affects: {entities})``.
     """
-    if d.affected_entities:
-        entities = _truncate_entity_list(d.affected_entities)
-        return f"- {d.rationale} (#{d.id}, affects: {entities})"
-    return f"- {d.rationale} (#{d.id})"
+    affects_suffix = ""
+    if decision.affected_entities:
+        entities = _truncate_entity_list(decision.affected_entities)
+        affects_suffix = f", affects: {entities}"
+    return f"- {decision.rationale} (#{decision.id}{affects_suffix})"
 
 
 def _compact_evolution_line(d: Decision) -> str:

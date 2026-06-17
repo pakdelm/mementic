@@ -5,7 +5,7 @@ from __future__ import annotations
 from enum import Enum
 from typing import Any
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field
 
 
 class DecisionStatus(str, Enum):
@@ -35,34 +35,6 @@ class Decision(BaseModel):
     affected_entities: list[str] = Field(default_factory=list)
     tags: list[str] = Field(default_factory=list)
 
-    @model_validator(mode="before")
-    @classmethod
-    def _migrate_legacy_fields(cls, data: Any) -> Any:
-        """Accept legacy field names and coerce legacy status values.
-
-        Migrates the legacy ``timestamp`` field to ``created_at``/``modified_at``
-        and coerces legacy ``DecisionStatus`` values removed in Spec 13
-        (``proposed``/``superseded``) into their current equivalents before
-        enum validation runs.
-        """
-        if isinstance(data, dict):
-            # Legacy timestamp → created_at/modified_at
-            ts = data.pop("timestamp", None)
-            if ts is not None:
-                data.setdefault("created_at", ts)
-                data.setdefault("modified_at", ts)
-            # Coerce legacy DecisionStatus values removed in Spec 13
-            status = data.get("status")
-            if isinstance(status, str):
-                status_lower = status.lower()
-                if status_lower == "proposed":
-                    data["status"] = "accepted"
-                elif status_lower == "superseded":
-                    data["status"] = "deprecated"
-                elif status_lower not in ("accepted", "deprecated", "rejected"):
-                    data["status"] = "accepted"
-        return data
-
 
 class Constraint(BaseModel):
     id: str
@@ -73,17 +45,6 @@ class Constraint(BaseModel):
     status: str = "active"
     created_at: str
     repo: str = ""
-
-    @model_validator(mode="before")
-    @classmethod
-    def _migrate_legacy_fields(cls, data: Any) -> Any:
-        """Accept legacy ``timestamp`` field in place of ``created_at``
-        for backward compatibility with old JSON payloads."""
-        if isinstance(data, dict):
-            ts = data.pop("timestamp", None)
-            if ts is not None:
-                data.setdefault("created_at", ts)
-        return data
 
 
 class CodeEntity(BaseModel):

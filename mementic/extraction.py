@@ -41,6 +41,11 @@ _MESSAGE_BOUNDARY_PREFIXES = (
     "## ", "[user]", "[agent]", "[assistant]", "[system]", "---"
 )
 
+# Default tail size for session truncation when no explicit max is given.
+# Halved from 100 in Spec 13 to reduce token cost when keyword windowing
+# does not match or its windows overflow.
+_DEFAULT_MAX_MESSAGES = 50
+
 _KEYWORD_PATTERN = re.compile(
     "|".join(re.escape(kw) for kw in ARCHITECTURE_KEYWORDS),
     re.IGNORECASE,
@@ -52,13 +57,25 @@ _LOG_PREFIX_PATTERN = re.compile(
 )
 
 
+def _is_opencode_log(text: str) -> bool:
+    """Return True if ``text`` is in opencode log format.
+
+    Detection is based on at least one line carrying the
+    ``timestamp=... level=... run=...`` prefix. The guard prevents the
+    blank-line stripping and ``hash=`` heuristic (both opencode-specific)
+    from mutating non-opencode text such as Claude-style transcripts or
+    freeform notes.
+    """
+    return any(_LOG_PREFIX_PATTERN.search(line) for line in text.split("\n"))
+
+
 def _strip_session_noise(text: str) -> str:
     """Strip opencode operational log noise from session text.
 
-    Only operates on text in opencode log format (at least one line carries
-    the ``timestamp=... level=... run=...`` prefix). Plain text without that
-    marker is returned unchanged so non-opencode sessions (Claude-style
-    ``[user]`` / ``[agent]`` transcripts, freeform notes) are not mutated.
+    Only operates on text in opencode log format (see :func:`_is_opencode_log`).
+    Plain text without that marker is returned unchanged so non-opencode
+    sessions (Claude-style ``[user]`` / ``[agent]`` transcripts, freeform
+    notes) are not mutated.
 
     Removes: timestamp/level/run prefixes, tracking lines (hash/cwd/git
     metadata), and blank lines. Keeps message content.
@@ -72,11 +89,7 @@ def _strip_session_noise(text: str) -> str:
     if not text.strip():
         return text
 
-    # Detect opencode log format: at least one line carries the prefix.
-    # Without this guard, blank-line stripping and the hash= heuristic would
-    # mutate non-opencode text (e.g. drop a Claude-style line mentioning a
-    # git hash that has no `message=` field).
-    if not any(_LOG_PREFIX_PATTERN.search(line) for line in text.split("\n")):
+    if not _is_opencode_log(text):
         return text
 
     lines = text.split("\n")
@@ -85,10 +98,8 @@ def _strip_session_noise(text: str) -> str:
         stripped = line.strip()
         if not stripped:
             continue
-        # Skip pure tracking lines (hash, cwd, git metadata)
         if " hash=" in stripped and " message=" not in stripped:
             continue
-        # Strip timestamp/level/run prefix
         cleaned.append(_LOG_PREFIX_PATTERN.sub("", stripped))
     return "\n".join(cleaned)
 
@@ -145,7 +156,7 @@ def _extract_architecture_windows(
     return "\n...\n".join(parts)
 
 
-def _truncate_tail(session_log: str, max_messages: int = 50) -> str:
+def _truncate_tail(session_log: str, max_messages: int = _DEFAULT_MAX_MESSAGES) -> str:
     """Truncate session log to the last N messages.
 
     A message boundary is a line starting with one of the recognized prefixes
@@ -457,7 +468,7 @@ def extract_from_session(
     git_diff: str,
     user_notes: str,
     config: LLMConfig,
-    max_messages: int = 50,
+    max_messages: int = _DEFAULT_MAX_MESSAGES,
     custom_keywords: list[str] | None = None,
 ) -> tuple[ExtractionResult, UsageStats]:
     """

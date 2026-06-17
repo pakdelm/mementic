@@ -19,24 +19,6 @@ def _base_kwargs() -> dict[str, Any]:
     }
 
 
-def test_decision_validator_coerces_proposed() -> None:
-    """``status='proposed'`` is coerced to ACCEPTED (Spec 13 legacy value)."""
-    result = Decision(**_base_kwargs(), status="proposed")  # type: ignore[arg-type]
-    assert result.status == DecisionStatus.ACCEPTED
-
-
-def test_decision_validator_coerces_superseded() -> None:
-    """``status='superseded'`` is coerced to DEPRECATED (Spec 13 legacy value)."""
-    result = Decision(**_base_kwargs(), status="superseded")  # type: ignore[arg-type]
-    assert result.status == DecisionStatus.DEPRECATED
-
-
-def test_decision_validator_coerces_unknown_status() -> None:
-    """An unrecognized status string is coerced to ACCEPTED."""
-    result = Decision(**_base_kwargs(), status="done")  # type: ignore[arg-type]
-    assert result.status == DecisionStatus.ACCEPTED
-
-
 def test_decision_validator_keeps_valid_status() -> None:
     """A valid status string passes through unchanged."""
     result = Decision(**_base_kwargs(), status="rejected")  # type: ignore[arg-type]

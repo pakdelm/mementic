@@ -864,8 +864,7 @@ class GraphStore:
         Returns:
             Dict with action counts: 'dead_bindings_removed', 'constraints_deprecated',
             'stale_entities_removed', 'orphaned_entities_removed',
-            'orphaned_enforced_by_cleared', 'status_inconsistencies_resolved',
-            'legacy_statuses_normalized'.
+            'orphaned_enforced_by_cleared', 'status_inconsistencies_resolved'.
         """
         counts: dict[str, int] = {
             "dead_bindings_removed": 0,
@@ -874,7 +873,6 @@ class GraphStore:
             "orphaned_entities_removed": 0,
             "orphaned_enforced_by_cleared": 0,
             "status_inconsistencies_resolved": 0,
-            "legacy_statuses_normalized": 0,
         }
 
         # ── Step 1: Dead bindings removed from constraints ──
@@ -961,26 +959,6 @@ class GraphStore:
                 payload["status"] = "deprecated"
                 self.set_node_payload(nid, payload)
                 counts["status_inconsistencies_resolved"] += 1
-
-        # ── Step 7: Normalize legacy Decision statuses ──
-        for nid, ntype, payload in self.iter_nodes():
-            if ntype != "Decision":
-                continue
-            status = payload.get("status", "")
-            if isinstance(status, str):
-                status_lower = status.lower()
-                if status_lower == "proposed":
-                    payload["status"] = "accepted"
-                    self.set_node_payload(nid, payload)
-                    counts["legacy_statuses_normalized"] += 1
-                elif status_lower == "superseded":
-                    payload["status"] = "deprecated"
-                    self.set_node_payload(nid, payload)
-                    counts["legacy_statuses_normalized"] += 1
-                elif status_lower not in ("accepted", "deprecated", "rejected"):
-                    payload["status"] = "accepted"
-                    self.set_node_payload(nid, payload)
-                    counts["legacy_statuses_normalized"] += 1
 
         # ── Persist after all mutations ──
         self._write_back()

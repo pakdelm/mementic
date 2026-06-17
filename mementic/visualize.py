@@ -317,9 +317,12 @@ def _build_tooltip_plain(node_type: str, payload: dict[str, object]) -> str:
     elif node_type == "CodeEntity":
         lines.append(f"Type: {payload.get('type', 'file')}")
 
-    timestamp = payload.get("timestamp")
-    if timestamp:
-        lines.append(f"Timestamp: {timestamp}")
+    created = payload.get("created_at")
+    if created:
+        lines.append(f"Created: {created}")
+    modified = payload.get("modified_at")
+    if modified and modified != created:
+        lines.append(f"Modified: {modified}")
 
     return "\n".join(lines)
 

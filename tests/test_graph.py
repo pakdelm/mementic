@@ -794,31 +794,6 @@ class TestSQLitePersistence:
         assert rows["d-sup"] == "deprecated"
         gs.close()
 
-    def test_clean_dead_references_normalizes_legacy_status(self) -> None:
-        """Step 7 of clean_dead_references normalizes legacy Decision statuses."""
-        gs = GraphStore()  # NetworkX-only mode, no db_path
-
-        d = Decision(
-            id="d-legacy",
-            title="Legacy",
-            rationale="...",
-            source="test",
-            status=DecisionStatus.ACCEPTED,
-            created_at="2024-01-01T00:00:00Z",
-            modified_at="2024-01-01T00:00:00Z",
-        )
-        gs.add_decision(d)
-
-        # Inject a legacy status string directly into the payload.
-        payload = gs.get_node_payload("d-legacy")
-        payload["status"] = "proposed"
-        gs.set_node_payload("d-legacy", payload)
-
-        counts = gs.clean_dead_references()
-
-        assert counts["legacy_statuses_normalized"] >= 1
-        assert gs.get_node_payload("d-legacy")["status"] == "accepted"
-
 
 class TestSQLiteAuditLog:
     """Tests that verify audit_log entries are written on mutations (in-memory DB)."""
