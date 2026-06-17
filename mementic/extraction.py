@@ -177,14 +177,14 @@ def _truncate_tail(session_log: str, max_messages: int = 50) -> str:
 # ── Compact extraction formats (Spec 13 — 86% token savings over JSON Schema) ──
 
 _EXTRACTION_FORMAT = """{
-  "decisions": [{"id": "slug", "title": "Title", "rationale": "Why", "rejected_alternatives": ["Alt1"], "source": "origin", "status": "accepted", "created_at": "ISO8601"}],
-  "constraints": [{"id": "slug", "description": "Hard rule", "bound_entities": ["file.py"], "enforced_by": "decision-id", "status": "active", "created_at": "ISO8601"}],
+  "decisions": [{"id": "slug", "title": "Title", "rationale": "Why", "rejected_alternatives": ["Alt1"], "source": "origin", "status": "accepted", "created_at": "ISO8601", "modified_at": "ISO8601"}],
+  "constraints": [{"id": "slug", "description": "Hard rule", "bound_entities": ["file.py"], "enforced_by": "decision-id", "source": "origin", "status": "active", "created_at": "ISO8601"}],
   "affected_entities": ["path/to/file.py"],
   "edges_to_create": [{"source": "slug", "target": "slug", "relation": "enforces"}]
 }"""
 
 _CONSTRAINTS_FORMAT = """{
-  "constraints": [{"id": "slug", "description": "Hard rule", "bound_entities": ["file.py"], "enforced_by": "decision-id", "status": "active", "created_at": "ISO8601"}]
+  "constraints": [{"id": "slug", "description": "Hard rule", "bound_entities": ["file.py"], "enforced_by": "decision-id", "source": "origin", "status": "active", "created_at": "ISO8601"}]
 }"""
 
 # ── System prompts ───────────────────────────────────────────────────
@@ -346,11 +346,14 @@ def extract_from_freeform(
 ) -> tuple[ExtractionResult, UsageStats]:
     """
     Extract architectural decisions and constraints from freeform text.
-    Sends text to LLM with system prompt. Returns ExtractionResult with decisions,
+
+    Sends text to LLM with a system prompt containing a compact format
+    template (``_EXTRACTION_FORMAT``) and ``response_format={"type": "json_object"}``
+    to constrain the output. Returns an ExtractionResult with decisions,
     constraints, affected_entities, and edges_to_create.
-    Uses the extraction_model from config.
-    Set temperature=0.1 for deterministic output.
-    Pass response_format with json_schema from ExtractionResult.model_json_schema().
+
+    Uses the extraction_model from config. Temperature is set to 0.1 for
+    deterministic output.
 
     Returns:
         A tuple of (ExtractionResult, UsageStats).

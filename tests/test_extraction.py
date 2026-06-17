@@ -8,6 +8,7 @@ import pytest
 from mementic.config import LLMConfig
 from mementic.extraction import (
     _extract_architecture_windows,
+    _strip_session_noise,
     _truncate_tail,
     ARCHITECTURE_KEYWORDS,
     extract_from_adr_consequences,
@@ -646,6 +647,75 @@ class TestTailTruncation:
         result = _truncate_tail(log, max_messages=10)
         expected = "\n".join(lines[-10:])
         assert result == expected
+
+
+class TestStripSessionNoise:
+    """Tests for _strip_session_noise text-cleaning logic."""
+
+    def test_strips_opencode_log_prefix(self) -> None:
+        """Timestamp/level/run prefixes are removed, message content kept."""
+        raw = (
+            "timestamp=2026-06-17T10:00:00Z level=info run=abc123 "
+            "This is a user message about architecture\n"
+            "timestamp=2026-06-17T10:00:01Z level=info run=abc123 "
+            "And this is about tradeoffs"
+        )
+        cleaned = _strip_session_noise(raw)
+        assert "timestamp=2026-06-17T10:00:00Z" not in cleaned
+        assert "level=info" not in cleaned
+        assert "run=abc123" not in cleaned
+        assert "This is a user message about architecture" in cleaned
+        assert "And this is about tradeoffs" in cleaned
+
+    def test_hash_only_lines_dropped(self) -> None:
+        """Lines with hash= but no message= are dropped entirely."""
+        raw = (
+            "timestamp=2026-06-17T10:00:00Z level=info run=abc123 "
+            "hash=abc123def456 cwd=/home/user\n"
+            "timestamp=2026-06-17T10:00:01Z level=info run=abc123 "
+            "Some actual content here"
+        )
+        cleaned = _strip_session_noise(raw)
+        assert "hash=abc123def456" not in cleaned
+        assert "Some actual content here" in cleaned
+
+    def test_hash_with_message_line_kept(self) -> None:
+        """Lines with both hash= and message= are kept (content preserved)."""
+        raw = (
+            "timestamp=2026-06-17T10:00:00Z level=info run=abc123 "
+            "hash=abc123def456 message=User said something important"
+        )
+        cleaned = _strip_session_noise(raw)
+        assert "message=User said something important" in cleaned
+
+    def test_non_opencode_format_passthrough(self) -> None:
+        """Plain text without opencode log metadata passes through unchanged."""
+        raw = "Just a normal sentence.\nAnother line here."
+        cleaned = _strip_session_noise(raw)
+        assert "Just a normal sentence." in cleaned
+        assert "Another line here." in cleaned
+
+    def test_empty_input(self) -> None:
+        """Empty string returns empty string."""
+        assert _strip_session_noise("") == ""
+
+    def test_whitespace_only_input(self) -> None:
+        """Whitespace-only input returns unchanged."""
+        result = _strip_session_noise("   \n  \t  ")
+        assert result == "   \n  \t  "
+
+    def test_blank_lines_removed(self) -> None:
+        """Blank lines (after stripping) are removed from output."""
+        raw = (
+            "timestamp=2026-06-17T10:00:00Z level=info run=abc123 "
+            "Line one\n"
+            "\n"
+            "timestamp=2026-06-17T10:00:01Z level=info run=abc123 "
+            "Line two"
+        )
+        cleaned = _strip_session_noise(raw)
+        lines = cleaned.split("\n")
+        assert lines == ["Line one", "Line two"]
 
 
 class TestExtractFromSessionTruncation:
