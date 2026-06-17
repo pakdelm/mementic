@@ -15,7 +15,7 @@ from mementic.models import (
     GraphPayload,
 )
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 
 class GraphStore:
@@ -165,6 +165,19 @@ class GraphStore:
                 ADD COLUMN last_captured_commit TEXT DEFAULT '';
                 PRAGMA user_version = 3;
             """)
+
+        if version < 4:
+            conn.executescript(
+                """
+                -- Normalize legacy DecisionStatus values removed in Spec 13.
+                -- LOWER() matches the case-insensitive coercion in the
+                -- Decision validator, so hand-edited rows like 'Proposed'
+                -- or 'SUPERSEDED' are migrated too.
+                UPDATE decisions SET status = 'deprecated' WHERE LOWER(status) = 'superseded';
+                UPDATE decisions SET status = 'accepted' WHERE LOWER(status) = 'proposed';
+                PRAGMA user_version = 4;
+                """
+            )
 
     def _load_from_db(self) -> None:
         """Load all rows from SQLite into the in-memory NetworkX graph."""
@@ -724,30 +737,6 @@ class GraphStore:
             json.dumps(payload.model_dump(mode="json"), indent=2)
         )
         tmp.replace(p)
-
-        audit_path = p.parent / "audit.jsonl"
-        entry = {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "action": "save",
-            "decisions": sum(
-                1
-                for _, a in self._g.nodes(data=True)
-                if a.get("node_type") == "Decision"
-            ),
-            "constraints": sum(
-                1
-                for _, a in self._g.nodes(data=True)
-                if a.get("node_type") == "Constraint"
-            ),
-            "entities": sum(
-                1
-                for _, a in self._g.nodes(data=True)
-                if a.get("node_type") == "CodeEntity"
-            ),
-            "edges": self._g.number_of_edges(),
-        }
-        with audit_path.open("a") as f:
-            f.write(json.dumps(entry) + "\n")
 
     @classmethod
     def load(cls, path: str) -> GraphStore:

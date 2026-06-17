@@ -325,7 +325,7 @@ def capture(
     notes: str | None = None,
     agent: str | None = None,
     tail: int = typer.Option(
-        100, "--tail",
+        50, "--tail",
         help="Max messages from session tail (0 = skip session, use diff+notes only)",
     ),
     project: str | None = typer.Option(

@@ -348,22 +348,14 @@ class TestNodeAccessors:
 
 
 class TestAuditLog:
-    def test_save_writes_audit_log(self, populated_graph: GraphStore) -> None:
+    def test_save_does_not_write_audit_jsonl(self, populated_graph: GraphStore) -> None:
+        """Spec 12d: save() no longer writes legacy audit.jsonl — use SQLite audit_log."""
         import tempfile
         with tempfile.TemporaryDirectory() as tmpdir:
             graph_path = str(Path(tmpdir) / "graph.json")
             populated_graph.save(graph_path)
             audit_path = Path(tmpdir) / "audit.jsonl"
-            assert audit_path.exists()
-            lines = audit_path.read_text().strip().split("\n")
-            assert len(lines) == 1
-            entry = json.loads(lines[0])
-            assert "timestamp" in entry
-            assert entry["action"] == "save"
-            assert entry["decisions"] == 3
-            assert entry["constraints"] == 2
-            assert entry["entities"] == 4
-            assert entry["edges"] == 6
+            assert not audit_path.exists()
 
 
 class TestIdempotentAdd:
@@ -710,8 +702,97 @@ class TestSQLitePersistence:
         assert expected.issubset(tables)
 
         version = conn.execute("PRAGMA user_version").fetchone()[0]
-        assert version == 3
+        assert version == 4
         conn.close()
+
+    def test_migration_v4_normalizes_legacy_statuses(self, tmp_path: Path) -> None:
+        """SCHEMA_VERSION=4 migration converts legacy status rows in SQLite."""
+        db_path = tmp_path / "legacy.db"
+
+        # Bring schema to v3 only, then insert legacy rows manually.
+        conn = sqlite3.connect(str(db_path))
+        conn.row_factory = sqlite3.Row
+        GraphStore._migrate_schema(conn)
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 4
+        # Roll back to v3 to simulate an old DB and insert legacy statuses.
+        conn.execute("PRAGMA user_version = 3")
+        conn.execute(
+            "INSERT INTO decisions (id, title, status, rationale, source, repo, "
+            "affected_entities, rejected_alternatives, author, tags, "
+            "created_at, modified_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            ("d-prop", "Proposed", "proposed", "r", "t", "", "[]", "[]",
+             "unknown", "[]", "2024-01-01T00:00:00Z", "2024-01-01T00:00:00Z"),
+        )
+        conn.execute(
+            "INSERT INTO decisions (id, title, status, rationale, source, repo, "
+            "affected_entities, rejected_alternatives, author, tags, "
+            "created_at, modified_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            ("d-sup", "Superseded", "superseded", "r", "t", "", "[]", "[]",
+             "unknown", "[]", "2024-01-01T00:00:00Z", "2024-01-01T00:00:00Z"),
+        )
+        conn.commit()
+        conn.close()
+
+        # Opening via GraphStore triggers the v4 migration.
+        gs = GraphStore(db_path=db_path)
+        assert gs._conn is not None
+        version = gs._conn.execute("PRAGMA user_version").fetchone()[0]
+        assert version == 4
+
+        rows = {
+            row["id"]: row["status"]
+            for row in gs._conn.execute("SELECT id, status FROM decisions")
+        }
+        assert rows["d-prop"] == "accepted"
+        assert rows["d-sup"] == "deprecated"
+        gs.close()
+
+    def test_migration_v4_normalizes_mixedcase_statuses(self, tmp_path: Path) -> None:
+        """v4 migration matches legacy statuses case-insensitively.
+
+        Regression: the original migration used exact-match ``WHERE status =
+        'proposed'`` while the Decision validator coerces case-insensitively.
+        Hand-edited rows like ``Proposed`` / ``SUPERSEDED`` slipped past the
+        migration but got normalized in-memory, producing SQLite/NetworkX
+        drift until the next write-back.
+        """
+        db_path = tmp_path / "mixedcase.db"
+
+        conn = sqlite3.connect(str(db_path))
+        conn.row_factory = sqlite3.Row
+        GraphStore._migrate_schema(conn)
+        # Roll back to v3 and insert mixed-case legacy statuses.
+        conn.execute("PRAGMA user_version = 3")
+        conn.execute(
+            "INSERT INTO decisions (id, title, status, rationale, source, repo, "
+            "affected_entities, rejected_alternatives, author, tags, "
+            "created_at, modified_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            ("d-prop", "Proposed", "Proposed", "r", "t", "", "[]", "[]",
+             "unknown", "[]", "2024-01-01T00:00:00Z", "2024-01-01T00:00:00Z"),
+        )
+        conn.execute(
+            "INSERT INTO decisions (id, title, status, rationale, source, repo, "
+            "affected_entities, rejected_alternatives, author, tags, "
+            "created_at, modified_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            ("d-sup", "Superseded", "SUPERSEDED", "r", "t", "", "[]", "[]",
+             "unknown", "[]", "2024-01-01T00:00:00Z", "2024-01-01T00:00:00Z"),
+        )
+        conn.commit()
+        conn.close()
+
+        gs = GraphStore(db_path=db_path)
+        assert gs._conn is not None
+        rows = {
+            row["id"]: row["status"]
+            for row in gs._conn.execute("SELECT id, status FROM decisions")
+        }
+        assert rows["d-prop"] == "accepted"
+        assert rows["d-sup"] == "deprecated"
+        gs.close()
 
 
 class TestSQLiteAuditLog:

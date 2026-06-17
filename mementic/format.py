@@ -55,29 +55,82 @@ def timestamp() -> str:
 # Compact format helpers
 # ---------------------------------------------------------------------------
 
+# Max character width for the joined entity list in compact format lines.
+# Truncation happens at a ``, `` boundary so a path is never split mid-token.
+_MAX_ENTITY_LIST_CHARS = 80
 
-def _compact_constraint_line(c: Constraint) -> str:
+
+def _truncate_entity_list(entities: list[str], max_chars: int = _MAX_ENTITY_LIST_CHARS) -> str:
+    """Join entity paths with ``", "``, truncating with ``"..."`` past a limit.
+
+    Guards against a single item with many bound files blowing the token
+    budget. Truncation happens at the last complete ``, `` separator at or
+    before ``max_chars`` so a path is never split mid-token — a partial path
+    like ``src/modu...`` could be mistaken for a real file by the LLM. If no
+    separator exists before ``max_chars`` (a single very long path), a hard
+    character-boundary cut is used as a fallback.
+
+    The ellipsis is appended *after* truncation, so the returned string may
+    be up to ``max_chars + 3`` characters long.
+
+    Args:
+        entities: List of entity path strings.
+        max_chars: Maximum character count of the joined string before
+            truncation is applied.
+
+    Returns:
+        The joined string, or a truncated copy ending in ``"..."`` if the
+        joined form exceeds ``max_chars``. Returns ``""`` for an empty list.
+    """
+    joined = ", ".join(entities)
+    if len(joined) > max_chars:
+        cut = joined.rfind(", ", 0, max_chars)
+        if cut == -1:
+            # No separator before the limit: single very long path. Fall
+            # back to a hard character-boundary cut.
+            return joined[:max_chars] + "..."
+        return joined[:cut] + "..."
+    return joined
+
+
+def _compact_constraint_line(constraint: Constraint) -> str:
     """Format a constraint as a compact single-line marker.
 
     Drops the ``[C]`` prefix and ``(enforced by: X)`` suffix to save tokens
-    while preserving the description and ID reference.
+    while preserving the description and ID reference. When the constraint
+    has bound entities, they are appended as ``(bound: a.py, b.py)`` so agents
+    can see *where* the rule applies without reading files. Long entity lists
+    are truncated via :func:`_truncate_entity_list`.
 
     Returns:
-        ``- {description} (#{id})``
+        ``- {description} (#{id})`` when no bound entities, otherwise
+        ``- {description} (#{id}, bound: {entities})``.
     """
-    return f"- {c.description} (#{c.id})"
+    bound_suffix = ""
+    if constraint.bound_entities:
+        entities = _truncate_entity_list(constraint.bound_entities)
+        bound_suffix = f", bound: {entities}"
+    return f"- {constraint.description} (#{constraint.id}{bound_suffix})"
 
 
-def _compact_decision_line(d: Decision) -> str:
+def _compact_decision_line(decision: Decision) -> str:
     """Format a decision as a compact single-line marker.
 
     Drops title, date, and rejected alternatives to save tokens while
-    preserving the rationale and ID reference.
+    preserving the rationale and ID reference. When the decision has
+    affected entities, they are appended as ``(affects: a.py, b.py)`` so
+    agents can see *where* the decision applies without reading files. Long
+    entity lists are truncated via :func:`_truncate_entity_list`.
 
     Returns:
-        ``- {rationale} (#{id})``
+        ``- {rationale} (#{id})`` when no affected entities, otherwise
+        ``- {rationale} (#{id}, affects: {entities})``.
     """
-    return f"- {d.rationale} (#{d.id})"
+    affects_suffix = ""
+    if decision.affected_entities:
+        entities = _truncate_entity_list(decision.affected_entities)
+        affects_suffix = f", affects: {entities}"
+    return f"- {decision.rationale} (#{decision.id}{affects_suffix})"
 
 
 def _compact_evolution_line(d: Decision) -> str:

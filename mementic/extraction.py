@@ -41,10 +41,67 @@ _MESSAGE_BOUNDARY_PREFIXES = (
     "## ", "[user]", "[agent]", "[assistant]", "[system]", "---"
 )
 
+# Default tail size for session truncation when no explicit max is given.
+# Halved from 100 in Spec 13 to reduce token cost when keyword windowing
+# does not match or its windows overflow.
+_DEFAULT_MAX_MESSAGES = 50
+
 _KEYWORD_PATTERN = re.compile(
     "|".join(re.escape(kw) for kw in ARCHITECTURE_KEYWORDS),
     re.IGNORECASE,
 )
+
+# Pattern to strip opencode log metadata prefixes from each line
+_LOG_PREFIX_PATTERN = re.compile(
+    r"^timestamp=[^ ]+ level=[^ ]+ run=[^ ]+ "
+)
+
+
+def _is_opencode_log(text: str) -> bool:
+    """Return True if ``text`` is in opencode log format.
+
+    Detection is based on at least one line carrying the
+    ``timestamp=... level=... run=...`` prefix. The guard prevents the
+    blank-line stripping and ``hash=`` heuristic (both opencode-specific)
+    from mutating non-opencode text such as Claude-style transcripts or
+    freeform notes.
+    """
+    return any(_LOG_PREFIX_PATTERN.search(line) for line in text.split("\n"))
+
+
+def _strip_session_noise(text: str) -> str:
+    """Strip opencode operational log noise from session text.
+
+    Only operates on text in opencode log format (see :func:`_is_opencode_log`).
+    Plain text without that marker is returned unchanged so non-opencode
+    sessions (Claude-style ``[user]`` / ``[agent]`` transcripts, freeform
+    notes) are not mutated.
+
+    Removes: timestamp/level/run prefixes, tracking lines (hash/cwd/git
+    metadata), and blank lines. Keeps message content.
+
+    Args:
+        text: Raw session log text.
+
+    Returns:
+        Cleaned text, or original if not in opencode log format.
+    """
+    if not text.strip():
+        return text
+
+    if not _is_opencode_log(text):
+        return text
+
+    lines = text.split("\n")
+    cleaned: list[str] = []
+    for line in lines:
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if " hash=" in stripped and " message=" not in stripped:
+            continue
+        cleaned.append(_LOG_PREFIX_PATTERN.sub("", stripped))
+    return "\n".join(cleaned)
 
 
 def _extract_architecture_windows(
@@ -99,7 +156,7 @@ def _extract_architecture_windows(
     return "\n...\n".join(parts)
 
 
-def _truncate_tail(session_log: str, max_messages: int = 100) -> str:
+def _truncate_tail(session_log: str, max_messages: int = _DEFAULT_MAX_MESSAGES) -> str:
     """Truncate session log to the last N messages.
 
     A message boundary is a line starting with one of the recognized prefixes
@@ -140,15 +197,30 @@ def _truncate_tail(session_log: str, max_messages: int = 100) -> str:
     return "\n".join(lines[start_idx:])
 
 
+# ── Compact extraction formats (Spec 13 — 86% token savings over JSON Schema) ──
+
+_EXTRACTION_FORMAT = """{
+  "decisions": [{"id": "slug", "title": "Title", "rationale": "Why", "rejected_alternatives": ["Alt1"], "source": "origin", "status": "accepted", "created_at": "ISO8601", "modified_at": "ISO8601"}],
+  "constraints": [{"id": "slug", "description": "Hard rule", "bound_entities": ["file.py"], "enforced_by": "decision-id", "source": "origin", "status": "active", "created_at": "ISO8601"}],
+  "affected_entities": ["path/to/file.py"],
+  "edges_to_create": [{"source": "slug", "target": "slug", "relation": "enforces"}]
+}"""
+
+_CONSTRAINTS_FORMAT = """{
+  "constraints": [{"id": "slug", "description": "Hard rule", "bound_entities": ["file.py"], "enforced_by": "decision-id", "source": "origin", "status": "active", "created_at": "ISO8601"}]
+}"""
+
+# ── System prompts ───────────────────────────────────────────────────
+
 FREE_FORM_SYSTEM_PROMPT = """You are a software architecture analyst. Given text from an engineering document, identify architectural decisions and constraints.
 
 Rules:
 1. DECISION: Only when a design pattern changed, a new library was introduced, or a strategic path was chosen. NOT routine refactors.
 2. CONSTRAINT: A hard rule future developers/agents must not violate.
 3. Include specific file paths as affected entities when possible.
-4. Output ONLY valid JSON matching this schema — no markdown, no explanation.
+4. Output ONLY valid JSON in this format — no markdown, no explanation.
 
-{extraction_schema}
+{extraction_format}
 """
 
 SESSION_SYSTEM_PROMPT = """You are a software architecture analyst. Given an agent session log, git diff, and optional human notes, identify architectural decisions and constraints that were made or changed during this session.
@@ -157,9 +229,9 @@ Rules:
 1. DECISION: Only when a design pattern changed, a new library was introduced, or a strategic path was chosen. NOT routine refactors, syntax fixes, or variable renames.
 2. CONSTRAINT: A hard rule future agents must not violate.
 3. Include specific file paths from the diff as affected entities.
-4. Output ONLY valid JSON matching this schema — no markdown, no explanation.
+4. Output ONLY valid JSON in this format — no markdown, no explanation.
 
-{extraction_schema}
+{extraction_format}
 """
 
 ADR_CONSEQUENCES_SYSTEM_PROMPT = """You are a software architecture analyst. Given the "Consequences" section of an Architecture Decision Record (ADR), extract explicit constraints that future developers or agents must respect.
@@ -169,9 +241,9 @@ Rules:
 2. Extract only constraints that represent architectural guardrails, not observations or notes.
 3. Include specific file paths or module references as bound entities when mentioned.
 4. If no constraints are found, return an empty list.
-5. Output ONLY valid JSON matching this schema — no markdown, no explanation.
+5. Output ONLY valid JSON in this format — no markdown, no explanation.
 
-{constraints_schema}
+{constraints_format}
 """
 
 CODEBASE_DETECTION_SYSTEM_PROMPT = """You are a software architecture analyst. Given a structural summary of a codebase, detect the architectural decisions that are evident from the codebase itself — imports, directory layout, configuration, and documentation.
@@ -188,9 +260,9 @@ Rules:
    Skip if you're uncertain. It's better to miss a decision than to hallucinate one.
  3. For each detected decision, set status to "accepted".
 4. Include specific file paths as affected entities when possible.
-5. Output ONLY valid JSON matching this schema — no markdown, no explanation.
+5. Output ONLY valid JSON in this format — no markdown, no explanation.
 
-{extraction_schema}
+{extraction_format}
 """
 
 
@@ -297,11 +369,14 @@ def extract_from_freeform(
 ) -> tuple[ExtractionResult, UsageStats]:
     """
     Extract architectural decisions and constraints from freeform text.
-    Sends text to LLM with system prompt. Returns ExtractionResult with decisions,
+
+    Sends text to LLM with a system prompt containing a compact format
+    template (``_EXTRACTION_FORMAT``) and ``response_format={"type": "json_object"}``
+    to constrain the output. Returns an ExtractionResult with decisions,
     constraints, affected_entities, and edges_to_create.
-    Uses the extraction_model from config.
-    Set temperature=0.1 for deterministic output.
-    Pass response_format with json_schema from ExtractionResult.model_json_schema().
+
+    Uses the extraction_model from config. Temperature is set to 0.1 for
+    deterministic output.
 
     Returns:
         A tuple of (ExtractionResult, UsageStats).
@@ -311,8 +386,7 @@ def extract_from_freeform(
 
     client = get_client(config)
 
-    extraction_schema = json.dumps(ExtractionResult.model_json_schema(), indent=2)
-    system_prompt = FREE_FORM_SYSTEM_PROMPT.format(extraction_schema=extraction_schema)
+    system_prompt = FREE_FORM_SYSTEM_PROMPT.format(extraction_format=_EXTRACTION_FORMAT)
     prefix = _provider_prefix(config)
 
     messages: list[dict[str, str]] = [
@@ -394,7 +468,7 @@ def extract_from_session(
     git_diff: str,
     user_notes: str,
     config: LLMConfig,
-    max_messages: int = 100,
+    max_messages: int = _DEFAULT_MAX_MESSAGES,
     custom_keywords: list[str] | None = None,
 ) -> tuple[ExtractionResult, UsageStats]:
     """
@@ -437,6 +511,10 @@ def extract_from_session(
         else:
             session_log = _truncate_tail(session_log, max_messages)
 
+    # Strip operational noise before sending to LLM
+    if session_log.strip():
+        session_log = _strip_session_noise(session_log)
+
     combined = ""
 
     if session_log.strip():
@@ -453,8 +531,7 @@ def extract_from_session(
 
     client = get_client(config)
 
-    extraction_schema = json.dumps(ExtractionResult.model_json_schema(), indent=2)
-    system_prompt = SESSION_SYSTEM_PROMPT.format(extraction_schema=extraction_schema)
+    system_prompt = SESSION_SYSTEM_PROMPT.format(extraction_format=_EXTRACTION_FORMAT)
     prefix = _provider_prefix(config)
 
     session_messages: list[dict[str, str]] = [
@@ -547,8 +624,7 @@ def extract_from_adr_consequences(
 
     client = get_client(config)
 
-    constraints_schema = json.dumps(_ConstraintListResponse.model_json_schema(), indent=2)
-    system_prompt = ADR_CONSEQUENCES_SYSTEM_PROMPT.format(constraints_schema=constraints_schema)
+    system_prompt = ADR_CONSEQUENCES_SYSTEM_PROMPT.format(constraints_format=_CONSTRAINTS_FORMAT)
     prefix = _provider_prefix(config)
 
     adr_messages: list[dict[str, str]] = [
@@ -648,8 +724,7 @@ def extract_from_codebase_summary(
 
     client = get_client(config)
 
-    extraction_schema = json.dumps(ExtractionResult.model_json_schema(), indent=2)
-    system_prompt = CODEBASE_DETECTION_SYSTEM_PROMPT.format(extraction_schema=extraction_schema)
+    system_prompt = CODEBASE_DETECTION_SYSTEM_PROMPT.format(extraction_format=_EXTRACTION_FORMAT)
     prefix = _provider_prefix(config)
 
     messages: list[dict[str, str]] = [

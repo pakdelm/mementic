@@ -24,7 +24,7 @@ description: Use when fixing lint violations reported by ruff. Applies auto-fixe
    ```
 7. Run tests to confirm nothing broke:
    ```
-   uv run pytest
+   uv run pytest -n auto
    ```
 
 ## Rules
