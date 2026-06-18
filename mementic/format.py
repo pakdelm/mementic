@@ -73,12 +73,9 @@ def timestamp() -> str:
 def detect_repo_path() -> str:
     """Detect the repository root path.
 
-    Tries MEMENTIC_REPO env var, then git root, then falls back to CWD.
+    Tries git root, then falls back to CWD.
     """
-    import os
     import subprocess
-    if env_repo := os.environ.get("MEMENTIC_REPO"):
-        return env_repo
     try:
         result = subprocess.run(
             ["git", "rev-parse", "--show-toplevel"],

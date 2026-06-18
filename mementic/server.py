@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
@@ -45,7 +44,7 @@ def _load_graph(project: str | None = None) -> tuple[GraphStore, MementicConfig]
     Returns:
         A tuple of (GraphStore, MementicConfig).
     """
-    cfg = load_config(repo_path=_repo_from_env())
+    cfg = load_config(repo_path=_detect_repo())
 
     # Try project database first
     try:
@@ -74,13 +73,36 @@ def _save_graph(graph: GraphStore, cfg: MementicConfig) -> None:
     graph.save(cfg.output.graph_path)
 
 
-def _repo_from_env() -> str:
-    """Detect the current repository from the environment.
+def _detect_repo() -> str:
+    """Detect the current repository from the global config.
 
-    Returns the ``MEMENTIC_REPO`` environment variable, or an empty string
-    when not set.
+    Resolves CWD against registered repos in ~/.mementic/config.json,
+    falls back to git root, then empty string.
     """
-    return os.environ.get("MEMENTIC_REPO", "")
+    from mementic.config import load_global_config
+    try:
+        global_cfg = load_global_config()
+        cwd = Path.cwd().resolve()
+        for proj_entry in global_cfg.projects.values():
+            for repo_entry in proj_entry.repos.values():
+                try:
+                    if Path(repo_entry.path).resolve() == cwd:
+                        return repo_entry.path
+                except (OSError, ValueError):
+                    continue
+    except Exception:
+        pass
+    try:
+        import subprocess
+        result = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            capture_output=True, text=True,
+        )
+        if result.returncode == 0:
+            return result.stdout.strip()
+    except (FileNotFoundError, OSError):
+        pass
+    return ""
 
 
 @mcp.tool()
@@ -159,7 +181,7 @@ async def propose_decision(
         Confirmation message with save status.
     """
     graph, cfg = _load_graph()
-    repo = _repo_from_env()
+    repo = _detect_repo()
 
     now = timestamp()
     decision = Decision(
@@ -210,7 +232,7 @@ async def propose_constraint(
         Confirmation message with save status.
     """
     graph, cfg = _load_graph()
-    repo = _repo_from_env()
+    repo = _detect_repo()
 
     constraint_id = (
         slugify(id, max_length=CONSTRAINT_ID_MAX_LENGTH)
