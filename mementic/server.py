@@ -29,11 +29,14 @@ from mementic.models import (
 )
 
 _INSTRUCTIONS = """\
-Mementic is an architectural memory layer. Before ANY task, you MUST call \
-`mementic_get_task_context` with the task description and affected files. \
-"Task" means ANY user request — questions, exploration, planning, and \
-informational queries are NOT exempt. Output the sufficiency gate before \
-proceeding. Do NOT read files or search code without calling this tool first.\
+Mementic is an architectural memory layer. After EVERY user message (not just \
+"before a task"), you MUST call `mementic_get_task_context` with the task \
+description and affected files. Each user message is a new context window — \
+do NOT assume previous context is still valid. Context packs are free (SQLite \
+reads, no LLM). "Task" means ANY user request — questions, exploration, \
+planning, and informational queries are NOT exempt. Output the sufficiency \
+gate before proceeding. Do NOT read files or search code without calling \
+this tool first.\
 """
 
 mcp = FastMCP("Mementic", instructions=_INSTRUCTIONS)
@@ -93,7 +96,9 @@ async def get_task_context(
 ) -> str:
     """Return all relevant Decisions and Constraints for a given task.
 
-    Call this BEFORE starting work on a task.
+    Call this AFTER EVERY USER MESSAGE — not just before starting work.
+    Each message is a new context window. Context packs are free (SQLite reads,
+    no LLM calls). Do not assume previous context is still valid.
 
     Args:
         task_description: Description of the task being started.

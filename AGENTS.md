@@ -16,9 +16,10 @@ to edit** — that tells you WHERE the change goes. Read code surgically: grep/g
 to the exact function, then read that section. Never batch-read ADRs or specs;
 that is the token waste the graph eliminates.
 
-**Before ANY task** (planning, implementation, refactoring, or review):
-1. Call `mementic_get_task_context` with the task description and ALL files
-   you intend to touch — even new files, even speculative changes.
+**After EVERY user message** (not just "before a task" — each message is a new
+context window):
+1. Call `mementic_get_task_context` with the current task description and ALL
+   files you intend to touch — even new files, even speculative changes.
 2. **Sufficiency gate — output these two lines before any further reads:**
    1. `Context pack says:` — 1-2 sentence summary (or "returned nothing relevant").
    2. `Files I still need to read and why:` — every code file you will open,
@@ -29,6 +30,12 @@ that is the token waste the graph eliminates.
    that violates an active constraint.
 5. Only read raw ADR or instruction files if the context pack leaves
    ambiguity you must resolve to proceed safely.
+
+**Why every message, not just "before a task":** Context packs are free (no LLM
+calls, just SQLite reads). Architectural constraints can change between messages
+(e.g., another agent session captured a new decision). Assuming previous context
+is still valid is how violations happen. The cost of re-fetching is near zero;
+the cost of stale context is a violated constraint.
 
 **You may NOT skip these steps by classifying a task as "read-only", "quick",
 or "informational". The context pack exists precisely so you don't waste tokens

@@ -162,7 +162,7 @@ Register the MCP server in `opencode.json`:
 ```
 
 The agent automatically discovers these MCP tools:
-- `get_task_context` — load constraints before starting work
+- `get_task_context` — load constraints and decisions for a task (call after every user message)
 - `record_decision` — record architectural decisions
 - `record_constraint` — record new constraints
 - `deprecate_rule` — retire outdated decisions or constraints
@@ -193,7 +193,8 @@ to every task, every session.
    didn't mention.
 3. **Never:** read all ADRs and instruction files as a batch before every task.
 
-**Before ANY task:**
+**After EVERY user message** (not just "before a task" — each message is a new
+context window):
 1. Call `mementic_get_task_context` with the task description and ALL files
    you intend to touch — even new files, even speculative changes.
 2. Call `mementic_get_entity_history` for each file being modified.
@@ -201,6 +202,10 @@ to every task, every session.
    that violates an active constraint.
 4. Only read raw ADR or instruction files if the context pack leaves ambiguity
    you must resolve to proceed safely.
+
+**Why every message, not just "before a task":** Context packs are free (no LLM
+calls, just SQLite reads). Architectural constraints can change between messages.
+Assuming previous context is still valid is how violations happen.
 
 **After architecturally significant changes:**
 1. Call `mementic_record_decision` with title, rationale, rejected
