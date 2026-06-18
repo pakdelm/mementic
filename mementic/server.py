@@ -76,7 +76,7 @@ def _save_graph(graph: GraphStore, cfg: MementicConfig) -> None:
 
 
 @mcp.tool()
-async def get_context_pack(
+async def get_task_context(
     task_description: str,
     affected_files: list[str],
     project: str | None = None,
@@ -131,15 +131,15 @@ async def get_context_pack(
 
 
 @mcp.tool()
-async def propose_decision(
+async def record_decision(
     title: str,
     rationale: str,
     rejected_alternatives: list[str] | None = None,
     affected_entities: list[str] | None = None,
 ) -> str:
-    """Propose a new architectural decision.
+    """Record a new architectural decision.
 
-    Will be saved with status 'accepted'.
+    Saved with status 'accepted'.
 
     Args:
         title: Short title for the decision.
@@ -183,13 +183,13 @@ async def propose_decision(
 
 
 @mcp.tool()
-async def propose_constraint(
+async def record_constraint(
     description: str,
     bound_entities: list[str],
     decision_id: str | None = None,
     id: str | None = None,
 ) -> str:
-    """Propose a new constraint.
+    """Record a new constraint.
 
     Args:
         description: Description of the constraint.
@@ -234,11 +234,11 @@ async def propose_constraint(
 
 
 @mcp.tool()
-async def deprecate_entity(
+async def deprecate_rule(
     id: str,
     reason: str = "",
 ) -> str:
-    """Mark a decision or constraint as deprecated.
+    """Mark a decision or constraint rule as deprecated.
 
     Use this to retire outdated architectural decisions or constraints
     that no longer apply.  The entity remains in the graph for history
@@ -254,7 +254,7 @@ async def deprecate_entity(
     graph, cfg = _load_graph()
 
     if not graph.has_node(id):
-        return f"Entity '{id}' not found. Use get_context_pack to discover IDs."
+        return f"Entity '{id}' not found. Use get_task_context to discover IDs."
 
     # Determine node type
     node_type = None
@@ -291,7 +291,7 @@ async def deprecate_entity(
 
 
 @mcp.tool()
-async def get_system_evolution(
+async def get_entity_history(
     entity_path: str,
     project: str | None = None,
     prefix_match: bool = False,

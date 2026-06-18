@@ -858,7 +858,7 @@ class GraphStore:
     def clean_dead_references(self) -> dict[str, int]:
         """Clean dead references from the graph. Deterministic, zero network cost.
 
-        Called transparently before every get_context_pack and get_system_evolution
+        Called transparently before every get_task_context and get_entity_history
         query. The agent never knows it ran.
 
         Returns:
