@@ -16,6 +16,7 @@ __all__ = [
     "AgentSessionConfig",
     "ClaudeSource",
     "CursorSource",
+    "delete_project",
     "GlobalConfig",
     "LLMConfig",
     "MementicConfig",
@@ -291,8 +292,6 @@ def load_config(repo_path: str | None = None, project: str | None = None) -> Mem
     )
 
 
-
-
 class RepoEntry(BaseModel):
     """A registered repo within a project.
 
@@ -360,7 +359,6 @@ def get_global_config_path() -> Path:
     Returns:
         ``Path.home() / ".mementic" / "config.json"``, unless overridden.
     """
-    import os
     if override := os.environ.get("MEMENTIC_GLOBAL_CONFIG"):
         return Path(override)
     return Path.home() / ".mementic" / "config.json"
@@ -436,23 +434,28 @@ def save_global_config(config: GlobalConfig) -> None:
 def resolve_project(project: str | None = None) -> tuple[str, GlobalConfig]:
     """Resolve which project to target.
 
+    Resolution order:
+    1. Explicit ``project`` argument → use it (must exist).
+    2. No projects configured → error.
+    3. CWD is inside a registered repo → use that project (if unambiguous).
+    4. Single project → use it (regardless of ``default_project``).
+    5. ``default_project`` in config → use it.
+    6. Multiple projects, no match → error, require ``--project``.
+
     Args:
         project: Optional project name.  When given, the project must
-            exist in the global config.  When omitted and exactly one
-            project is configured, that project is returned.  When
-            omitted and multiple projects exist, a ``ValueError`` is
-            raised listing the available choices.
+            exist in the global config.
 
     Returns:
         A ``(project_name, global_config)`` tuple.
 
     Raises:
-        ValueError: If the requested project does not exist, or if no
-            project was specified and the global config contains more
-            than one project.
+        ValueError: If the requested project does not exist, or if
+            resolution fails (no projects, ambiguous CWD, etc.).
     """
     config = load_global_config()
 
+    # Step 1: explicit --project
     if project is not None:
         if project not in config.projects:
             available = ", ".join(sorted(config.projects))
@@ -462,20 +465,115 @@ def resolve_project(project: str | None = None) -> tuple[str, GlobalConfig]:
             )
         return project, config
 
-    if len(config.projects) == 1:
-        (only_project,) = config.projects
-        return only_project, config
-
     if len(config.projects) == 0:
         raise ValueError(
             "No projects configured. Run 'mementic init' to create one."
         )
+
+    # Step 2: CWD-based inference
+    try:
+        cwd = Path.cwd().resolve()
+    except (OSError, ValueError):
+        cwd = None
+
+    if cwd is not None:
+        matching_projects: list[str] = []
+        for proj_name, proj_entry in config.projects.items():
+            for repo_entry in proj_entry.repos.values():
+                try:
+                    repo_path = Path(repo_entry.path).resolve()
+                    if cwd == repo_path or cwd.is_relative_to(repo_path):
+                        matching_projects.append(proj_name)
+                        break  # one match per project is enough
+                except (OSError, ValueError):
+                    continue
+
+        if len(matching_projects) == 1:
+            return matching_projects[0], config
+
+        if len(matching_projects) > 1:
+            project_list = ", ".join(sorted(matching_projects))
+            raise ValueError(
+                f"Current directory is registered in multiple projects "
+                f"({project_list}). Use --project to specify."
+            )
+
+    # Step 3: default_project fallback
+    if len(config.projects) == 1:
+        (only_project,) = config.projects
+        return only_project, config
+
+    default = config.default_project
+    if default in config.projects:
+        return default, config
 
     available = ", ".join(sorted(config.projects))
     raise ValueError(
         f"Multiple projects configured. Use --project to specify. "
         f"Available: {available}"
     )
+
+
+def delete_project(
+    name: str,
+    *,
+    delete_db: bool = False,
+) -> tuple[bool, str]:
+    """Delete a project from the global config.
+
+    Args:
+        name: Project name to delete.
+        delete_db: If True, also delete the SQLite database file.
+
+    Returns:
+        A ``(db_deleted, message)`` tuple. ``db_deleted`` is True if
+        the database file was actually removed (only possible when
+        ``delete_db`` is True).
+
+    Raises:
+        ValueError: If the project does not exist or is the last project.
+    """
+    config = load_global_config()
+
+    if name not in config.projects:
+        available = ", ".join(sorted(config.projects))
+        raise ValueError(
+            f"Project '{name}' not found. Available: {available}"
+        )
+
+    if len(config.projects) <= 1:
+        raise ValueError(
+            "Cannot delete the last remaining project. "
+            "Create another project first."
+        )
+
+    proj = config.projects[name]
+    db_path = Path(proj.db_path).expanduser()
+    db_deleted = False
+
+    if delete_db and db_path.is_file():
+        db_path.unlink()
+        db_deleted = True
+
+    # Remove project from config
+    del config.projects[name]
+
+    # Update default_project if it pointed to the deleted project
+    if config.default_project == name:
+        config.default_project = next(iter(config.projects))
+
+    save_global_config(config)
+
+    msg = f"Deleted project '{name}'."
+    if delete_db:
+        if db_deleted:
+            msg += f" Database file removed: {db_path}"
+        else:
+            msg += f" Database file not found (nothing to delete): {db_path}"
+    else:
+        msg += f" Database file kept: {db_path}"
+
+    return db_deleted, msg
 
 
 def _default_global_config() -> GlobalConfig:

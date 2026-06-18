@@ -2,7 +2,10 @@
 
 Semantic memory layer for engineering teams and AI coding agents.
 
-Mementic ingests architectural decisions (ADRs), constraints, and project conventions from Confluence, repositories, and opencode instructions into a structured knowledge graph. Agents (opencode, Claude Code, Cursor) query it via MCP tools to inherit the team's architectural context in every session.
+Mementic ingests architectural decisions (ADRs), constraints, and project
+conventions from repositories and agent instruction files into a structured
+knowledge graph. Agents (OpenCode, Claude Code, Cursor, Windsurf) query it
+via MCP tools to inherit the team's architectural context in every session.
 
 ## Install
 
@@ -28,7 +31,8 @@ uv sync
 
 ### Configure your LLM provider
 
-Mementic requires an LLM. Supported providers:
+Mementic supports LLM-based extraction for richer results. Without an API
+key, it runs in deterministic mode (reduced quality). Supported providers:
 
 | Provider | Set env var | Model example |
 |---|---|---|
@@ -39,18 +43,18 @@ Mementic requires an LLM. Supported providers:
 
 ```bash
 # DeepSeek (default) — pass inline to avoid persisting in your shell
-DEEPSEEK_API_KEY="sk-..." opencode
+DEEPSEEK_API_KEY="sk-..." mementic init
 
 # Or export for the current session
 export DEEPSEEK_API_KEY="sk-..."
 ```
 ```pwsh
 # PowerShell
-$env:DEEPSEEK_API_KEY="sk-..."; opencode
+$env:DEEPSEEK_API_KEY="sk-..."; mementic init
 ```
 ```bat
 :: cmd.exe
-cmd /c "set DEEPSEEK_API_KEY=sk-... && opencode"
+cmd /c "set DEEPSEEK_API_KEY=sk-... && mementic init"
 ```
 
 If the API key is missing or invalid, mementic exits immediately with a clear error
@@ -61,13 +65,14 @@ naming the required environment variable. No silent fallback.
 ### 1. Initialize the graph
 
 ```bash
+cd ~/dev/my-app
 mementic init
 ```
 
-If no `.mementic.json` exists, `init` auto-discovers `./docs/adr/` and
-`./docs/instructions/` directories and creates a default config. Use
-`--interactive` for a setup walkthrough, or `--force` to require an existing
-config.
+Auto-discovers `./docs/adr/`, `./docs/instructions/`, `.cursor/instructions/`,
+and `.windsurf/instructions/` directories. Registers the repo in
+`~/.mementic/config.json` under the default project. Use `--interactive` for
+a guided setup walkthrough.
 
 Scans all configured sources, extracts decisions and constraints via LLM, and
 populates the knowledge graph.
@@ -91,7 +96,7 @@ Outputs a context pack with all relevant constraints and decisions.
 ### 4. Capture decisions after tasks
 
 ```bash
-# Auto-discovers latest opencode session
+# Auto-discovers latest session from any supported agent
 mementic capture
 
 # With manual session path and notes
@@ -100,7 +105,7 @@ mementic capture --session /path/to/session.log --notes "Migrated Redis to Valke
 
 Extracts architectural decisions from the agent session log + git diff.
 Decisions are auto-resolved against the existing graph: new slugs are
-accepted, duplicates are skipped, and conflicting changes deprecated existing
+accepted, duplicates are skipped, and conflicting changes deprecate existing
 entries. No manual review required.
 Tracks the last captured commit so subsequent captures only diff new changes.
 Runs without git (warns and uses notes only).
@@ -113,7 +118,34 @@ mementic log
 
 Shows recent graph mutations with timestamps.
 
-## Agent integration (opencode)
+## Multi-project workflow
+
+Mementic supports multiple isolated projects, each with its own knowledge
+graph database. Commands automatically detect which project to use based on
+your current directory.
+
+```bash
+# Create a project
+mementic project create platform --description "Core platform services"
+
+# Register repos in it
+cd ~/dev/auth-service && mementic init --project platform
+cd ~/dev/billing && mementic init --project platform
+
+# Now any command run inside those repos targets "platform" automatically
+cd ~/dev/auth-service
+mementic capture --notes "added rate limiting"
+# → resolves to "platform" — no --project needed
+
+# List and inspect projects
+mementic project list
+mementic project info platform
+```
+
+The `--project` flag is only required when a repo belongs to multiple
+projects (rare). See `mementic project --help` for all subcommands.
+
+## Agent integration (OpenCode)
 
 Register the MCP server in `opencode.json`:
 
@@ -176,25 +208,30 @@ to every task, every session.
 2. Call `mementic_record_constraint` for any new rules.
 
 **After the task:**
-Run `mementic capture` in the terminal. If capture reports flagged
-conflicts, run `mementic review` to resolve them.
+Run `mementic capture` in the terminal. Decisions are auto-resolved —
+no manual review step.
 ```
 
 ## CLI reference
 
 | Command | Description |
-|---|---|---|
-| `mementic init [--config PATH] [--interactive] [--force]` | Auto-bootstrap config and initialize graph |
-| `mementic capture [--session PATH] [--notes TEXT]` | Extract decisions from session (auto-resolves: new/skip/update) |
-| `mementic context --task TEXT --files FILE...` | Generate context pack with relevant constraints and decisions |
+|---|---|
+| `mementic init [--repo PATH] [--no-scan] [--interactive] [--project NAME]` | Initialize graph from configured sources |
+| `mementic capture [--session PATH] [--notes TEXT] [--tail N] [-k KEYWORD]` | Extract decisions from session (auto-resolves: new/skip/update) |
+| `mementic context --task TEXT --files FILE... [--prefix]` | Generate context pack with relevant constraints and decisions |
 | `mementic query [--entity PATH] [--search TERM] [--depth N]` | Search graph |
-| `mementic list [decisions\|constraints\|entities] [--status] [-n N]` | Browse graph in scannable format |
-| `mementic deprecate <id> [--reason TEXT]` | Retire a decision (don't edit history) |
+| `mementic list [decisions\|constraints\|entities] [--status S] [-n N] [--stale]` | Browse graph in scannable format |
+| `mementic deprecate <id> [--reason TEXT]` | Retire a decision or constraint (don't edit history) |
 | `mementic graph [-o PATH] [-O] [--filter TYPE]` | Generate interactive HTML visualization |
-| `mementic metrics [--json] [--reset]` | Show token usage across four sections |
+| `mementic metrics [--json] [--reset]` | Show token usage metrics |
 | `mementic status` | Show health checklist (config, API key, graph, session provider) |
 | `mementic log` | Show recent graph mutations |
 | `mementic server` | Start MCP server (stdio) |
+| `mementic project create <name> [--description TEXT]` | Create a new project |
+| `mementic project list` | List all configured projects |
+| `mementic project set-default <name>` | Set the default project |
+| `mementic project info [name]` | Show project details (repos, DB path, description) |
+| `mementic project delete <name> [--force] [--keep-db]` | Delete a project and optionally its database |
 
 ## Measuring token efficiency
 
@@ -232,9 +269,9 @@ start fresh.
 | **Extraction cost** | LLM tokens spent running `init` and `capture` |
 | **Context pack** | The subset of decisions and constraints mementic returns for a specific task |
 
-Data is stored as JSONL in `.mementic/metrics.jsonl` (auto-created,
-automatically gitignored with the rest of `.mementic/`). No LLM cost for reading or summarizing
-metrics — it's just filesystem I/O.
+Metrics are stored in the project's SQLite database (the `extraction_log`
+table). Legacy fallback to `.mementic/metrics.jsonl` when no project is
+configured.
 
 ### Quick token count
 
@@ -252,11 +289,7 @@ Uses `tiktoken` (accurate) if installed, falls back to `len(text) // 4`
 
 ```bash
 uv sync                           # install dependencies
-uv run pytest                     # run tests
+uv run pytest -n auto             # run tests (parallel)
 uv run ruff check .               # lint
 uv run mypy .                     # type check
 ```
-
-## License
-
-MIT

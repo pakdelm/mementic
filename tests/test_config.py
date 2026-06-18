@@ -23,6 +23,7 @@ from mementic.config import (
     SessionsConfig,
     Sources,
     WindsurfSource,
+    delete_project,
     load_config,
     load_global_config,
     resolve_project,
@@ -582,3 +583,241 @@ class TestGlobalConfig:
         """RepoEntry(path='/tmp/repo') has label=''."""
         entry = RepoEntry(path="/tmp/repo")
         assert entry.label == ""
+
+
+# ── Spec 17 Phase 1: CWD-based project resolution ─────────────────
+
+
+class TestResolveProjectCWDInference:
+    """Tests for CWD-based project resolution (Spec 17)."""
+
+    def test_cwd_inside_registered_repo_resolves_project(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """When CWD is inside a registered repo, resolve to that project."""
+        repo = tmp_path / "auth-service"
+        repo.mkdir()
+        config = GlobalConfig(
+            projects={
+                "platform": ProjectEntry(
+                    db_path=str(tmp_path / "platform.db"),
+                    repos={
+                        str(repo): RepoEntry(path=str(repo), label="auth")
+                    },
+                ),
+            }
+        )
+        config_path = tmp_path / "config.json"
+        config_path.write_text(config.model_dump_json(), encoding="utf-8")
+        monkeypatch.setenv("MEMENTIC_GLOBAL_CONFIG", str(config_path))
+        monkeypatch.chdir(repo)
+
+        name, cfg = resolve_project()
+        assert name == "platform"
+
+    def test_cwd_subdirectory_of_registered_repo_resolves(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """CWD inside a subdirectory of a registered repo still resolves."""
+        repo = tmp_path / "auth-service"
+        subdir = repo / "src" / "handlers"
+        subdir.mkdir(parents=True)
+        config = GlobalConfig(
+            projects={
+                "platform": ProjectEntry(
+                    db_path=str(tmp_path / "platform.db"),
+                    repos={
+                        str(repo): RepoEntry(path=str(repo))
+                    },
+                ),
+            }
+        )
+        config_path = tmp_path / "config.json"
+        config_path.write_text(config.model_dump_json(), encoding="utf-8")
+        monkeypatch.setenv("MEMENTIC_GLOBAL_CONFIG", str(config_path))
+        monkeypatch.chdir(subdir)
+
+        name, _ = resolve_project()
+        assert name == "platform"
+
+    def test_cwd_in_multiple_projects_errors(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """CWD repo registered in multiple projects raises ValueError."""
+        repo = tmp_path / "shared-lib"
+        repo.mkdir()
+        config = GlobalConfig(
+            projects={
+                "main": ProjectEntry(
+                    db_path=str(tmp_path / "main.db"),
+                    repos={str(repo): RepoEntry(path=str(repo))},
+                ),
+                "platform": ProjectEntry(
+                    db_path=str(tmp_path / "platform.db"),
+                    repos={str(repo): RepoEntry(path=str(repo))},
+                ),
+            }
+        )
+        config_path = tmp_path / "config.json"
+        config_path.write_text(config.model_dump_json(), encoding="utf-8")
+        monkeypatch.setenv("MEMENTIC_GLOBAL_CONFIG", str(config_path))
+        monkeypatch.chdir(repo)
+
+        with pytest.raises(ValueError, match="multiple projects"):
+            resolve_project()
+
+    def test_cwd_outside_repos_falls_back_to_default(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """CWD not in any repo falls back to default_project."""
+        repo = tmp_path / "auth-service"
+        repo.mkdir()
+        home = tmp_path / "home"
+        home.mkdir()
+        config = GlobalConfig(
+            default_project="platform",
+            projects={
+                "main": ProjectEntry(
+                    db_path=str(tmp_path / "main.db"),
+                    repos={},
+                ),
+                "platform": ProjectEntry(
+                    db_path=str(tmp_path / "platform.db"),
+                    repos={
+                        str(repo): RepoEntry(path=str(repo))
+                    },
+                ),
+            }
+        )
+        config_path = tmp_path / "config.json"
+        config_path.write_text(config.model_dump_json(), encoding="utf-8")
+        monkeypatch.setenv("MEMENTIC_GLOBAL_CONFIG", str(config_path))
+        monkeypatch.chdir(home)
+
+        name, _ = resolve_project()
+        assert name == "platform"
+
+    def test_single_project_still_works_without_cwd_match(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Single project resolves even when CWD is not in any repo."""
+        repo = tmp_path / "my-app"
+        repo.mkdir()
+        home = tmp_path / "home"
+        home.mkdir()
+        config = GlobalConfig(
+            projects={
+                "main": ProjectEntry(
+                    db_path=str(tmp_path / "main.db"),
+                    repos={
+                        str(repo): RepoEntry(path=str(repo))
+                    },
+                ),
+            }
+        )
+        config_path = tmp_path / "config.json"
+        config_path.write_text(config.model_dump_json(), encoding="utf-8")
+        monkeypatch.setenv("MEMENTIC_GLOBAL_CONFIG", str(config_path))
+        monkeypatch.chdir(home)
+
+        name, _ = resolve_project()
+        assert name == "main"
+
+
+# ── Spec 17 Phase 1: Project deletion ─────────────────────────────
+
+
+class TestDeleteProject:
+    """Tests for delete_project (Spec 17)."""
+
+    def test_delete_project_removes_from_config(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Deleting a project removes it from config."""
+        config = GlobalConfig(
+            projects={
+                "main": ProjectEntry(db_path=str(tmp_path / "main.db")),
+                "platform": ProjectEntry(db_path=str(tmp_path / "platform.db")),
+            }
+        )
+        config_path = tmp_path / "config.json"
+        config_path.write_text(config.model_dump_json(), encoding="utf-8")
+        monkeypatch.setenv("MEMENTIC_GLOBAL_CONFIG", str(config_path))
+
+        delete_project("platform", delete_db=False)
+
+        loaded = load_global_config()
+        assert "platform" not in loaded.projects
+        assert "main" in loaded.projects
+
+    def test_delete_project_updates_default_if_needed(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """If deleted project was the default, default_project is updated."""
+        config = GlobalConfig(
+            default_project="platform",
+            projects={
+                "main": ProjectEntry(db_path=str(tmp_path / "main.db")),
+                "platform": ProjectEntry(db_path=str(tmp_path / "platform.db")),
+            }
+        )
+        config_path = tmp_path / "config.json"
+        config_path.write_text(config.model_dump_json(), encoding="utf-8")
+        monkeypatch.setenv("MEMENTIC_GLOBAL_CONFIG", str(config_path))
+
+        delete_project("platform", delete_db=False)
+
+        loaded = load_global_config()
+        assert loaded.default_project == "main"
+
+    def test_delete_project_last_project_raises(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Cannot delete the last remaining project."""
+        config = GlobalConfig(
+            projects={
+                "main": ProjectEntry(db_path=str(tmp_path / "main.db")),
+            }
+        )
+        config_path = tmp_path / "config.json"
+        config_path.write_text(config.model_dump_json(), encoding="utf-8")
+        monkeypatch.setenv("MEMENTIC_GLOBAL_CONFIG", str(config_path))
+
+        with pytest.raises(ValueError, match="last remaining project"):
+            delete_project("main")
+
+    def test_delete_project_nonexistent_raises(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Deleting a nonexistent project raises ValueError."""
+        config = GlobalConfig(
+            projects={
+                "main": ProjectEntry(db_path=str(tmp_path / "main.db")),
+            }
+        )
+        config_path = tmp_path / "config.json"
+        config_path.write_text(config.model_dump_json(), encoding="utf-8")
+        monkeypatch.setenv("MEMENTIC_GLOBAL_CONFIG", str(config_path))
+
+        with pytest.raises(ValueError, match="not found"):
+            delete_project("ghost")
+
+    def test_delete_project_with_db_file(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """delete_db=True removes the SQLite file."""
+        db_file = tmp_path / "platform.db"
+        db_file.write_text("fake db")
+        config = GlobalConfig(
+            projects={
+                "main": ProjectEntry(db_path=str(tmp_path / "main.db")),
+                "platform": ProjectEntry(db_path=str(db_file)),
+            }
+        )
+        config_path = tmp_path / "config.json"
+        config_path.write_text(config.model_dump_json(), encoding="utf-8")
+        monkeypatch.setenv("MEMENTIC_GLOBAL_CONFIG", str(config_path))
+
+        db_deleted, msg = delete_project("platform", delete_db=True)
+        assert db_deleted is True
+        assert not db_file.exists()

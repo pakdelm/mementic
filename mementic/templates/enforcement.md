@@ -1,7 +1,10 @@
 ## Mementic Memory (HARD CONSTRAINT — ALWAYS ACTIVE)
 
 This project uses Mementic as its architectural memory layer. These rules
-apply to every task, every session, no exception.
+apply to every task, every session, no exceptions. "Task" means ANY user
+request — including questions, exploration, planning, code review, and
+informational queries. There are no read-only exceptions. If you are
+about to read files or search code, you need context first.
 
 **Before ANY task** (planning, implementation, refactoring, or review):
 1. Call `mementic_get_task_context` with the task description and ALL files
@@ -12,6 +15,11 @@ apply to every task, every session, no exception.
 3. Call `mementic_get_entity_history` for each file being modified.
 4. Validate your plan against every returned constraint.
 5. Only read raw ADR or instruction files if the context pack leaves ambiguity.
+
+**You may NOT skip these steps by classifying a task as "read-only", "quick",
+or "informational". The context pack exists precisely so you don't waste tokens
+reading raw files to understand what rules apply. Skipping it defeats the
+purpose.**
 
 **Proposing decisions/constraints (cheap, no LLM):**
 When you make a decision or establish a rule, call
