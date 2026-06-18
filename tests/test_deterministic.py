@@ -1,10 +1,10 @@
-"""Tests for the deterministic (no-LLM) extractors in mementic.deterministic."""
+"""Tests for the deterministic (no-LLM) extractors in mementic.extraction."""
 
 from __future__ import annotations
 
 import pytest
 
-from mementic.deterministic import (
+from mementic.extraction import (
     extract_constraints_from_consequences,
     extract_from_markdown,
     extract_from_session_deterministic,

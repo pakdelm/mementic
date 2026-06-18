@@ -15,20 +15,16 @@ load_dotenv()
 
 from mementic.config import (  # noqa: E402
     PROVIDER_CONFIGS,
-    AdrDirSource,
-    CursorSource,
-    OpenCodeSource,
+    GLOBAL_CONFIG_DISPLAY_PATH,
     ProjectEntry,
     RepoEntry,
     Sources,
-    WindsurfSource,
     load_config,
     load_global_config,
-    migrate_legacy_config,
     resolve_project,
     save_global_config,
 )
-from mementic.format import count_tokens, format_context_pack, timestamp  # noqa: E402
+from mementic.format import count_tokens, detect_repo_path, format_context_pack, timestamp  # noqa: E402
 from mementic.graph import GraphStore  # noqa: E402
 from mementic.models import CodeEntity, Decision, DecisionStatus, EntityType, MetricsEntry  # noqa: E402
 from mementic.pipeline import _extract_session, run_init  # noqa: E402
@@ -39,6 +35,13 @@ from mementic.sources.opencode import scan_opencode_instructions  # noqa: E402
 
 if TYPE_CHECKING:
     from mementic.config import MementicConfig  # noqa: F401
+
+_CODEBASE_INDICATORS: tuple[str, ...] = (
+    "pyproject.toml", "package.json", "go.mod", "Cargo.toml",
+    "Makefile", "setup.py", "setup.cfg", "CMakeLists.txt",
+    "meson.build", "pom.xml", "build.gradle", "Gemfile",
+    "Cargo.lock", "mix.exs", "rebar.config",
+)
 
 app = typer.Typer(help="Mementic — semantic memory for engineering teams and AI agents")
 
@@ -87,7 +90,7 @@ def _resolve_graph(project: str | None = None) -> tuple[GraphStore, "MementicCon
     Raises:
         typer.Exit: When an explicit ``--project`` is not found.
     """
-    cfg = load_config(repo_path=str(Path.cwd()))
+    cfg = load_config(repo_path=detect_repo_path())
 
     try:
         proj_name, global_cfg = resolve_project(project)
@@ -135,10 +138,6 @@ def init(
     interactive: bool = typer.Option(
         False, "--interactive", help="Walk through setup interactively"
     ),
-    force: bool = typer.Option(
-        False, "--force",
-        help="Skip auto-bootstrap; fail if repo is not registered",
-    ),
     project: str | None = typer.Option(
         None, "--project",
         help="Target project name for project-aware init",
@@ -153,10 +152,7 @@ def init(
     With --repo, scans the codebase structure for architectural patterns
     before processing configured sources. Use --no-scan to skip.
     """
-    # Migrate any legacy .mementic.json (Spec 15)
-    migrate_legacy_config()
-
-    cwd = Path.cwd()
+    cwd = Path(detect_repo_path())
     cwd_resolved = str(cwd.resolve())
 
     # ── Check if repo is already registered in the global config ──
@@ -173,42 +169,23 @@ def init(
         if already_registered:
             break
 
-    if force and not already_registered:
-        typer.echo(
-            "Repo not registered. Run 'mementic init' without --force first.",
-            err=True,
-        )
-        raise typer.Exit(code=1)
-
     if not already_registered:
-        # ── Auto-discover sources ──
-        typer.echo("Auto-discovering sources...")
+        # Register with empty sources — pipeline Phase 0 handles markdown scanning.
         discovered_sources = Sources()
-        if Path("./docs/adr").is_dir():
-            discovered_sources.adr_dirs.append(AdrDirSource(path="./docs/adr"))
-            typer.echo("  Found: ./docs/adr/")
-        if Path("./docs/instructions").is_dir():
-            discovered_sources.opencode_instructions.append(
-                OpenCodeSource(path="./docs/instructions")
+
+        if not any(
+            (
+                discovered_sources.adr_dirs,
+                discovered_sources.opencode_instructions,
             )
-            typer.echo("  Found: ./docs/instructions/")
-        if Path(".cursor/instructions").is_dir():
-            discovered_sources.cursor_instructions.append(
-                CursorSource(path=".cursor/instructions")
+        ):
+            typer.echo(
+                "No pre-configured sources. All markdown files will be "
+                "scanned during init."
             )
-            typer.echo("  Found: .cursor/instructions/")
-        if Path(".windsurf/instructions").is_dir():
-            discovered_sources.windsurf_instructions.append(
-                WindsurfSource(path=".windsurf/instructions")
-            )
-            typer.echo("  Found: .windsurf/instructions/")
 
         # Detect codebase-only repos (relax: register with empty sources)
-        codebase_indicators = (
-            "pyproject.toml", "package.json", "go.mod", "Cargo.toml",
-            "Makefile", "setup.py", "setup.cfg",
-        )
-        has_codebase = any((cwd / ind).is_file() for ind in codebase_indicators)
+        has_codebase = any((cwd / ind).is_file() for ind in _CODEBASE_INDICATORS)
 
         if not any(
             (
@@ -248,11 +225,7 @@ def init(
     # Auto-detect repo if not explicitly given
     effective_repo = repo
     if effective_repo is None and not no_scan:
-        indicators = (
-            "pyproject.toml", "package.json", "go.mod", "Cargo.toml",
-            "Makefile", "setup.py", "setup.cfg",
-        )
-        for indicator in indicators:
+        for indicator in _CODEBASE_INDICATORS:
             if (cwd / indicator).is_file():
                 effective_repo = str(cwd)
                 break
@@ -292,7 +265,7 @@ def init(
         if setup_key:
             typer.echo()
             typer.echo(f"Available providers: {', '.join(PROVIDER_CONFIGS.keys())}")
-            provider = typer.prompt("LLM provider", default="deepseek")
+            provider = typer.prompt("LLM provider", default="")
 
             if provider not in PROVIDER_CONFIGS:
                 typer.echo(f"Unknown provider '{provider}'. Skipping LLM setup.")
@@ -316,11 +289,7 @@ def init(
                         )
                         typer.echo(f"  export {env_var}=\"your-key-here\"")
 
-                default_model = (
-                    "deepseek-chat" if provider == "deepseek"
-                    else "gpt-4o" if provider == "openai"
-                    else ""
-                )
+                default_model = ""  # user must choose
                 model = typer.prompt(
                     f"Model for {provider}", default=default_model
                 )
@@ -328,7 +297,7 @@ def init(
                 global_cfg.llm.model = model
                 global_cfg.llm.extraction_model = model
                 save_global_config(global_cfg)
-                typer.echo("Saved to ~/.mementic/config.json")
+                typer.echo(f"Saved to {GLOBAL_CONFIG_DISPLAY_PATH}")
 
     # ── Run init (no config_path — pipeline reads global config) ──
     try:
@@ -389,7 +358,7 @@ def init(
     if not post_cfg.llm.get_api_key():
         typer.echo()
         typer.echo("  Note  Running without LLM API key — deterministic extraction only.")
-        typer.echo("        Graph quality is reduced. Set a provider key in ~/.mementic/config.json")
+        typer.echo(f"        Graph quality is reduced. Set a provider key in {GLOBAL_CONFIG_DISPLAY_PATH}")
         typer.echo("        for richer extraction, or continue as-is (inline proposals work regardless).")
 
     # Log extraction costs to metrics (project database only)
@@ -437,7 +406,7 @@ def capture(
     from mementic.session import get_registry
 
     registry = get_registry()
-    cfg = load_config(repo_path=str(Path.cwd()))
+    cfg = load_config(repo_path=detect_repo_path())
     detected_agent: str | None = None
 
     if not session and not agent:
@@ -578,13 +547,13 @@ def capture(
         raise typer.Exit()
 
     # ── Auto-resolve capture ──
-    from mementic.format import slugify
+    from mementic.format import DECISION_ID_MAX_LENGTH, CONSTRAINT_ID_MAX_LENGTH, slugify
 
     # Replace LLM-generated IDs (dec-001, etc.) with deterministic slugs
     for d in extraction.decisions:
-        d.id = slugify(d.title, max_length=80)
+        d.id = slugify(d.title, max_length=DECISION_ID_MAX_LENGTH)
     for c in extraction.constraints:
-        c.id = slugify(c.description, max_length=80)
+        c.id = slugify(c.description, max_length=CONSTRAINT_ID_MAX_LENGTH)
 
     counts = auto_resolve_capture(
         graph, extraction.decisions, extraction.constraints

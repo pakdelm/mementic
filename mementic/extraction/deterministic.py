@@ -12,13 +12,19 @@ from __future__ import annotations
 
 import re
 
-from mementic.extraction import (
+from mementic.extraction.llm import (
     ARCHITECTURE_KEYWORDS,
     _extract_architecture_windows,
     _strip_session_noise,
     _truncate_tail,
 )
-from mementic.format import find_file_paths, slugify, timestamp
+from mementic.format import (
+    DECISION_ID_MAX_LENGTH,
+    CONSTRAINT_ID_MAX_LENGTH,
+    find_file_paths,
+    slugify,
+    timestamp,
+)
 from mementic.models import Constraint, Decision, DecisionStatus, ExtractionResult
 
 # ── Signal sets ───────────────────────────────────────────────────────
@@ -78,9 +84,6 @@ _SESSION_DECISION_PHRASES: tuple[str, ...] = (
 )
 
 
-# ── Helpers ───────────────────────────────────────────────────────────
-
-
 def _line_matches_loose_constraint(line: str) -> bool:
     """Return True if a line contains a LOOSE constraint signal."""
     line_lower = line.lower()
@@ -104,7 +107,6 @@ def _line_matches_session_decision(line: str) -> bool:
 def _clean_constraint_description(line: str) -> str:
     """Strip bullet markers and leading whitespace from a constraint line."""
     stripped = line.strip()
-    # Strip leading bullet markers (-, *, optionally followed by whitespace).
     stripped = re.sub(r"^[-*]\s+", "", stripped)
     return stripped
 
@@ -147,7 +149,7 @@ def _extract_constraints_from_lines(
             continue
         constraints.append(
             Constraint(
-                id=slugify(description, max_length=80),
+                id=slugify(description, max_length=CONSTRAINT_ID_MAX_LENGTH),
                 description=description,
                 bound_entities=list(bound_entities),
                 enforced_by=enforced_by,
@@ -214,7 +216,7 @@ def extract_from_markdown(content: str, source_label: str) -> ExtractionResult:
         if not header:
             continue
         body = "\n".join(section_lines[1:]).strip()
-        decision_id = slugify(header, max_length=80)
+        decision_id = slugify(header, max_length=DECISION_ID_MAX_LENGTH)
         decisions.append(
             Decision(
                 id=decision_id,
@@ -344,7 +346,7 @@ def extract_from_session_deterministic(
                 rationale = _surrounding_context(window_lines, idx, radius=3)
                 decisions.append(
                     Decision(
-                        id=slugify(line, max_length=80),
+                        id=slugify(line, max_length=DECISION_ID_MAX_LENGTH),
                         title=title,
                         rationale=rationale,
                         source="session:deterministic",
@@ -360,7 +362,7 @@ def extract_from_session_deterministic(
                 context_text = _surrounding_context(window_lines, idx, radius=3)
                 constraints.append(
                     Constraint(
-                        id=slugify(description, max_length=80),
+                        id=slugify(description, max_length=CONSTRAINT_ID_MAX_LENGTH),
                         description=description,
                         bound_entities=find_file_paths(context_text),
                         enforced_by="",
@@ -387,7 +389,7 @@ def extract_from_session_deterministic(
             context_text = _surrounding_context(note_lines, idx, radius=3)
             constraints.append(
                 Constraint(
-                    id=slugify(description, max_length=80),
+                    id=slugify(description, max_length=CONSTRAINT_ID_MAX_LENGTH),
                     description=description,
                     bound_entities=find_file_paths(context_text),
                     enforced_by="",

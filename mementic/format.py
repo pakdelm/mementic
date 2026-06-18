@@ -3,9 +3,15 @@ from __future__ import annotations
 import re
 from collections.abc import Sequence
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Callable
 
 from mementic.models import Constraint, Decision, DecisionStatus
+
+# ID length constants for slugify(). Decision IDs are longer to preserve
+# descriptive titles; constraint IDs are shorter since descriptions are terse.
+DECISION_ID_MAX_LENGTH: int = 80
+CONSTRAINT_ID_MAX_LENGTH: int = 30
 
 
 def count_tokens(text: str) -> int:
@@ -62,6 +68,27 @@ def slugify(text: str, max_length: int | None = None) -> str:
 def timestamp() -> str:
     """Return ISO 8601 timestamp string."""
     return datetime.now(timezone.utc).isoformat()
+
+
+def detect_repo_path() -> str:
+    """Detect the repository root path.
+
+    Tries MEMENTIC_REPO env var, then git root, then falls back to CWD.
+    """
+    import os
+    import subprocess
+    if env_repo := os.environ.get("MEMENTIC_REPO"):
+        return env_repo
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            capture_output=True, text=True,
+        )
+        if result.returncode == 0:
+            return result.stdout.strip()
+    except FileNotFoundError:
+        pass
+    return str(Path.cwd())
 
 
 # ---------------------------------------------------------------------------

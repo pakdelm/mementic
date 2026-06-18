@@ -6,16 +6,14 @@ from pathlib import Path
 from typing import Any
 
 from mementic.config import MementicConfig, load_config
-from mementic.deterministic import (
-    extract_constraints_from_consequences,
-    extract_from_markdown,
-    extract_from_session_deterministic,
-)
 from mementic.extraction import (
+    extract_constraints_from_consequences,
     extract_from_adr_consequences,
     extract_from_codebase_summary,
     extract_from_freeform,
+    extract_from_markdown,
     extract_from_session,
+    extract_from_session_deterministic,
 )
 from mementic.format import find_file_paths, slugify
 from mementic.graph import GraphStore

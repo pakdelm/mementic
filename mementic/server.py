@@ -9,6 +9,8 @@ from mcp.server.fastmcp import FastMCP
 
 from mementic.config import MementicConfig, load_config
 from mementic.format import (
+    DECISION_ID_MAX_LENGTH,
+    CONSTRAINT_ID_MAX_LENGTH,
     count_tokens,
     format_context_pack,
     format_evolution,
@@ -161,7 +163,7 @@ async def propose_decision(
 
     now = timestamp()
     decision = Decision(
-        id=slugify(title, max_length=80),
+        id=slugify(title, max_length=DECISION_ID_MAX_LENGTH),
         title=title,
         rationale=rationale,
         rejected_alternatives=rejected_alternatives or [],
@@ -210,7 +212,7 @@ async def propose_constraint(
     graph, cfg = _load_graph()
     repo = _repo_from_env()
 
-    constraint_id = id or slugify(description, max_length=30)
+    constraint_id = id or slugify(description, max_length=CONSTRAINT_ID_MAX_LENGTH)
 
     now = timestamp()
     constraint = Constraint(

@@ -457,6 +457,8 @@ def collect_markdown_files(repo_path: str, char_budget: int = 50000) -> list[tup
     Args:
         repo_path: Absolute or relative path to the repository root.
         char_budget: Maximum total characters across all collected files.
+            Prevents unbounded memory use in large repos. Files are
+            included in signal-score order until the budget is exhausted.
 
     Returns:
         List of ``(relpath, content)`` tuples. Empty list if ``repo_path``

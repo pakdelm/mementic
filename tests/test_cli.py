@@ -110,12 +110,13 @@ class TestInitAutoBootstrap:
     def test_init_autocreate_config_when_missing(
         self, tmp_path: Path
     ) -> None:
-        """mementic init registers repo with discovered source dirs in global config."""
+        """mementic init registers repo with empty sources in global config."""
         old_cwd = os.getcwd()
         try:
             os.chdir(tmp_path)
 
-            # Create source dirs so auto-discovery finds them
+            # Create source dirs to verify they are NOT auto-discovered
+            # (pipeline Phase 0 handles markdown scanning separately)
             adr_dir = tmp_path / "docs" / "adr"
             adr_dir.mkdir(parents=True)
             (adr_dir / "0001-test.md").write_text(
@@ -132,26 +133,9 @@ class TestInitAutoBootstrap:
             assert result.exit_code == 0
             repo_entry = self._find_registered_repo(tmp_path)
             assert repo_entry is not None
-            paths = [s.path for s in repo_entry.sources.adr_dirs]
-            assert "./docs/adr" in paths
-            paths = [s.path for s in repo_entry.sources.opencode_instructions]
-            assert "./docs/instructions" in paths
-        finally:
-            os.chdir(old_cwd)
-
-    def test_init_force_fails_when_repo_not_registered(
-        self, tmp_path: Path
-    ) -> None:
-        """mementic init --force exits with error when repo not registered."""
-        old_cwd = os.getcwd()
-        try:
-            os.chdir(tmp_path)
-
-            result = runner.invoke(app, ["init", "--force"])
-
-            assert result.exit_code == 1
-            assert "Cannot proceed" in result.stdout or "Cannot proceed" in result.stderr \
-                or "not registered" in (result.stdout + result.stderr).lower()
+            # Sources are empty — pipeline Phase 0 handles markdown scanning.
+            assert not repo_entry.sources.adr_dirs
+            assert not repo_entry.sources.opencode_instructions
         finally:
             os.chdir(old_cwd)
 
@@ -222,55 +206,6 @@ class TestInitAutoBootstrap:
             assert repo_entry.sources.adr_dirs[0].path == "/custom/path"
         finally:
             os.chdir(old_cwd)
-
-    def test_init_discovers_cursor_instructions(
-        self, tmp_path: Path
-    ) -> None:
-        """mementic init auto-discovers .cursor/instructions/ and includes in repo entry."""
-        old_cwd = os.getcwd()
-        try:
-            os.chdir(tmp_path)
-
-            # Create cursor instructions dir so auto-discovery finds it
-            cursor_dir = tmp_path / ".cursor" / "instructions"
-            cursor_dir.mkdir(parents=True)
-            (cursor_dir / "typescript.md").write_text("# Cursor TypeScript Rules")
-
-            with patch("mementic.cli.run_init", return_value=(_make_mock_graph(), [])):
-                result = runner.invoke(app, ["init"])
-
-            assert result.exit_code == 0
-            repo_entry = self._find_registered_repo(tmp_path)
-            assert repo_entry is not None
-            paths = [s.path for s in repo_entry.sources.cursor_instructions]
-            assert ".cursor/instructions" in paths
-        finally:
-            os.chdir(old_cwd)
-
-    def test_init_discovers_windsurf_instructions(
-        self, tmp_path: Path
-    ) -> None:
-        """mementic init auto-discovers .windsurf/instructions/ and includes in repo entry."""
-        old_cwd = os.getcwd()
-        try:
-            os.chdir(tmp_path)
-
-            # Create windsurf instructions dir so auto-discovery finds it
-            windsurf_dir = tmp_path / ".windsurf" / "instructions"
-            windsurf_dir.mkdir(parents=True)
-            (windsurf_dir / "styling.md").write_text("# Windsurf Styling Rules")
-
-            with patch("mementic.cli.run_init", return_value=(_make_mock_graph(), [])):
-                result = runner.invoke(app, ["init"])
-
-            assert result.exit_code == 0
-            repo_entry = self._find_registered_repo(tmp_path)
-            assert repo_entry is not None
-            paths = [s.path for s in repo_entry.sources.windsurf_instructions]
-            assert ".windsurf/instructions" in paths
-        finally:
-            os.chdir(old_cwd)
-
 
 class TestInitInteractive:
     """Tests for mementic init API key setup prompt."""
