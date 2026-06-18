@@ -1473,5 +1473,87 @@ def set_default(
     typer.echo(f"Default project set to '{name}'.")
 
 
+@project_app.command()
+def delete(
+    name: str = typer.Argument(..., help="Project name to delete"),
+    force: bool = typer.Option(
+        False, "--force", "-f",
+        help="Skip confirmation prompt",
+    ),
+    keep_db: bool = typer.Option(
+        False, "--keep-db",
+        help="Keep the SQLite database file (delete config entry only)",
+    ),
+) -> None:
+    """Delete a project and optionally its database file."""
+    from mementic.config import delete_project as _delete_project
+
+    # Load config for display purposes only; delete_project() handles
+    # its own validation (existence check, last-project guard).
+    config = load_global_config()
+
+    if name in config.projects:
+        proj = config.projects[name]
+        db_path = Path(proj.db_path).expanduser()
+
+        typer.echo(f"Project: {name}")
+        typer.echo(f"Repos:   {len(proj.repos)}")
+        typer.echo(f"DB path: {db_path}")
+
+        if not keep_db and db_path.is_file() and not force:
+            confirm = typer.confirm(
+                f"Delete database file {db_path}?"
+            )
+            if not confirm:
+                typer.echo(
+                    "Keeping database file. Deleting config entry only."
+                )
+                keep_db = True
+
+    try:
+        _, msg = _delete_project(name, delete_db=not keep_db)
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1)
+
+    typer.echo(msg)
+
+
+@project_app.command()
+def info(
+    name: str | None = typer.Argument(
+        None, help="Project name (defaults to current default)"
+    ),
+) -> None:
+    """Show details for a project."""
+    config = load_global_config()
+
+    target = name if name is not None else config.default_project
+
+    if target not in config.projects:
+        available = ", ".join(sorted(config.projects))
+        typer.echo(
+            f"Project '{target}' not found. Available: {available}",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+    proj = config.projects[target]
+    is_default = target == config.default_project
+
+    typer.echo(f"Project:   {target}{'  (default)' if is_default else ''}")
+    typer.echo(f"DB path:   {proj.db_path}")
+    if proj.description:
+        typer.echo(f"Description: {proj.description}")
+    typer.echo(f"Repos ({len(proj.repos)}):")
+
+    if not proj.repos:
+        typer.echo("  (none)")
+    else:
+        for repo_path, repo_entry in proj.repos.items():
+            label = f"  [{repo_entry.label}]" if repo_entry.label else ""
+            typer.echo(f"  {repo_path}{label}")
+
+
 if __name__ == "__main__":
     app()

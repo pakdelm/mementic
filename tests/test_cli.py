@@ -13,7 +13,7 @@ import pytest
 from typer.testing import CliRunner
 
 from mementic.cli import app
-from mementic.config import RepoEntry, load_global_config
+from mementic.config import GlobalConfig, ProjectEntry, RepoEntry, load_global_config
 
 runner = CliRunner()
 
@@ -1187,6 +1187,103 @@ class TestProjectCommands:
         assert result.exit_code == 1
         output = result.stdout + result.stderr
         assert "not found" in output.lower()
+
+    # ── Spec 17: project delete ─────────────────────────────────────
+
+    def test_project_delete_removes_project(self) -> None:
+        """Delete a project from config."""
+        config = GlobalConfig(
+            projects={
+                "main": ProjectEntry(db_path="/tmp/main.db"),
+                "platform": ProjectEntry(db_path="/tmp/platform.db"),
+            }
+        )
+        with patch("mementic.cli.load_global_config", return_value=config), \
+             patch("mementic.config.load_global_config", return_value=config), \
+             patch("mementic.config.save_global_config"):
+            result = runner.invoke(
+                app, ["project", "delete", "platform", "--force", "--keep-db"]
+            )
+        assert result.exit_code == 0
+        assert "Deleted project 'platform'" in result.output
+
+    def test_project_delete_last_project_errors(self) -> None:
+        """Cannot delete the last remaining project."""
+        config = GlobalConfig(
+            projects={
+                "main": ProjectEntry(db_path="/tmp/main.db"),
+            }
+        )
+        with patch("mementic.cli.load_global_config", return_value=config), \
+             patch("mementic.config.load_global_config", return_value=config):
+            result = runner.invoke(app, ["project", "delete", "main"])
+        assert result.exit_code == 1
+        assert "last remaining project" in result.output
+
+    def test_project_delete_nonexistent_errors(self) -> None:
+        """Deleting a nonexistent project fails."""
+        config = GlobalConfig(
+            projects={
+                "main": ProjectEntry(db_path="/tmp/main.db"),
+            }
+        )
+        with patch("mementic.cli.load_global_config", return_value=config), \
+             patch("mementic.config.load_global_config", return_value=config):
+            result = runner.invoke(app, ["project", "delete", "ghost"])
+        assert result.exit_code == 1
+        assert "not found" in result.output
+
+    # ── Spec 17: project info ───────────────────────────────────────
+
+    def test_project_info_shows_details(self) -> None:
+        """Project info shows project details."""
+        config = GlobalConfig(
+            default_project="main",
+            projects={
+                "main": ProjectEntry(
+                    db_path="/tmp/main.db",
+                    description="Primary project",
+                    repos={
+                        "/dev/my-app": RepoEntry(
+                            path="/dev/my-app", label="app"
+                        ),
+                    },
+                ),
+            }
+        )
+        with patch("mementic.cli.load_global_config", return_value=config):
+            result = runner.invoke(app, ["project", "info"])
+        assert result.exit_code == 0
+        assert "main" in result.output
+        assert "(default)" in result.output
+        assert "/dev/my-app" in result.output
+        assert "[app]" in result.output
+
+    def test_project_info_defaults_to_default_project(self) -> None:
+        """Project info without name argument defaults to default_project."""
+        config = GlobalConfig(
+            default_project="platform",
+            projects={
+                "main": ProjectEntry(db_path="/tmp/main.db"),
+                "platform": ProjectEntry(db_path="/tmp/platform.db"),
+            }
+        )
+        with patch("mementic.cli.load_global_config", return_value=config):
+            result = runner.invoke(app, ["project", "info"])
+        assert result.exit_code == 0
+        assert "platform" in result.output
+
+    def test_project_info_nonexistent_errors(self) -> None:
+        """Project info for nonexistent project fails."""
+        config = GlobalConfig(
+            projects={
+                "main": ProjectEntry(db_path="/tmp/main.db"),
+            }
+        )
+        with patch("mementic.cli.load_global_config", return_value=config):
+            result = runner.invoke(app, ["project", "info", "ghost"])
+        assert result.exit_code == 1
+        assert "not found" in result.output
 
 
 # ── Spec 12d: Audit Mutation Log ────────────────────────────────────
