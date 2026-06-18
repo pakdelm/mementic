@@ -574,14 +574,14 @@ class TestArchitectureWindows:
             lines.append("## Assistant")
             lines.append(f"Assistant {i}")
         # Place keyword near the middle
-        lines[400] = lines[400] + " propose_decision here"
+        lines[400] = lines[400] + " record_decision here"
         log = "\n".join(lines)
 
         result = _extract_architecture_windows(
             log, ARCHITECTURE_KEYWORDS, context_messages=20
         )
         assert result != ""
-        assert "propose_decision" in result.lower()
+        assert "record_decision" in result.lower()
         # Should include lines around the match, not the full session
         assert len(result.split("\n")) < len(lines)
 
@@ -853,7 +853,7 @@ class TestExtractFromSessionTruncation:
         log = _build_session(200)
         # Inject both a built-in keyword and a custom one
         lines = log.split("\n")
-        lines[50] = lines[50] + " propose_decision"
+        lines[50] = lines[50] + " record_decision"
         lines[300] = lines[300] + " custom_integration"
         log = "\n".join(lines)
 
@@ -871,7 +871,7 @@ class TestExtractFromSessionTruncation:
 
         user_content = self._get_user_content(client)
         # Both built-in and custom keywords should be captured
-        assert "propose_decision" in user_content.lower()
+        assert "record_decision" in user_content.lower()
         assert "custom_integration" in user_content.lower()
         # Should NOT contain the full session
         assert len(user_content) < len(log)

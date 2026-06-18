@@ -1511,7 +1511,7 @@ class TestMetricsCommand:
             {
                 "timestamp": "2024-01-01T00:00:03Z",
                 "operation": "mcp_context_pack",
-                "source_label": "get_context_pack",
+                "source_label": "get_task_context",
                 "input_tokens": 500,
                 "output_tokens": 180,
                 "total_tokens": 680,

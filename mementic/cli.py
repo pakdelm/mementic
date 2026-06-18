@@ -33,6 +33,13 @@ from mementic.conflict import auto_resolve_capture  # noqa: E402
 from mementic.metrics import UsageStore  # noqa: E402
 from mementic.sources.adr import scan_adr_dir  # noqa: E402
 from mementic.sources.opencode import scan_opencode_instructions  # noqa: E402
+from mementic.inject import (  # noqa: E402
+    detect_agents,
+    get_mcp_config_file,
+    get_rules_file,
+    has_enforcement,
+    inject_enforcement,
+)
 
 if TYPE_CHECKING:
     from mementic.config import MementicConfig  # noqa: F401
@@ -357,6 +364,34 @@ def init(
             typer.echo(f"    {marker:<6} {item.label}")
     typer.echo()
     typer.echo("  Next: mementic capture --agent opencode")
+
+    # Enforcement injection check
+    agents_md_path = cwd / "AGENTS.md"
+    if not has_enforcement(agents_md_path):
+        detected = detect_agents(cwd)
+        if detected:
+            typer.echo()
+            if sys.stdin.isatty():
+                inject_ok = typer.confirm(
+                    "No enforcement instructions found. Add to AGENTS.md?",
+                    default=True,
+                )
+                if inject_ok:
+                    result = inject_enforcement(agents_md_path)
+                    typer.echo(f"  {result}")
+                else:
+                    typer.echo(
+                        "  Warning: Without enforcement, mementic operates as CLI-only."
+                    )
+                    typer.echo(
+                        "  Agents won't automatically query the graph."
+                        " Run 'mementic inject' later."
+                    )
+            else:
+                typer.echo(
+                    "  No enforcement instructions found."
+                    " Run 'mementic inject' to add them."
+                )
 
     # Quality notice for deterministic mode
     post_cfg = load_global_config()
@@ -1267,6 +1302,92 @@ def deprecate(
     else:
         typer.echo(f"'{id}' is a {node_type}, not a decision or constraint.", err=True)
         raise typer.Exit(code=1)
+
+
+@app.command()
+def inject(
+    agent: str | None = typer.Option(
+        None, "--agent",
+        help="Target agent (opencode, claude-code, cursor, windsurf). Auto-detects if omitted.",
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run",
+        help="Show what would be written without modifying files.",
+    ),
+) -> None:
+    """Inject mementic enforcement instructions into AGENTS.md.
+
+    Auto-detects agents in the repo and writes the enforcement block.
+    For non-OpenCode agents, offers to write pointer files and register
+    the MCP server.
+    """
+    cwd = Path(detect_repo_path())
+    agents_md = cwd / "AGENTS.md"
+
+    if agent:
+        agents = [agent]
+    else:
+        agents = detect_agents(cwd)
+        if not agents:
+            typer.echo("No agents detected. Looking for .opencode/, .claude/, .cursor/, .windsurf/ directories.")
+            typer.echo("Run 'mementic inject --agent opencode' to inject manually.")
+            raise typer.Exit(code=1)
+
+    # Inject enforcement block
+    result = inject_enforcement(agents_md, dry_run=dry_run)
+    typer.echo(result)
+
+    if "already exists" in result and not dry_run:
+        typer.echo("To re-inject, remove the existing block from AGENTS.md first.")
+        raise typer.Exit()
+
+    # For non-OpenCode agents, offer pointer files
+    for ag in agents:
+        rules_file = get_rules_file(ag)
+        if rules_file and not dry_run:
+            rules_path = cwd / rules_file
+            if not rules_path.exists():
+                if sys.stdin.isatty():
+                    create_pointer = typer.confirm(
+                        f"Create {rules_file} with pointer to AGENTS.md?",
+                        default=True,
+                    )
+                    if create_pointer:
+                        rules_path.write_text(
+                            "See AGENTS.md for mementic enforcement instructions.\n",
+                            encoding="utf-8",
+                        )
+                        typer.echo(f"  Created {rules_file}")
+
+    # Offer to register MCP server
+    for ag in agents:
+        mcp_config = get_mcp_config_file(ag)
+        if mcp_config and not dry_run:
+            config_path = cwd / mcp_config
+            if not config_path.exists():
+                if sys.stdin.isatty():
+                    create_config = typer.confirm(
+                        f"Create {mcp_config} with mementic MCP server?",
+                        default=True,
+                    )
+                    if create_config:
+                        config_path.parent.mkdir(parents=True, exist_ok=True)
+                        mcp_entry = {
+                            "mcpServers": {
+                                "mementic": {
+                                    "command": "uv",
+                                    "args": ["run", "mementic", "server"],
+                                }
+                            }
+                        }
+                        config_path.write_text(
+                            json.dumps(mcp_entry, indent=2) + "\n",
+                            encoding="utf-8",
+                        )
+                        typer.echo(f"  Created {mcp_config}")
+
+    if dry_run:
+        typer.echo("\n(dry run — no files modified)")
 
 
 project_app = typer.Typer(help="Manage Mementic projects")

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
@@ -138,6 +139,35 @@ def check_health(graph: GraphStore | None = None) -> list[HealthItem]:
                 label="Session provider",
                 status="fail",
                 hint="Could not detect session provider.",
+            )
+        )
+
+    # 5. Enforcement check (AGENTS.md)
+    agents_md = Path.cwd() / "AGENTS.md"
+    if agents_md.exists():
+        content = agents_md.read_text(encoding="utf-8")
+        if "## Mementic Memory (HARD CONSTRAINT — ALWAYS ACTIVE)" in content:
+            items.append(
+                HealthItem(
+                    label="Instructions",
+                    status="ok",
+                    hint="Enforcement section found in AGENTS.md.",
+                )
+            )
+        else:
+            items.append(
+                HealthItem(
+                    label="Instructions",
+                    status="fail",
+                    hint="No enforcement section in AGENTS.md. Run 'mementic inject'.",
+                )
+            )
+    else:
+        items.append(
+            HealthItem(
+                label="Instructions",
+                status="fail",
+                hint="No enforcement section in AGENTS.md. Run 'mementic inject'.",
             )
         )
 

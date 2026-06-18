@@ -130,11 +130,11 @@ Register the MCP server in `opencode.json`:
 ```
 
 The agent automatically discovers these MCP tools:
-- `get_context_pack` — load constraints before starting work
-- `propose_decision` — record architectural decisions
-- `propose_constraint` — record new constraints
-- `deprecate_entity` — retire outdated decisions or constraints
-- `get_system_evolution` — trace decision history of a code entity
+- `get_task_context` — load constraints before starting work
+- `record_decision` — record architectural decisions
+- `record_constraint` — record new constraints
+- `deprecate_rule` — retire outdated decisions or constraints
+- `get_entity_history` — trace decision history of a code entity
 
 OpenCode custom commands are also available in the TUI:
 - `/mementic-context <task>` — load constraints before working
@@ -153,7 +153,7 @@ This project uses Mementic as its architectural memory layer. These rules apply
 to every task, every session.
 
 **Token discipline — primary vs. secondary sources:**
-1. **Primary (always):** the context pack from `mementic_get_context_pack`.
+1. **Primary (always):** the context pack from `mementic_get_task_context`.
    It is the compressed index — a fraction of the token cost of reading raw
    ADRs. Read it first, every time.
 2. **Secondary (only when needed):** raw ADR and instruction files on disk.
@@ -162,18 +162,18 @@ to every task, every session.
 3. **Never:** read all ADRs and instruction files as a batch before every task.
 
 **Before ANY task:**
-1. Call `mementic_get_context_pack` with the task description and ALL files
+1. Call `mementic_get_task_context` with the task description and ALL files
    you intend to touch — even new files, even speculative changes.
-2. Call `mementic_get_system_evolution` for each file being modified.
+2. Call `mementic_get_entity_history` for each file being modified.
 3. Validate your plan against every returned constraint. Do NOT write code
    that violates an active constraint.
 4. Only read raw ADR or instruction files if the context pack leaves ambiguity
    you must resolve to proceed safely.
 
 **After architecturally significant changes:**
-1. Call `mementic_propose_decision` with title, rationale, rejected
+1. Call `mementic_record_decision` with title, rationale, rejected
    alternatives, and affected entities.
-2. Call `mementic_propose_constraint` for any new rules.
+2. Call `mementic_record_constraint` for any new rules.
 
 **After the task:**
 Run `mementic capture` in the terminal. If capture reports flagged

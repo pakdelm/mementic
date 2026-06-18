@@ -26,7 +26,7 @@ from mementic.models import Constraint, DecisionStatus, ExtractionResult, UsageS
 # Spec 10a — Session truncation
 
 ARCHITECTURE_KEYWORDS: list[str] = [
-    "propose_decision", "propose_constraint",  # MCP tool calls (strongest signal)
+    "record_decision", "record_constraint",  # MCP tool calls (strongest signal)
     "rejected", "instead of",                  # tradeoff/explicit rejection
     "ADR", "tradeoff", "trade-off",             # formal constructs
     "design decision", "design choice",          # explicit design talk

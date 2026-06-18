@@ -14,14 +14,14 @@ to the exact function, then read that section. Never batch-read ADRs or specs;
 that is the token waste the graph eliminates.
 
 **Before ANY task** (planning, implementation, refactoring, or review):
-1. Call `mementic_get_context_pack` with the task description and ALL files
+1. Call `mementic_get_task_context` with the task description and ALL files
    you intend to touch — even new files, even speculative changes.
 2. **Sufficiency gate — output these two lines before any further reads:**
    1. `Context pack says:` — 1-2 sentence summary (or "returned nothing relevant").
    2. `Files I still need to read and why:` — every code file you will open,
       each with a one-clause justification. If a file is not on this list,
       do not read it.
-3. Call `mementic_get_system_evolution` for each file being modified.
+3. Call `mementic_get_entity_history` for each file being modified.
 4. Validate your plan against every returned constraint. Do NOT write code
    that violates an active constraint.
 5. Only read raw ADR or instruction files if the context pack leaves
@@ -35,7 +35,7 @@ failure to the user. Do not silently read entire files wholesale.
 expensive (LLM extraction). Use the right one:**
 
 - **Inline proposals — always, no gate.** When you make a decision or establish
-  a rule, call `mementic_propose_decision` / `mementic_propose_constraint`
+  a rule, call `mementic_record_decision` / `mementic_record_constraint`
   immediately. No judgment call about "architectural significance" — if it's
   worth remembering, propose it. If it's not, don't.
 - **`mementic capture` — user-triggered, not agent-triggered.** Capture runs
