@@ -444,21 +444,27 @@ def scan_codebase_structure(repo_path: str) -> str:
     return "\n".join(parts)
 
 
-def collect_markdown_files(repo_path: str, char_budget: int = 50000) -> list[tuple[str, str]]:
+def collect_markdown_files(repo_path: str, char_budget: int = 250000, per_file_cap: int = 10000) -> list[tuple[str, str]]:
     """Collect all markdown files from repo, sorted by signal score descending.
 
     Scans the entire repo for .md files using the same directory filtering
     rules as ``scan_codebase_structure``. Returns ``(relpath, content)``
     tuples sorted by ``_md_signal_score`` descending (README, CHANGELOG,
     CONTRIBUTING rank highest). Each file's content is capped at
-    ``_PER_MD_FILE_CAP`` chars. Total content across all files is capped at
+    ``per_file_cap`` chars. Total content across all files is capped at
     ``char_budget``.
+
+    Budgets are generous by default because deterministic extraction is
+    pure CPU (regex, no LLM cost). ``_PER_MD_FILE_CAP`` (used by
+    ``scan_codebase_structure``) is tighter since its output feeds an LLM.
 
     Args:
         repo_path: Absolute or relative path to the repository root.
         char_budget: Maximum total characters across all collected files.
-            Prevents unbounded memory use in large repos. Files are
-            included in signal-score order until the budget is exhausted.
+            Prevents unbounded memory use in large repos. Files are included
+            in signal-score order until the budget is exhausted.
+        per_file_cap: Maximum characters per file. Prevents a single huge
+            markdown file from consuming the entire budget.
 
     Returns:
         List of ``(relpath, content)`` tuples. Empty list if ``repo_path``
@@ -487,7 +493,7 @@ def collect_markdown_files(repo_path: str, char_budget: int = 50000) -> list[tup
             except OSError:
                 continue
             score = _md_signal_score(fname)
-            capped = content[:_PER_MD_FILE_CAP]
+            capped = content[:per_file_cap]
             relpath = os.path.relpath(fpath, repo_path).replace("\\", "/")
             collected.append((relpath, capped, score))
 
