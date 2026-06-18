@@ -36,8 +36,6 @@ __all__ = [
     "save_global_config",
 ]
 
-# ── Provider metadata ──────────────────────────────────────────────
-
 PROVIDER_CONFIGS: dict[str, dict[str, str | None]] = {
     "deepseek": {
         "base_url": "https://api.deepseek.com",
@@ -83,9 +81,6 @@ def get_provider_config(provider: str) -> dict[str, str | None]:
         )
         raise ValueError(msg)
     return PROVIDER_CONFIGS[provider]
-
-
-# ── Source models ──────────────────────────────────────────────────
 
 
 class AdrDirSource(BaseModel):
@@ -296,7 +291,6 @@ def load_config(repo_path: str | None = None, project: str | None = None) -> Mem
     )
 
 
-# ── Global config models ──────────────────────────────────────────────
 
 
 class RepoEntry(BaseModel):
@@ -355,7 +349,6 @@ class GlobalConfig(BaseModel):
     sessions: SessionsConfig = Field(default_factory=SessionsConfig)
 
 
-# ── Global config I/O ────────────────────────────────────────────────
 
 
 def get_global_config_path() -> Path:

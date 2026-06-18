@@ -212,7 +212,11 @@ async def propose_constraint(
     graph, cfg = _load_graph()
     repo = _repo_from_env()
 
-    constraint_id = id or slugify(description, max_length=CONSTRAINT_ID_MAX_LENGTH)
+    constraint_id = (
+        slugify(id, max_length=CONSTRAINT_ID_MAX_LENGTH)
+        if id
+        else slugify(description, max_length=CONSTRAINT_ID_MAX_LENGTH)
+    )
 
     now = timestamp()
     constraint = Constraint(

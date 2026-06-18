@@ -27,8 +27,6 @@ from mementic.format import (
 )
 from mementic.models import Constraint, Decision, DecisionStatus, ExtractionResult
 
-# ── Signal sets ───────────────────────────────────────────────────────
-
 # LOOSE modal-language keywords for markdown prose and ADR consequences.
 # Recall over precision — used on structured documents where false positives
 # are cheap to filter downstream.
@@ -161,9 +159,6 @@ def _extract_constraints_from_lines(
     return constraints
 
 
-# ── 1. Markdown prose extractor ───────────────────────────────────────
-
-
 def extract_from_markdown(content: str, source_label: str) -> ExtractionResult:
     """Extract decisions and constraints from markdown prose deterministically.
 
@@ -244,9 +239,6 @@ def extract_from_markdown(content: str, source_label: str) -> ExtractionResult:
     )
 
 
-# ── 2. ADR Consequences extractor ─────────────────────────────────────
-
-
 def extract_constraints_from_consequences(
     consequences_text: str,
     source_label: str,
@@ -276,9 +268,6 @@ def extract_constraints_from_consequences(
         enforced_by=decision_id,
         bound_entities_source=consequences_text,
     )
-
-
-# ── 3. Deterministic session extractor (TIGHT) ───────────────────────
 
 
 def extract_from_session_deterministic(
@@ -316,7 +305,6 @@ def extract_from_session_deterministic(
     constraints: list[Constraint] = []
     now = timestamp()
 
-    # ── Window / truncate the session log (LLM-free reuse). ──
     windowed = ""
     if session_log.strip():
         keywords = (
@@ -335,7 +323,6 @@ def extract_from_session_deterministic(
             windowed = _truncate_tail(session_log, max_messages)
         windowed = _strip_session_noise(windowed)
 
-    # ── Extract decisions and constraints from the windowed session. ──
     if windowed.strip():
         window_lines = windowed.split("\n")
         for idx, line in enumerate(window_lines):
@@ -372,10 +359,8 @@ def extract_from_session_deterministic(
                     )
                 )
 
-    # ── Affected entities from the git diff. ──
     affected_entities = find_file_paths(git_diff) if git_diff.strip() else []
 
-    # ── User notes: TIGHT constraint scan. ──
     if user_notes.strip():
         note_lines = user_notes.split("\n")
         for idx, line in enumerate(note_lines):

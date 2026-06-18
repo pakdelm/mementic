@@ -155,7 +155,6 @@ def init(
     cwd = Path(detect_repo_path())
     cwd_resolved = str(cwd.resolve())
 
-    # ── Check if repo is already registered in the global config ──
     global_cfg = load_global_config()
     already_registered = False
     for _proj_name, proj_entry in global_cfg.projects.items():
@@ -201,7 +200,6 @@ def init(
                 "inline proposals during sessions to populate it."
             )
 
-        # ── Ensure a default project exists ──
         if not global_cfg.projects:
             global_cfg.projects["main"] = ProjectEntry(
                 db_path="~/.mementic/projects/main.mementic.db",
@@ -210,7 +208,6 @@ def init(
         proj_name = global_cfg.default_project
         proj_entry = global_cfg.projects[proj_name]
 
-        # ── Register the repo ──
         repo_name = cwd.name
         proj_entry.repos[cwd_resolved] = RepoEntry(
             path=cwd_resolved,
@@ -251,7 +248,7 @@ def init(
         except ValueError:
             project_db_path = None
 
-    # ── API key setup prompt (Spec 15) ──
+    # Spec 15 — API key setup prompt
     global_cfg = load_global_config()
     api_key = global_cfg.llm.get_api_key()
 
@@ -299,7 +296,7 @@ def init(
                 save_global_config(global_cfg)
                 typer.echo(f"Saved to {GLOBAL_CONFIG_DISPLAY_PATH}")
 
-    # ── Run init (no config_path — pipeline reads global config) ──
+    # Run init — pipeline reads global config (no config_path)
     try:
         graph, all_usage = run_init(
             repo_path=effective_repo,
@@ -446,7 +443,7 @@ def capture(
 
     session_text = Path(session).read_text()
 
-    # ── Load or create graph early (needed for checkpoint query) ──
+    # Load or create graph — needed for checkpoint query
     is_project = False
     project_display: str | None = None
     repo_path = str(Path.cwd())
@@ -482,7 +479,7 @@ def capture(
         else:
             graph = GraphStore()
 
-    # ── Compute git diff (incremental via SQLite checkpoint) ──
+    # Compute git diff — incremental via SQLite checkpoint
     checkpoint = graph.get_capture_checkpoint(repo_path)
     got_diff = False
     if checkpoint:
@@ -546,7 +543,6 @@ def capture(
         typer.echo("No architectural decisions or constraints found.")
         raise typer.Exit()
 
-    # ── Auto-resolve capture ──
     from mementic.format import DECISION_ID_MAX_LENGTH, CONSTRAINT_ID_MAX_LENGTH, slugify
 
     # Replace LLM-generated IDs (dec-001, etc.) with deterministic slugs
@@ -597,7 +593,7 @@ def capture(
         Path(graph_path).parent.mkdir(parents=True, exist_ok=True)
         graph.save(graph_path)
 
-    # ── Summary output (F6) ──
+    # F6 — Summary output
     typer.echo()
     typer.echo("=" * 50)
     typer.echo("Capture complete")
@@ -1064,7 +1060,7 @@ def metrics(
     if json_output:
         typer.echo(json.dumps(summary, indent=2, default=str))
     else:
-        # ── Lazy source material counting (Task 2.2) ──
+        # Task 2.2 — Lazy source material counting
         source_file_count = 0
         source_tokens = 0
 
@@ -1097,7 +1093,6 @@ def metrics(
 
         source_available = source_tokens > 0
 
-        # ── Summary fields ──
         init_calls: int = summary["extraction_init_calls"]
         init_tokens: int = summary["extraction_init_tokens"]
         capture_calls: int = summary["extraction_capture_calls"]
@@ -1109,7 +1104,6 @@ def metrics(
         extraction_total = init_tokens + capture_tokens
         capture_avg = capture_tokens / capture_calls if capture_calls > 0 else 0.0
 
-        # ── Computed values ──
         compression_ratio = (
             (init_tokens / source_tokens * 100) if source_tokens > 0 else None
         )
@@ -1125,7 +1119,6 @@ def metrics(
             (extraction_total / cp_queries) if cp_queries > 0 else None
         )
 
-        # ── Formatting helpers ──
         def _n(v: int) -> str:
             return f"{v:,}"
 
@@ -1146,7 +1139,6 @@ def metrics(
         def _ref_row(label: str, value: str) -> None:
             typer.echo(f"  {label:<28}  {value}")
 
-        # ── Render ──
         sep = "=" * 56
         typer.echo(sep)
         typer.echo("                  MEMENTIC TOKEN USAGE")
@@ -1255,8 +1247,6 @@ def deprecate(
     graph.save(cfg.output.graph_path)
     typer.echo(f"Deprecated decision '{id}': {target.title}")
 
-
-# ── Project management commands ──────────────────────────────────────
 
 project_app = typer.Typer(help="Manage Mementic projects")
 app.add_typer(project_app, name="project")

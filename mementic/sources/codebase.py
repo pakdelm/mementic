@@ -354,7 +354,7 @@ def scan_codebase_structure(repo_path: str) -> str:
     if not os.path.isdir(repo_path):
         return ""
 
-    # ── Single os.walk traversal: collect tree, imports, and markdown data ──
+    # Single os.walk traversal: collect tree, imports, and markdown data
     # (dir_name, depth, [(filename, imports)])
     _dir_entries: list[tuple[int, str, list[tuple[str, list[str]]]]] = []
     _root_py_files: list[tuple[str, list[str]]] = []
@@ -404,7 +404,6 @@ def scan_codebase_structure(repo_path: str) -> str:
                 (os.path.relpath(fpath, repo_path), capped, score, is_adr)
             )
 
-    # ── Assemble output ──
     parts: list[str] = []
 
     # 1. Directory tree

@@ -875,7 +875,6 @@ class GraphStore:
             "status_inconsistencies_resolved": 0,
         }
 
-        # ── Step 1: Dead bindings removed from constraints ──
         existing_ids: set[str] = {nid for nid, _, _ in self.iter_nodes()}
         for nid, ntype, payload in self.iter_nodes():
             if ntype != "Constraint":
@@ -890,7 +889,6 @@ class GraphStore:
                 self.set_node_payload(nid, payload)
                 counts["dead_bindings_removed"] += removed
 
-        # ── Step 2: Constraints with zero remaining bindings deprecated ──
         for nid, ntype, payload in self.iter_nodes():
             if ntype != "Constraint":
                 continue
@@ -900,7 +898,6 @@ class GraphStore:
                 self.set_node_payload(nid, payload)
                 counts["constraints_deprecated"] += 1
 
-        # ── Step 3: Stale entities removed ──
         # Only FILE-type entities are checked for disk existence.
         # CLASS/FUNCTION/MODULE entities have compound IDs (e.g.
         # "src/mod.py:MyClass") that are not valid filesystem paths.
@@ -915,7 +912,6 @@ class GraphStore:
             self._g.remove_node(nid)  # also removes incident edges
             counts["stale_entities_removed"] += 1
 
-        # ── Step 4: Orphaned entities removed ──
         edge_targets: set[str] = {tgt for _, tgt, _ in self.iter_edges()}
 
         orphan_ids: list[str] = []
@@ -929,7 +925,6 @@ class GraphStore:
             self._g.remove_node(nid)
             counts["orphaned_entities_removed"] += 1
 
-        # ── Step 5: Orphaned enforced_by references cleared ──
         decision_ids: set[str] = {
             nid for nid, ntype, _ in self.iter_nodes() if ntype == "Decision"
         }
@@ -942,7 +937,6 @@ class GraphStore:
                 self.set_node_payload(nid, payload)
                 counts["orphaned_enforced_by_cleared"] += 1
 
-        # ── Step 6: Status inconsistency resolved ──
         deprecated_decision_ids: set[str] = {
             nid
             for nid, ntype, payload in self.iter_nodes()
@@ -960,14 +954,11 @@ class GraphStore:
                 self.set_node_payload(nid, payload)
                 counts["status_inconsistencies_resolved"] += 1
 
-        # ── Persist after all mutations ──
         self._write_back()
 
         return counts
 
-    # ------------------------------------------------------------------
     # Capture checkpoint (stored in project_sources)
-    # ------------------------------------------------------------------
 
     def get_capture_checkpoint(self, repo_path: str) -> str:
         """Return the last captured git commit SHA for a repo.

@@ -14,9 +14,6 @@ from pathlib import Path
 from typing import Protocol
 
 
-# ── Utility ──────────────────────────────────────────────────────────
-
-
 def expand_path(path: str) -> str:
     """Expand ~ and %ENV_VAR% in a path string.
 
@@ -36,9 +33,6 @@ def expand_path(path: str) -> str:
             var_value = os.environ.get(var_name, "")
             path = path[: match.start()] + var_value + path[match.end() :]
     return path
-
-
-# ── Protocol ─────────────────────────────────────────────────────────
 
 
 class SessionProvider(Protocol):
@@ -87,9 +81,6 @@ class SessionProvider(Protocol):
             Diff text, or None if this provider/agent doesn't store diffs.
         """
         ...
-
-
-# ── Registry ─────────────────────────────────────────────────────────
 
 
 class SessionProviderRegistry:
@@ -209,15 +200,9 @@ class SessionProviderRegistry:
         return self._providers.get("generic", list(self._providers.values())[0]), None
 
 
-# ── Singleton access ─────────────────────────────────────────────────
-
-
 def get_registry() -> SessionProviderRegistry:
     """Return the global session provider registry singleton."""
     return SessionProviderRegistry.get_instance()
-
-
-# ── Backward-compat top-level functions ──────────────────────────────
 
 
 def find_latest_session() -> str | None:
@@ -241,9 +226,6 @@ def read_session_log(path: str) -> str:
         The file contents as a UTF-8 string.
     """
     return Path(path).read_text(encoding="utf-8", errors="replace")
-
-
-# ── Auto-register built-in providers ─────────────────────────────────
 
 
 def _register_builtin_providers() -> None:
