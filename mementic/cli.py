@@ -16,6 +16,7 @@ load_dotenv()
 from mementic.config import (  # noqa: E402
     PROVIDER_CONFIGS,
     GLOBAL_CONFIG_DISPLAY_PATH,
+    GlobalConfig,
     ProjectEntry,
     RepoEntry,
     Sources,
@@ -26,7 +27,7 @@ from mementic.config import (  # noqa: E402
 )
 from mementic.format import count_tokens, detect_repo_path, format_context_pack, timestamp  # noqa: E402
 from mementic.graph import GraphStore  # noqa: E402
-from mementic.models import CodeEntity, Decision, DecisionStatus, EntityType, MetricsEntry  # noqa: E402
+from mementic.models import CodeEntity, Constraint, Decision, DecisionStatus, EntityType, MetricsEntry  # noqa: E402
 from mementic.pipeline import _extract_session, run_init  # noqa: E402
 from mementic.conflict import auto_resolve_capture  # noqa: E402
 from mementic.metrics import UsageStore  # noqa: E402
@@ -155,7 +156,14 @@ def init(
     cwd = Path(detect_repo_path())
     cwd_resolved = str(cwd.resolve())
 
-    global_cfg = load_global_config()
+    try:
+        global_cfg = load_global_config()
+    except ValueError as e:
+        # load_global_config rejects empty projects dicts to catch manual
+        # editing mistakes.  In init() we recover by creating a fresh project.
+        typer.echo(f"Warning: {e}", err=True)
+        global_cfg = GlobalConfig()
+
     already_registered = False
     for _proj_name, proj_entry in global_cfg.projects.items():
         for repo_entry in proj_entry.repos.values():
@@ -1194,7 +1202,7 @@ def metrics(
 
 @app.command()
 def deprecate(
-    id: str = typer.Argument(..., help="Decision ID to deprecate"),
+    id: str = typer.Argument(..., help="Decision or constraint ID to deprecate"),
     reason: str = typer.Option(
         "", "--reason", "-r",
         help="Reason for deprecation",
@@ -1204,48 +1212,61 @@ def deprecate(
         help="Target project name",
     ),
 ) -> None:
-    """Mark a decision as deprecated.
+    """Mark a decision or constraint as deprecated.
 
-    Appends a deprecation note to the rationale and writes an audit entry.
-    The next capture will create a better decision — don't edit history.
+    Appends a deprecation note and writes an audit entry.
+    The entity remains in the graph for history but is excluded
+    from context packs.
     """
     graph, cfg = _resolve_graph(project)
 
     if not graph.has_node(id):
         typer.echo(
-            f"Decision '{id}' not found. Run 'mementic list decisions' to see IDs.",
+            f"Entity '{id}' not found. Run 'mementic list' to see IDs.",
             err=True,
         )
         raise typer.Exit(code=1)
 
-    # Find the node and its payload in one pass
+    # Find the node and its type/payload in one pass
+    node_type: str | None = None
     target_payload: dict | None = None
     for nid, ntype, payload in graph.iter_nodes():
         if nid == id:
-            if ntype != "Decision":
-                typer.echo(f"'{id}' is a {ntype}, not a Decision.", err=True)
-                raise typer.Exit(code=1)
+            node_type = ntype
             target_payload = payload
             break
 
     if target_payload is None:
-        typer.echo(f"Decision '{id}' could not be loaded.", err=True)
+        typer.echo(f"Entity '{id}' could not be loaded.", err=True)
         raise typer.Exit(code=1)
 
-    target = Decision(**target_payload)
+    if node_type == "Decision":
+        decision = Decision(**target_payload)
+        if decision.status == DecisionStatus.DEPRECATED:
+            typer.echo(f"Decision '{id}' is already deprecated.")
+            raise typer.Exit()
+        deprecation_note = f" [DEPRECATED: {reason}]" if reason else " [DEPRECATED]"
+        decision.rationale += deprecation_note
+        decision.status = DecisionStatus.DEPRECATED
+        graph.add_decision(decision)
+        graph.save(cfg.output.graph_path)
+        typer.echo(f"Deprecated decision '{id}': {decision.title}")
 
-    if target.status == DecisionStatus.DEPRECATED:
-        typer.echo(f"Decision '{id}' is already deprecated.")
-        raise typer.Exit()
+    elif node_type == "Constraint":
+        constraint = Constraint(**target_payload)
+        if constraint.status == "deprecated":
+            typer.echo(f"Constraint '{id}' is already deprecated.")
+            raise typer.Exit()
+        deprecation_note = f" [DEPRECATED: {reason}]" if reason else " [DEPRECATED]"
+        constraint.description += deprecation_note
+        constraint.status = "deprecated"
+        graph.add_constraint(constraint)
+        graph.save(cfg.output.graph_path)
+        typer.echo(f"Deprecated constraint '{id}': {constraint.description}")
 
-    deprecation_note = f" [DEPRECATED: {reason}]" if reason else " [DEPRECATED]"
-    target.rationale += deprecation_note
-    target.status = DecisionStatus.DEPRECATED
-    graph.add_decision(target)
-
-    # save() is no-op when db-backed; writes JSON otherwise
-    graph.save(cfg.output.graph_path)
-    typer.echo(f"Deprecated decision '{id}': {target.title}")
+    else:
+        typer.echo(f"'{id}' is a {node_type}, not a decision or constraint.", err=True)
+        raise typer.Exit(code=1)
 
 
 project_app = typer.Typer(help="Manage Mementic projects")

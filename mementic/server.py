@@ -11,6 +11,7 @@ from mementic.format import (
     DECISION_ID_MAX_LENGTH,
     CONSTRAINT_ID_MAX_LENGTH,
     count_tokens,
+    detect_repo_path,
     format_context_pack,
     format_evolution,
     slugify,
@@ -44,7 +45,7 @@ def _load_graph(project: str | None = None) -> tuple[GraphStore, MementicConfig]
     Returns:
         A tuple of (GraphStore, MementicConfig).
     """
-    cfg = load_config(repo_path=_detect_repo())
+    cfg = load_config(repo_path=detect_repo_path(check_global_config=True))
 
     # Try project database first
     try:
@@ -73,37 +74,6 @@ def _save_graph(graph: GraphStore, cfg: MementicConfig) -> None:
     graph.save(cfg.output.graph_path)
 
 
-def _detect_repo() -> str:
-    """Detect the current repository from the global config.
-
-    Resolves CWD against registered repos in ~/.mementic/config.json,
-    falls back to git root, then empty string.
-    """
-    from mementic.config import load_global_config
-    try:
-        global_cfg = load_global_config()
-        cwd = Path.cwd().resolve()
-        for proj_entry in global_cfg.projects.values():
-            for repo_entry in proj_entry.repos.values():
-                try:
-                    if Path(repo_entry.path).resolve() == cwd:
-                        return repo_entry.path
-                except (OSError, ValueError):
-                    continue
-    except Exception:
-        pass
-    try:
-        import subprocess
-        result = subprocess.run(
-            ["git", "rev-parse", "--show-toplevel"],
-            capture_output=True, text=True,
-        )
-        if result.returncode == 0:
-            return result.stdout.strip()
-    except (FileNotFoundError, OSError):
-        pass
-    return ""
-
 
 @mcp.tool()
 async def get_context_pack(
@@ -111,7 +81,7 @@ async def get_context_pack(
     affected_files: list[str],
     project: str | None = None,
     prefix_match: bool = False,
-    max_tokens: int = 1000,
+    max_tokens: int = 1500,
 ) -> str:
     """Return all relevant Decisions and Constraints for a given task.
 
@@ -181,7 +151,7 @@ async def propose_decision(
         Confirmation message with save status.
     """
     graph, cfg = _load_graph()
-    repo = _detect_repo()
+    repo = detect_repo_path(check_global_config=True)
 
     now = timestamp()
     decision = Decision(
@@ -226,13 +196,13 @@ async def propose_constraint(
         bound_entities: Code entity paths this constraint applies to.
         decision_id: Optional decision that enforces this constraint.
         id: Optional explicit ID for the constraint. If not provided,
-            generated from the description (capped at 80 chars).
+            generated from the description (capped at 40 chars).
 
     Returns:
         Confirmation message with save status.
     """
     graph, cfg = _load_graph()
-    repo = _detect_repo()
+    repo = detect_repo_path(check_global_config=True)
 
     constraint_id = (
         slugify(id, max_length=CONSTRAINT_ID_MAX_LENGTH)
@@ -264,11 +234,68 @@ async def propose_constraint(
 
 
 @mcp.tool()
+async def deprecate_entity(
+    id: str,
+    reason: str = "",
+) -> str:
+    """Mark a decision or constraint as deprecated.
+
+    Use this to retire outdated architectural decisions or constraints
+    that no longer apply.  The entity remains in the graph for history
+    but is flagged as deprecated and excluded from context packs.
+
+    Args:
+        id: The decision or constraint ID to deprecate.
+        reason: Optional reason for deprecation.
+
+    Returns:
+        Confirmation message with the deprecated entity's title or description.
+    """
+    graph, cfg = _load_graph()
+
+    if not graph.has_node(id):
+        return f"Entity '{id}' not found. Use get_context_pack to discover IDs."
+
+    # Determine node type
+    node_type = None
+    for nid, ntype, _payload in graph.iter_nodes():
+        if nid == id:
+            node_type = ntype
+            break
+
+    if node_type == "Decision":
+        payload = graph.get_node_payload(id)
+        decision = Decision(**payload)
+        if decision.status == DecisionStatus.DEPRECATED:
+            return f"Decision '{id}' is already deprecated."
+        deprecation_note = f" [DEPRECATED: {reason}]" if reason else " [DEPRECATED]"
+        decision.rationale += deprecation_note
+        decision.status = DecisionStatus.DEPRECATED
+        graph.add_decision(decision)
+        _save_graph(graph, cfg)
+        return f"Deprecated decision '{id}': {decision.title}"
+
+    if node_type == "Constraint":
+        payload = graph.get_node_payload(id)
+        constraint = Constraint(**payload)
+        if constraint.status == "deprecated":
+            return f"Constraint '{id}' is already deprecated."
+        deprecation_note = f" [DEPRECATED: {reason}]" if reason else " [DEPRECATED]"
+        constraint.description += deprecation_note
+        constraint.status = "deprecated"
+        graph.add_constraint(constraint)
+        _save_graph(graph, cfg)
+        return f"Deprecated constraint '{id}': {constraint.description}"
+
+    return f"Entity '{id}' is a {node_type}, not a decision or constraint."
+
+
+@mcp.tool()
 async def get_system_evolution(
     entity_path: str,
     project: str | None = None,
     prefix_match: bool = False,
-    max_tokens: int = 1000,
+    max_tokens: int = 1500,
 ) -> str:
     """Trace all decisions that affected a specific code entity.
 

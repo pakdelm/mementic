@@ -322,7 +322,7 @@ class ProjectEntry(BaseModel):
 
 
 class GlobalConfig(BaseModel):
-    f"""Global project configuration stored at ``{GLOBAL_CONFIG_DISPLAY_PATH}``.
+    """Global project configuration stored at ``~/.mementic/config.json``.
 
     This file defines named projects, each with its own database and
     registered repos.  It also holds shared configuration (LLM provider,
@@ -367,7 +367,7 @@ def get_global_config_path() -> Path:
 
 
 def has_global_config() -> bool:
-    f"""Return True if ``{GLOBAL_CONFIG_DISPLAY_PATH}`` exists on disk.
+    """Return True if ``~/.mementic/config.json`` exists on disk.
 
     Returns:
         ``True`` when the global project config file is present.
@@ -376,19 +376,21 @@ def has_global_config() -> bool:
 
 
 def load_global_config() -> GlobalConfig:
-    f"""Load the global project config from ``{GLOBAL_CONFIG_DISPLAY_PATH}``.
+    """Load the global project config from ``~/.mementic/config.json``.
 
-    If the file does not exist, a default ``GlobalConfig`` with a
-    single ``"main"`` project is returned.  Corrupt JSON produces a
-    warning on stderr and also falls back to the default.
+    If the file does not exist, a default ``GlobalConfig`` with no
+    projects is returned.  Corrupt JSON produces a warning on stderr
+    and also falls back to the default.
 
     Returns:
         A validated ``GlobalConfig`` instance.
 
     Raises:
+        ValueError: If the config file exists but contains an empty
+            ``projects`` dict — this indicates a manual editing mistake
+            and must not be silently overwritten.
         pydantic.ValidationError: If the file contains valid JSON but
-            invalid field types or values (e.g. an empty ``projects``
-            dict after ``mementic init`` has been run).
+            invalid field types or values.
     """
     config_path = get_global_config_path()
     if not config_path.is_file():
@@ -403,11 +405,20 @@ def load_global_config() -> GlobalConfig:
         )
         return _default_global_config()
 
-    return GlobalConfig.model_validate(data)
+    config = GlobalConfig.model_validate(data)
+
+    if not config.projects:
+        raise ValueError(
+            f"Config file {config_path} has an empty 'projects' dict. "
+            "If you edited the file manually, restore a valid project entry "
+            "or delete the file and run 'mementic init' to regenerate."
+        )
+
+    return config
 
 
 def save_global_config(config: GlobalConfig) -> None:
-    f"""Write a ``GlobalConfig`` to ``{GLOBAL_CONFIG_DISPLAY_PATH}``.
+    """Write a ``GlobalConfig`` to ``~/.mementic/config.json``.
 
     Creates the parent directory if it is missing.
 

@@ -539,14 +539,14 @@ class TestSlugify:
     def test_max_length_truncates_at_word_boundary(self) -> None:
         result = slugify(
             "capture command must run conflict detection before saving",
-            max_length=30,
+            max_length=40,
         )
-        # Should truncate at last hyphen within 30 chars
-        assert len(result) <= 30
-        assert result == "capture-command-must-run"
+        # Should truncate at last hyphen within 40 chars
+        assert len(result) <= 40
+        assert result == "capture-command-must-run-conflict"
 
     def test_max_length_no_truncation_when_short(self) -> None:
-        result = slugify("short-title", max_length=80)
+        result = slugify("short-title", max_length=40)
         assert result == "short-title"
 
     def test_max_length_single_word_exceeds_limit(self) -> None:
