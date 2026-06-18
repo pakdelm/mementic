@@ -16,6 +16,7 @@ apply to every task, every session, no exception.
 **Proposing decisions/constraints (cheap, no LLM):**
 When you make a decision or establish a rule, call
 `mementic_record_decision` / `mementic_record_constraint` immediately.
+To retire an outdated rule, call `mementic_deprecate_rule`.
 
 **Session capture (expensive, LLM-driven):**
 Run `mementic capture` at most once per session (end of session). Skip if

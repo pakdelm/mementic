@@ -30,12 +30,17 @@ class HealthItem:
     hint: str = ""
 
 
-def check_health(graph: GraphStore | None = None) -> list[HealthItem]:
+def check_health(
+    graph: GraphStore | None = None,
+    repo_path: Path | None = None,
+) -> list[HealthItem]:
     """Run all health checks. No network calls. No LLM cost.
 
     Args:
         graph: Optional GraphStore instance. When provided, checks graph
             integrity. When None, shows graph check as failed.
+        repo_path: Optional repository root path. Used for AGENTS.md lookup.
+            When None, falls back to ``Path.cwd()``.
 
     Returns:
         List of HealthItem results, one per check.
@@ -143,7 +148,7 @@ def check_health(graph: GraphStore | None = None) -> list[HealthItem]:
         )
 
     # 5. Enforcement check (AGENTS.md)
-    agents_md = Path.cwd() / "AGENTS.md"
+    agents_md = (repo_path or Path.cwd()) / "AGENTS.md"
     if agents_md.exists():
         content = agents_md.read_text(encoding="utf-8")
         if "## Mementic Memory (HARD CONSTRAINT — ALWAYS ACTIVE)" in content:

@@ -36,12 +36,13 @@ def test_load_template_contains_heading() -> None:
 
 
 def test_load_template_contains_tool_names() -> None:
-    """The template references all four mementic MCP tool names."""
+    """The template references all five mementic MCP tool names."""
     template = load_template()
     for tool in (
         "mementic_get_task_context",
         "mementic_record_decision",
         "mementic_record_constraint",
+        "mementic_deprecate_rule",
         "mementic_get_entity_history",
     ):
         assert tool in template, f"Template missing reference to {tool}"

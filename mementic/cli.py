@@ -34,6 +34,7 @@ from mementic.metrics import UsageStore  # noqa: E402
 from mementic.sources.adr import scan_adr_dir  # noqa: E402
 from mementic.sources.opencode import scan_opencode_instructions  # noqa: E402
 from mementic.inject import (  # noqa: E402
+    _AGENT_MARKERS,
     detect_agents,
     get_mcp_config_file,
     get_rules_file,
@@ -354,7 +355,7 @@ def init(
 
     # Health checklist
     from mementic.health import check_health
-    items = check_health(graph)
+    items = check_health(graph, repo_path=cwd)
     typer.echo("  Status")
     for item in items:
         marker = "[OK]" if item.status == "ok" else "[FAIL]"
@@ -870,7 +871,11 @@ def status(
     except typer.Exit:
         graph = None
 
-    items = check_health(graph)
+    try:
+        repo = Path(detect_repo_path())
+    except (ValueError, OSError):
+        repo = Path.cwd()
+    items = check_health(graph, repo_path=repo)
     typer.echo("Mementic status")
     for item in items:
         marker = "[OK]" if item.status == "ok" else "[FAIL]"
@@ -1326,6 +1331,13 @@ def inject(
 
     if agent:
         agents = [agent]
+        valid_agents = set(_AGENT_MARKERS.values())
+        if agent not in valid_agents:
+            typer.echo(
+                f"Unknown agent '{agent}'. Valid: {', '.join(sorted(valid_agents))}",
+                err=True,
+            )
+            raise typer.Exit(code=1)
     else:
         agents = detect_agents(cwd)
         if not agents:
