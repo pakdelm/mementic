@@ -13,7 +13,7 @@ import pytest
 from typer.testing import CliRunner
 
 from mementic.cli import app
-from mementic.config import load_global_config
+from mementic.config import RepoEntry, load_global_config
 
 runner = CliRunner()
 
@@ -92,15 +92,31 @@ def _write_config_and_graph(
 class TestInitAutoBootstrap:
     """Tests for mementic init auto-bootstrap behaviour."""
 
+    def _find_registered_repo(
+        self, repo_path: Path
+    ) -> "RepoEntry | None":
+        """Find the repo entry registered in the global config for repo_path."""
+        global_cfg = load_global_config()
+        resolved = repo_path.resolve()
+        for proj in global_cfg.projects.values():
+            for repo in proj.repos.values():
+                try:
+                    if Path(repo.path).resolve() == resolved:
+                        return repo
+                except (OSError, ValueError):
+                    continue
+        return None
+
     def test_init_autocreate_config_when_missing(
         self, tmp_path: Path
     ) -> None:
-        """mementic init auto-creates .mementic.json from discovered dirs."""
+        """mementic init registers repo with empty sources in global config."""
         old_cwd = os.getcwd()
         try:
             os.chdir(tmp_path)
 
-            # Create source dirs so auto-discovery finds them
+            # Create source dirs to verify they are NOT auto-discovered
+            # (pipeline Phase 0 handles markdown scanning separately)
             adr_dir = tmp_path / "docs" / "adr"
             adr_dir.mkdir(parents=True)
             (adr_dir / "0001-test.md").write_text(
@@ -111,225 +127,174 @@ class TestInitAutoBootstrap:
             instr_dir.mkdir(parents=True)
             (instr_dir / "style.md").write_text("# Style")
 
-            config_path = tmp_path / ".mementic.json"
-
             with patch("mementic.cli.run_init", return_value=(_make_mock_graph(), [])):
-                result = runner.invoke(
-                    app, ["init", "--config-path", str(config_path)],
-                )
+                result = runner.invoke(app, ["init"])
 
             assert result.exit_code == 0
-            assert config_path.exists()
-            config_data = json.loads(config_path.read_text())
-            assert "sources" in config_data
-            paths = [s["path"] for s in config_data["sources"]["adr_dirs"]]
-            assert "./docs/adr" in paths
-            paths = [s["path"] for s in config_data["sources"]["opencode_instructions"]]
-            assert "./docs/instructions" in paths
+            repo_entry = self._find_registered_repo(tmp_path)
+            assert repo_entry is not None
+            # Sources are empty — pipeline Phase 0 handles markdown scanning.
+            assert not repo_entry.sources.adr_dirs
+            assert not repo_entry.sources.opencode_instructions
         finally:
             os.chdir(old_cwd)
 
-    def test_init_force_fails_when_config_missing(
+    def test_init_no_sources_discovered_is_warning(
         self, tmp_path: Path
     ) -> None:
-        """mementic init --force exits with error when .mementic.json missing."""
+        """mementic init succeeds with a warning when no source dirs are found."""
         old_cwd = os.getcwd()
         try:
             os.chdir(tmp_path)
-            config_path = tmp_path / ".mementic.json"
 
-            result = runner.invoke(
-                app, ["init", "--config-path", str(config_path), "--force"],
+            with patch("mementic.cli.run_init", return_value=(_make_mock_graph(), [])):
+                result = runner.invoke(app, ["init"])
+
+            assert result.exit_code == 0
+            output = result.stdout + result.stderr
+            assert "No sources discovered" in output
+            # Repo still registered with empty sources
+            repo_entry = self._find_registered_repo(tmp_path)
+            assert repo_entry is not None
+        finally:
+            os.chdir(old_cwd)
+
+    def test_init_existing_registration_not_overwritten(
+        self, tmp_path: Path
+    ) -> None:
+        """When repo is already registered, init uses existing sources without overwriting."""
+        from mementic.config import (
+            GlobalConfig,
+            ProjectEntry,
+            RepoEntry,
+            Sources,
+            AdrDirSource,
+            save_global_config,
+        )
+
+        old_cwd = os.getcwd()
+        try:
+            os.chdir(tmp_path)
+
+            # Pre-register the repo in the global config with custom sources
+            repo_abs = str(tmp_path.resolve())
+            global_cfg = GlobalConfig(
+                default_project="main",
+                projects={
+                    "main": ProjectEntry(
+                        db_path=str(tmp_path / "test.mementic.db"),
+                        repos={
+                            repo_abs: RepoEntry(
+                                path=repo_abs,
+                                label=tmp_path.name,
+                                sources=Sources(
+                                    adr_dirs=[AdrDirSource(path="/custom/path")],
+                                ),
+                            ),
+                        },
+                    ),
+                },
             )
-
-            assert result.exit_code == 1
-            assert "Cannot proceed" in result.stdout or "Cannot proceed" in result.stderr
-        finally:
-            os.chdir(old_cwd)
-
-    def test_init_autocreate_fails_when_no_sources_discovered(
-        self, tmp_path: Path
-    ) -> None:
-        """mementic init exits when no source dirs found for auto-discovery."""
-        old_cwd = os.getcwd()
-        try:
-            os.chdir(tmp_path)
-            config_path = tmp_path / ".mementic.json"
+            save_global_config(global_cfg)
 
             with patch("mementic.cli.run_init", return_value=(_make_mock_graph(), [])):
-                result = runner.invoke(
-                    app, ["init", "--config-path", str(config_path)],
-                )
-
-            assert result.exit_code == 1
-            assert "No sources discovered" in result.stdout or "No sources discovered" in result.stderr
-        finally:
-            os.chdir(old_cwd)
-
-    def test_init_existing_config_not_overwritten(
-        self, tmp_path: Path
-    ) -> None:
-        """When .mementic.json exists, init uses it without overwriting."""
-        old_cwd = os.getcwd()
-        try:
-            os.chdir(tmp_path)
-            config_path = tmp_path / ".mementic.json"
-            original = {
-                "sources": {"adr_dirs": [{"path": "/custom/path"}]},
-                "output": {"graph_path": str(tmp_path / ".mementic" / "graph.json")},
-                "llm": {"provider": "deepseek", "model": "deepseek-chat"},
-            }
-            config_path.write_text(json.dumps(original))
-
-            with patch("mementic.cli.run_init", return_value=(_make_mock_graph(), [])):
-                result = runner.invoke(
-                    app, ["init", "--config-path", str(config_path)],
-                )
+                result = runner.invoke(app, ["init"])
 
             assert result.exit_code == 0
-            loaded = json.loads(config_path.read_text())
-            assert loaded["sources"]["adr_dirs"][0]["path"] == "/custom/path"
+            repo_entry = self._find_registered_repo(tmp_path)
+            assert repo_entry is not None
+            assert repo_entry.sources.adr_dirs[0].path == "/custom/path"
         finally:
             os.chdir(old_cwd)
-
-    def test_init_discovers_cursor_instructions(
-        self, tmp_path: Path
-    ) -> None:
-        """mementic init auto-discovers .cursor/instructions/ and includes in config."""
-        old_cwd = os.getcwd()
-        try:
-            os.chdir(tmp_path)
-
-            # Create cursor instructions dir so auto-discovery finds it
-            cursor_dir = tmp_path / ".cursor" / "instructions"
-            cursor_dir.mkdir(parents=True)
-            (cursor_dir / "typescript.md").write_text("# Cursor TypeScript Rules")
-
-            config_path = tmp_path / ".mementic.json"
-
-            with patch("mementic.cli.run_init", return_value=(_make_mock_graph(), [])):
-                result = runner.invoke(
-                    app, ["init", "--config-path", str(config_path)],
-                )
-
-            assert result.exit_code == 0
-            assert config_path.exists()
-            config_data = json.loads(config_path.read_text())
-            assert "sources" in config_data
-            assert "cursor_instructions" in config_data["sources"]
-            paths = [s["path"] for s in config_data["sources"]["cursor_instructions"]]
-            assert ".cursor/instructions" in paths
-        finally:
-            os.chdir(old_cwd)
-
-    def test_init_discovers_windsurf_instructions(
-        self, tmp_path: Path
-    ) -> None:
-        """mementic init auto-discovers .windsurf/instructions/ and includes in config."""
-        old_cwd = os.getcwd()
-        try:
-            os.chdir(tmp_path)
-
-            # Create windsurf instructions dir so auto-discovery finds it
-            windsurf_dir = tmp_path / ".windsurf" / "instructions"
-            windsurf_dir.mkdir(parents=True)
-            (windsurf_dir / "styling.md").write_text("# Windsurf Styling Rules")
-
-            config_path = tmp_path / ".mementic.json"
-
-            with patch("mementic.cli.run_init", return_value=(_make_mock_graph(), [])):
-                result = runner.invoke(
-                    app, ["init", "--config-path", str(config_path)],
-                )
-
-            assert result.exit_code == 0
-            assert config_path.exists()
-            config_data = json.loads(config_path.read_text())
-            assert "sources" in config_data
-            assert "windsurf_instructions" in config_data["sources"]
-            paths = [s["path"] for s in config_data["sources"]["windsurf_instructions"]]
-            assert ".windsurf/instructions" in paths
-        finally:
-            os.chdir(old_cwd)
-
 
 class TestInitInteractive:
-    """Tests for mementic init --interactive."""
+    """Tests for mementic init API key setup prompt."""
 
-    def test_init_interactive_updates_config(
+    def _enable_tty(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Make the CliRunner's replacement stdin report as a TTY and clear API keys.
+
+        CliRunner replaces sys.stdin with a click.testing._NamedTextIOWrapper
+        instance whose isatty() returns False. Patching the subclass method
+        (a Python subclass of io.TextIOWrapper, which is itself immutable)
+        makes the prompt gate in mementic init open during invoke.
+
+        Also clears all provider API key env vars so the prompt gate
+        (``not api_key``) is reached — mementic.cli calls load_dotenv() at
+        import, which may populate DEEPSEEK_API_KEY from a developer .env.
+        """
+        from typer.testing import _NamedTextIOWrapper
+        monkeypatch.setattr(_NamedTextIOWrapper, "isatty", lambda self: True)
+        for env_var in ("DEEPSEEK_API_KEY", "OPENAI_API_KEY", "OPENROUTER_API_KEY"):
+            monkeypatch.delenv(env_var, raising=False)
+
+    def test_init_api_key_prompt_updates_global_config(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """mementic init --interactive prompts user and updates global config."""
+        """mementic init prompts for LLM provider/key and updates global config."""
         old_cwd = os.getcwd()
         try:
             os.chdir(tmp_path)
-            config_path = tmp_path / ".mementic.json"
-            config_path.write_text(json.dumps({
-                "sources": {},
-                "output": {"graph_path": str(tmp_path / ".mementic" / "graph.json")},
-            }))
+            self._enable_tty(monkeypatch)
 
-            # Set up global config so interactive mode writes to it
-            global_config_path = tmp_path / "global_config.json"
-            global_config_path.write_text(json.dumps({
-                "version": 1,
-                "default_project": "main",
-                "projects": {},
-                "llm": {"provider": "deepseek", "model": "deepseek-chat"},
-            }))
-            monkeypatch.setenv("MEMENTIC_GLOBAL_CONFIG", str(global_config_path))
-
-            with patch("mementic.cli.run_init", return_value=(_make_mock_graph(), [])):
-                result = runner.invoke(
-                    app,
-                    ["init", "--config-path", str(config_path), "--interactive"],
-                    input="openai\ngpt-4o\n",
-                )
+            with patch("mementic.cli.run_init", return_value=(_make_mock_graph(), [])), \
+                 patch("mementic.cli.typer.confirm", return_value=True), \
+                 patch(
+                     "mementic.cli.typer.prompt",
+                     side_effect=["openai", "sk-fake-key", "gpt-4o"],
+                 ):
+                result = runner.invoke(app, ["init"])
 
             assert result.exit_code == 0
-            # LLM config should be in global config, not .mementic.json
-            local = json.loads(config_path.read_text())
-            assert "llm" not in local
-            global_cfg = json.loads(global_config_path.read_text())
-            assert global_cfg["llm"]["provider"] == "openai"
-            assert global_cfg["llm"]["model"] == "gpt-4o"
+            global_cfg = load_global_config()
+            assert global_cfg.llm.provider == "openai"
+            assert global_cfg.llm.model == "gpt-4o"
+            assert global_cfg.llm.extraction_model == "gpt-4o"
         finally:
             os.chdir(old_cwd)
 
-    def test_init_interactive_defaults_kept_on_empty_input(
+    def test_init_api_key_prompt_empty_keeps_defaults(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """mementic init --interactive with empty inputs keeps defaults."""
+        """mementic init with empty prompt inputs keeps default provider/model."""
         old_cwd = os.getcwd()
         try:
             os.chdir(tmp_path)
-            config_path = tmp_path / ".mementic.json"
-            config_path.write_text(json.dumps({
-                "sources": {},
-                "output": {"graph_path": str(tmp_path / ".mementic" / "graph.json")},
-            }))
+            self._enable_tty(monkeypatch)
 
-            # Set up global config
-            global_config_path = tmp_path / "global_config.json"
-            global_config_path.write_text(json.dumps({
-                "version": 1,
-                "default_project": "main",
-                "projects": {},
-                "llm": {"provider": "deepseek", "model": "deepseek-chat"},
-            }))
-            monkeypatch.setenv("MEMENTIC_GLOBAL_CONFIG", str(global_config_path))
-
-            with patch("mementic.cli.run_init", return_value=(_make_mock_graph(), [])):
-                result = runner.invoke(
-                    app,
-                    ["init", "--config-path", str(config_path), "--interactive"],
-                    input="\n\n",
-                )
+            # Mock prompt to return default values (empty input → defaults)
+            with patch("mementic.cli.run_init", return_value=(_make_mock_graph(), [])), \
+                 patch("mementic.cli.typer.confirm", return_value=True), \
+                 patch(
+                     "mementic.cli.typer.prompt",
+                     side_effect=["deepseek", "", "deepseek-chat"],
+                 ):
+                result = runner.invoke(app, ["init"])
 
             assert result.exit_code == 0
-            global_cfg = json.loads(global_config_path.read_text())
-            assert global_cfg["llm"]["provider"] == "deepseek"
-            assert global_cfg["llm"]["model"] == "deepseek-chat"
+            global_cfg = load_global_config()
+            assert global_cfg.llm.provider == "deepseek"
+            assert global_cfg.llm.model == "deepseek-chat"
+        finally:
+            os.chdir(old_cwd)
+
+    def test_init_api_key_prompt_skipped_without_tty(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """mementic init skips the API key prompt when stdin is not a TTY."""
+        old_cwd = os.getcwd()
+        try:
+            os.chdir(tmp_path)
+
+            # CliRunner stdin is not a TTY by default — prompt is skipped
+            monkeypatch.setattr("sys.stdin.isatty", lambda: False)
+
+            with patch("mementic.cli.run_init", return_value=(_make_mock_graph(), [])):
+                result = runner.invoke(app, ["init"])
+
+            assert result.exit_code == 0
+            # Provider remains default; no prompt-related output
+            output = result.stdout + result.stderr
+            assert "Set up an LLM provider" not in output
         finally:
             os.chdir(old_cwd)
 
@@ -398,19 +363,15 @@ class TestCaptureGitErrorMessage:
         monkeypatch.chdir(tmp_path)
         monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-fake-key")
 
-        config_path = tmp_path / ".mementic.json"
-        config_path.write_text(json.dumps({
-            "output": {"graph_path": str(tmp_path / ".mementic" / "graph.json")},
-        }))
-        monkeypatch.setenv("MEMENTIC_CONFIG", str(config_path))
-
         # Create a fake session file to avoid "No session found"
         session_file = tmp_path / "session.log"
         session_file.write_text("Fake agent session log content.\n")
 
+        from mementic.models import ExtractionResult, UsageStats
+
         with patch(
-            "mementic.extraction.extract_from_session",
-            return_value=__import__("mementic.models").models.ExtractionResult(),
+            "mementic.cli._extract_session",
+            return_value=(ExtractionResult(), UsageStats(model="test", status="success")),
         ):
             result = runner.invoke(
                 app, ["capture", "--session", str(session_file)],
@@ -434,7 +395,7 @@ class TestCaptureAutoAccept:
         monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-fake-key")
 
         config_path, graph_path = _write_config_and_graph(tmp_path)
-        monkeypatch.setenv("MEMENTIC_CONFIG", str(config_path))
+        # Graph is at tmp_path/.mementic/graph.json (default legacy path)
 
         session_file = tmp_path / "session.log"
         session_file.write_text("Agent session about adding auth.\n")
@@ -458,7 +419,7 @@ class TestCaptureAutoAccept:
         mock_usage = UsageStats(model="test-model", status="success")
 
         with patch(
-            "mementic.cli.extract_from_session",
+            "mementic.cli._extract_session",
             return_value=(mock_result, mock_usage),
         ), patch(
             "mementic.cli._run_git_diff", return_value=("", 0),
@@ -496,7 +457,6 @@ class TestCaptureAutoAccept:
                 "author": "test",
             }],
         )
-        monkeypatch.setenv("MEMENTIC_CONFIG", str(config_path))
 
         session_file = tmp_path / "session.log"
         session_file.write_text("Session about JWT auth updates.\n")
@@ -520,7 +480,7 @@ class TestCaptureAutoAccept:
         mock_usage = UsageStats(model="test-model", status="success")
 
         with patch(
-            "mementic.cli.extract_from_session",
+            "mementic.cli._extract_session",
             return_value=(mock_result, mock_usage),
         ), patch(
             "mementic.cli._run_git_diff", return_value=("", 0),
@@ -541,12 +501,11 @@ class TestCaptureAutoAccept:
         monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-fake-key")
 
         config_path, graph_path = _write_config_and_graph(tmp_path)
-        monkeypatch.setenv("MEMENTIC_CONFIG", str(config_path))
 
         session_file = tmp_path / "session.log"
         session_file.write_text("Session log content.\n")
 
-        from mementic.models import Decision, DecisionStatus, ExtractionResult
+        from mementic.models import Decision, DecisionStatus, ExtractionResult, UsageStats
 
         mock_result = ExtractionResult(
             decisions=[
@@ -561,10 +520,11 @@ class TestCaptureAutoAccept:
                 ),
             ],
         )
+        mock_usage = UsageStats(model="test-model", status="success")
 
         with patch(
-            "mementic.cli.extract_from_session",
-            return_value=mock_result,
+            "mementic.cli._extract_session",
+            return_value=(mock_result, mock_usage),
         ):
             result = runner.invoke(
                 app, ["capture", "--session", str(session_file)],
@@ -582,7 +542,9 @@ class TestCaptureAutoAccept:
 class TestListCommand:
     """Tests for mementic list command (Spec 06c F3)."""
 
-    def test_list_decisions(self, tmp_path: Path) -> None:
+    def test_list_decisions(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         config_path, _graph_path = _write_config_and_graph(
             tmp_path,
             decisions=[
@@ -612,18 +574,18 @@ class TestListCommand:
                 },
             ],
         )
+        monkeypatch.chdir(tmp_path)
 
-        result = runner.invoke(
-            app, ["list", "decisions"],
-            env={"MEMENTIC_CONFIG": str(config_path)},
-        )
+        result = runner.invoke(app, ["list", "decisions"])
         assert result.exit_code == 0
         output = result.stdout
         assert "use-jwt" in output
         assert "use-async" in output
         assert "Use JWT Auth" in output
 
-    def test_list_decisions_by_status(self, tmp_path: Path) -> None:
+    def test_list_decisions_by_status(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         config_path, _graph_path = _write_config_and_graph(
             tmp_path,
             decisions=[
@@ -653,17 +615,17 @@ class TestListCommand:
                 },
             ],
         )
+        monkeypatch.chdir(tmp_path)
 
-        result = runner.invoke(
-            app, ["list", "decisions", "--status", "deprecated"],
-            env={"MEMENTIC_CONFIG": str(config_path)},
-        )
+        result = runner.invoke(app, ["list", "decisions", "--status", "deprecated"])
         assert result.exit_code == 0
         output = result.stdout
         assert "d-deprecated" in output
         assert "d-accepted" not in output
 
-    def test_list_decisions_last_n(self, tmp_path: Path) -> None:
+    def test_list_decisions_last_n(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         config_path, _graph_path = _write_config_and_graph(
             tmp_path,
             decisions=[
@@ -682,18 +644,18 @@ class TestListCommand:
                 for i in range(1, 6)
             ],
         )
+        monkeypatch.chdir(tmp_path)
 
-        result = runner.invoke(
-            app, ["list", "decisions", "-n", "2"],
-            env={"MEMENTIC_CONFIG": str(config_path)},
-        )
+        result = runner.invoke(app, ["list", "decisions", "-n", "2"])
         assert result.exit_code == 0
         output = result.stdout
         assert "d-4" in output
         assert "d-5" in output
         assert "d-1" not in output
 
-    def test_list_constraints(self, tmp_path: Path) -> None:
+    def test_list_constraints(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         config_path, _graph_path = _write_config_and_graph(
             tmp_path,
             constraints=[
@@ -708,17 +670,17 @@ class TestListCommand:
                 },
             ],
         )
+        monkeypatch.chdir(tmp_path)
 
-        result = runner.invoke(
-            app, ["list", "constraints"],
-            env={"MEMENTIC_CONFIG": str(config_path)},
-        )
+        result = runner.invoke(app, ["list", "constraints"])
         assert result.exit_code == 0
         output = result.stdout
         assert "c-stateless" in output
         assert "Services must be stateless" in output
 
-    def test_list_entities(self, tmp_path: Path) -> None:
+    def test_list_entities(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         config_path, _graph_path = _write_config_and_graph(
             tmp_path,
             entities=[
@@ -734,17 +696,17 @@ class TestListCommand:
                 },
             ],
         )
+        monkeypatch.chdir(tmp_path)
 
-        result = runner.invoke(
-            app, ["list", "entities"],
-            env={"MEMENTIC_CONFIG": str(config_path)},
-        )
+        result = runner.invoke(app, ["list", "entities"])
         assert result.exit_code == 0
         output = result.stdout
         assert "src/auth.py" in output
         assert "my-repo" in output
 
-    def test_list_entities_stale(self, tmp_path: Path) -> None:
+    def test_list_entities_stale(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         config_path, _graph_path = _write_config_and_graph(
             tmp_path,
             entities=[
@@ -755,11 +717,9 @@ class TestListCommand:
                 },
             ],
         )
+        monkeypatch.chdir(tmp_path)
 
-        result = runner.invoke(
-            app, ["list", "entities", "--stale"],
-            env={"MEMENTIC_CONFIG": str(config_path)},
-        )
+        result = runner.invoke(app, ["list", "entities", "--stale"])
         assert result.exit_code == 0
         output = result.stdout
         assert "does_not_exist.py" in output
@@ -771,7 +731,9 @@ class TestListCommand:
 class TestDeprecateCommand:
     """Tests for mementic deprecate command (Spec 06c F4)."""
 
-    def test_deprecate_marks_decision_deprecated(self, tmp_path: Path) -> None:
+    def test_deprecate_marks_decision_deprecated(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         config_path, graph_path = _write_config_and_graph(
             tmp_path,
             decisions=[{
@@ -787,17 +749,17 @@ class TestDeprecateCommand:
                 "author": "test",
             }],
         )
+        monkeypatch.chdir(tmp_path)
 
-        result = runner.invoke(
-            app, ["deprecate", "use-old-auth"],
-            env={"MEMENTIC_CONFIG": str(config_path)},
-        )
+        result = runner.invoke(app, ["deprecate", "use-old-auth"])
         assert result.exit_code == 0
         output = result.stdout
         assert "Deprecated" in output or "deprecated" in output.lower()
         assert "use-old-auth" in output
 
-    def test_deprecate_with_reason_appends_to_rationale(self, tmp_path: Path) -> None:
+    def test_deprecate_with_reason_appends_to_rationale(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         config_path, graph_path = _write_config_and_graph(
             tmp_path,
             decisions=[{
@@ -813,28 +775,29 @@ class TestDeprecateCommand:
                 "author": "test",
             }],
         )
+        monkeypatch.chdir(tmp_path)
 
         result = runner.invoke(
-            app,
-            ["deprecate", "use-old-auth", "--reason", "Migrated to JWT"],
-            env={"MEMENTIC_CONFIG": str(config_path)},
+            app, ["deprecate", "use-old-auth", "--reason", "Migrated to JWT"]
         )
         assert result.exit_code == 0
         output = result.stdout
         assert "Deprecated" in output
 
-    def test_deprecate_nonexistent_shows_error(self, tmp_path: Path) -> None:
+    def test_deprecate_nonexistent_shows_error(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         config_path, graph_path = _write_config_and_graph(tmp_path)
+        monkeypatch.chdir(tmp_path)
 
-        result = runner.invoke(
-            app, ["deprecate", "nonexistent-id"],
-            env={"MEMENTIC_CONFIG": str(config_path)},
-        )
+        result = runner.invoke(app, ["deprecate", "nonexistent-id"])
         assert result.exit_code == 1
         output = result.stdout + result.stderr
         assert "not found" in output.lower()
 
-    def test_deprecate_already_deprecated_shows_message(self, tmp_path: Path) -> None:
+    def test_deprecate_already_deprecated_shows_message(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         config_path, graph_path = _write_config_and_graph(
             tmp_path,
             decisions=[{
@@ -850,11 +813,9 @@ class TestDeprecateCommand:
                 "author": "test",
             }],
         )
+        monkeypatch.chdir(tmp_path)
 
-        result = runner.invoke(
-            app, ["deprecate", "already-dep"],
-            env={"MEMENTIC_CONFIG": str(config_path)},
-        )
+        result = runner.invoke(app, ["deprecate", "already-dep"])
         output = result.stdout + result.stderr
         assert "already deprecated" in output.lower()
 
@@ -874,12 +835,6 @@ class TestCaptureNoGit:
         """capture when git is not on PATH prints warning and proceeds."""
         monkeypatch.chdir(tmp_path)
         monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-fake-key")
-
-        config_path = tmp_path / ".mementic.json"
-        config_path.write_text(json.dumps({
-            "output": {"graph_path": str(tmp_path / ".mementic" / "graph.json")},
-        }))
-        monkeypatch.setenv("MEMENTIC_CONFIG", str(config_path))
 
         session_file = tmp_path / "session.log"
         session_file.write_text("Fake agent session log content.\n")
@@ -914,9 +869,9 @@ class TestCaptureNoGit:
         ), patch(
             "mementic.graph.GraphStore.get_capture_checkpoint", return_value="",
         ), patch(
-            "mementic.cli.extract_from_session",
+            "mementic.cli._extract_session",
             return_value=(mock_result, mock_usage),
-        ): 
+        ):
             result = runner.invoke(
                 app, ["capture", "--session", str(session_file)],
             )
@@ -931,12 +886,6 @@ class TestCaptureNoGit:
         """capture outside a git repo shows 'Not a git repository' warning."""
         monkeypatch.chdir(tmp_path)
         monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-fake-key")
-
-        config_path = tmp_path / ".mementic.json"
-        config_path.write_text(json.dumps({
-            "output": {"graph_path": str(tmp_path / ".mementic" / "graph.json")},
-        }))
-        monkeypatch.setenv("MEMENTIC_CONFIG", str(config_path))
 
         session_file = tmp_path / "session.log"
         session_file.write_text("Fake agent session log content.\n")
@@ -970,7 +919,7 @@ class TestCaptureNoGit:
         ), patch(
             "mementic.graph.GraphStore.get_capture_checkpoint", return_value="",
         ), patch(
-            "mementic.cli.extract_from_session",
+            "mementic.cli._extract_session",
             return_value=(mock_result, mock_usage),
         ):
             result = runner.invoke(
@@ -987,12 +936,6 @@ class TestCaptureNoGit:
         """capture when checkpoint matches HEAD shows informative message."""
         monkeypatch.chdir(tmp_path)
         monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-fake-key")
-
-        config_path = tmp_path / ".mementic.json"
-        config_path.write_text(json.dumps({
-            "output": {"graph_path": str(tmp_path / ".mementic" / "graph.json")},
-        }))
-        monkeypatch.setenv("MEMENTIC_CONFIG", str(config_path))
 
         session_file = tmp_path / "session.log"
         session_file.write_text("Fake agent session log content.\n")
@@ -1029,7 +972,7 @@ class TestCaptureNoGit:
                 args=["git", "rev-parse", "HEAD"], returncode=0, stdout="abc123\n"
             ),
         ), patch(
-            "mementic.cli.extract_from_session",
+            "mementic.cli._extract_session",
             return_value=(mock_result, mock_usage),
         ):
             result = runner.invoke(
@@ -1046,12 +989,6 @@ class TestCaptureNoGit:
         """capture when git diff returns empty shows 'No changes' message."""
         monkeypatch.chdir(tmp_path)
         monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-fake-key")
-
-        config_path = tmp_path / ".mementic.json"
-        config_path.write_text(json.dumps({
-            "output": {"graph_path": str(tmp_path / ".mementic" / "graph.json")},
-        }))
-        monkeypatch.setenv("MEMENTIC_CONFIG", str(config_path))
 
         session_file = tmp_path / "session.log"
         session_file.write_text("Fake agent session log content.\n")
@@ -1090,7 +1027,7 @@ class TestCaptureNoGit:
         ), patch(
             "mementic.cli._run_git_diff", return_value=("", 0),
         ), patch(
-            "mementic.cli.extract_from_session",
+            "mementic.cli._extract_session",
             return_value=(mock_result, mock_usage),
         ):
             result = runner.invoke(
@@ -1108,22 +1045,16 @@ class TestCaptureNoGit:
 class TestInitRepoFlag:
     """Tests for mementic init --repo and --no-scan flags (Spec 12a)."""
 
-    def test_init_repo_flag_passed_to_pipeline(self, tmp_path: Path) -> None:
+    def test_init_repo_flag_passed_to_pipeline(
+        self, tmp_path: Path
+    ) -> None:
         """mementic init --repo passes repo_path to run_init."""
         old_cwd = os.getcwd()
         try:
             os.chdir(tmp_path)
-            config_path = tmp_path / ".mementic.json"
-            config_path.write_text(json.dumps({
-                "sources": {},
-                "output": {"graph_path": str(tmp_path / ".mementic" / "graph.json")},
-                "llm": {"provider": "deepseek", "model": "deepseek-chat"},
-            }))
 
             with patch("mementic.cli.run_init", return_value=(_make_mock_graph(), [])) as mock_run_init:
-                result = runner.invoke(
-                    app, ["init", "--config-path", str(config_path), "--repo", "/some/path"],
-                )
+                result = runner.invoke(app, ["init", "--repo", "/some/path"])
 
             assert result.exit_code == 0
             mock_run_init.assert_called_once()
@@ -1132,22 +1063,16 @@ class TestInitRepoFlag:
         finally:
             os.chdir(old_cwd)
 
-    def test_init_no_scan_flag_passed_to_pipeline(self, tmp_path: Path) -> None:
+    def test_init_no_scan_flag_passed_to_pipeline(
+        self, tmp_path: Path
+    ) -> None:
         """mementic init --no-scan passes no_scan=True to run_init."""
         old_cwd = os.getcwd()
         try:
             os.chdir(tmp_path)
-            config_path = tmp_path / ".mementic.json"
-            config_path.write_text(json.dumps({
-                "sources": {},
-                "output": {"graph_path": str(tmp_path / ".mementic" / "graph.json")},
-                "llm": {"provider": "deepseek", "model": "deepseek-chat"},
-            }))
 
             with patch("mementic.cli.run_init", return_value=(_make_mock_graph(), [])) as mock_run_init:
-                result = runner.invoke(
-                    app, ["init", "--config-path", str(config_path), "--no-scan"],
-                )
+                result = runner.invoke(app, ["init", "--no-scan"])
 
             assert result.exit_code == 0
             mock_run_init.assert_called_once()

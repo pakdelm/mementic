@@ -61,7 +61,7 @@ class TestExtractFromFreeform:
         )
 
         with patch(
-            "mementic.extraction.get_client", return_value=_mock_client(result)
+            "mementic.extraction.llm.get_client", return_value=_mock_client(result)
         ):
             output, _usage = extract_from_freeform(
                 "We should use async for I/O.", "test-source", config
@@ -100,7 +100,7 @@ class TestExtractFromFreeform:
         )
 
         with patch(
-            "mementic.extraction.get_client", return_value=_mock_client(result)
+            "mementic.extraction.llm.get_client", return_value=_mock_client(result)
         ):
             output, _usage = extract_from_freeform(
                 "We use pydantic for all models.", "adr-002", config
@@ -132,7 +132,7 @@ class TestExtractFromFreeform:
         result = ExtractionResult()
 
         with patch(
-            "mementic.extraction.get_client", return_value=_mock_client(result)
+            "mementic.extraction.llm.get_client", return_value=_mock_client(result)
         ) as mock_get_client:
             extract_from_freeform("some text", "src", config)
 
@@ -151,7 +151,7 @@ class TestExtractFromFreeform:
         response.choices = [choice]
         client.chat.completions.create.return_value = response
 
-        with patch("mementic.extraction.get_client", return_value=client):
+        with patch("mementic.extraction.llm.get_client", return_value=client):
             output, _usage = extract_from_freeform("text", "src", config)
 
         assert output == ExtractionResult()
@@ -178,7 +178,7 @@ class TestExtractFromSession:
         )
 
         with patch(
-            "mementic.extraction.get_client", return_value=_mock_client(result)
+            "mementic.extraction.llm.get_client", return_value=_mock_client(result)
         ):
             output, _usage = extract_from_session(
                 session_log="Agent started...",
@@ -226,7 +226,7 @@ class TestExtractFromAdrConsequences:
         response_obj.choices = [choice]
         client.chat.completions.create.return_value = response_obj
 
-        with patch("mementic.extraction.get_client", return_value=client):
+        with patch("mementic.extraction.llm.get_client", return_value=client):
             output, _usage = extract_from_adr_consequences(
                 "Therefore, all DB access must go through the ORM.",
                 config,
@@ -255,7 +255,7 @@ class TestExtractFromAdrConsequences:
         response_obj.choices = [choice]
         client.chat.completions.create.return_value = response_obj
 
-        with patch("mementic.extraction.get_client", return_value=client):
+        with patch("mementic.extraction.llm.get_client", return_value=client):
             output, _usage = extract_from_adr_consequences("some text", config)
 
         assert output == []
@@ -269,7 +269,7 @@ class TestExtractFromAdrConsequences:
         response_obj.choices = [choice]
         client.chat.completions.create.return_value = response_obj
 
-        with patch("mementic.extraction.get_client", return_value=client):
+        with patch("mementic.extraction.llm.get_client", return_value=client):
             output, _usage = extract_from_adr_consequences("some text", config)
 
         assert output == []
@@ -293,35 +293,35 @@ class TestErrorHandling:
 
     def test_freeform_auth_error_returns_empty(self) -> None:
         config = LLMConfig()
-        with patch("mementic.extraction.get_client",
+        with patch("mementic.extraction.llm.get_client",
                    return_value=self._make_raising_client(self._make_auth_error())):
             with pytest.raises(RuntimeError, match="Authentication failed"):
                 extract_from_freeform("text", "src", config)
 
     def test_freeform_rate_limit_returns_empty(self) -> None:
         config = LLMConfig()
-        with patch("mementic.extraction.get_client",
+        with patch("mementic.extraction.llm.get_client",
                    return_value=self._make_raising_client(self._make_rate_limit_error())):
             output, _usage = extract_from_freeform("text", "src", config)
         assert output == ExtractionResult()
 
     def test_freeform_timeout_returns_empty(self) -> None:
         config = LLMConfig()
-        with patch("mementic.extraction.get_client",
+        with patch("mementic.extraction.llm.get_client",
                    return_value=self._make_raising_client(APITimeoutError(request=MagicMock()))):
             output, _usage = extract_from_freeform("text", "src", config)
         assert output == ExtractionResult()
 
     def test_freeform_connection_error_returns_empty(self) -> None:
         config = LLMConfig()
-        with patch("mementic.extraction.get_client",
+        with patch("mementic.extraction.llm.get_client",
                    return_value=self._make_raising_client(APIConnectionError(request=MagicMock()))):
             output, _usage = extract_from_freeform("text", "src", config)
         assert output == ExtractionResult()
 
     def test_freeform_api_error_returns_empty(self) -> None:
         config = LLMConfig()
-        with patch("mementic.extraction.get_client",
+        with patch("mementic.extraction.llm.get_client",
                    return_value=self._make_raising_client(
                        APIError("err", request=MagicMock(), body=None))):
             output, _usage = extract_from_freeform("text", "src", config)
@@ -335,7 +335,7 @@ class TestErrorHandling:
         response_obj = MagicMock()
         response_obj.choices = [choice]
         client.chat.completions.create.return_value = response_obj
-        with patch("mementic.extraction.get_client", return_value=client):
+        with patch("mementic.extraction.llm.get_client", return_value=client):
             output, _usage = extract_from_freeform("text", "src", config)
         assert output == ExtractionResult()
 
@@ -347,41 +347,41 @@ class TestErrorHandling:
         response_obj = MagicMock()
         response_obj.choices = [choice]
         client.chat.completions.create.return_value = response_obj
-        with patch("mementic.extraction.get_client", return_value=client):
+        with patch("mementic.extraction.llm.get_client", return_value=client):
             output, _usage = extract_from_freeform("text", "src", config)
         assert output == ExtractionResult()
 
     def test_session_auth_error_returns_empty(self) -> None:
         config = LLMConfig()
-        with patch("mementic.extraction.get_client",
+        with patch("mementic.extraction.llm.get_client",
                    return_value=self._make_raising_client(self._make_auth_error())):
             with pytest.raises(RuntimeError, match="Authentication failed"):
                 extract_from_session("log", "diff", "notes", config)
 
     def test_session_rate_limit_returns_empty(self) -> None:
         config = LLMConfig()
-        with patch("mementic.extraction.get_client",
+        with patch("mementic.extraction.llm.get_client",
                    return_value=self._make_raising_client(self._make_rate_limit_error())):
             output, _usage = extract_from_session("log", "diff", "notes", config)
         assert output == ExtractionResult()
 
     def test_session_timeout_returns_empty(self) -> None:
         config = LLMConfig()
-        with patch("mementic.extraction.get_client",
+        with patch("mementic.extraction.llm.get_client",
                    return_value=self._make_raising_client(APITimeoutError(request=MagicMock()))):
             output, _usage = extract_from_session("log", "diff", "notes", config)
         assert output == ExtractionResult()
 
     def test_session_connection_error_returns_empty(self) -> None:
         config = LLMConfig()
-        with patch("mementic.extraction.get_client",
+        with patch("mementic.extraction.llm.get_client",
                    return_value=self._make_raising_client(APIConnectionError(request=MagicMock()))):
             output, _usage = extract_from_session("log", "diff", "notes", config)
         assert output == ExtractionResult()
 
     def test_session_api_error_returns_empty(self) -> None:
         config = LLMConfig()
-        with patch("mementic.extraction.get_client",
+        with patch("mementic.extraction.llm.get_client",
                    return_value=self._make_raising_client(
                        APIError("err", request=MagicMock(), body=None))):
             output, _usage = extract_from_session("log", "diff", "notes", config)
@@ -395,7 +395,7 @@ class TestErrorHandling:
         response_obj = MagicMock()
         response_obj.choices = [choice]
         client.chat.completions.create.return_value = response_obj
-        with patch("mementic.extraction.get_client", return_value=client):
+        with patch("mementic.extraction.llm.get_client", return_value=client):
             output, _usage = extract_from_session("log", "diff", "notes", config)
         assert output == ExtractionResult()
 
@@ -407,41 +407,41 @@ class TestErrorHandling:
         response_obj = MagicMock()
         response_obj.choices = [choice]
         client.chat.completions.create.return_value = response_obj
-        with patch("mementic.extraction.get_client", return_value=client):
+        with patch("mementic.extraction.llm.get_client", return_value=client):
             output, _usage = extract_from_session("log", "diff", "notes", config)
         assert output == ExtractionResult()
 
     def test_adr_consequences_auth_error_returns_empty(self) -> None:
         config = LLMConfig()
-        with patch("mementic.extraction.get_client",
+        with patch("mementic.extraction.llm.get_client",
                    return_value=self._make_raising_client(self._make_auth_error())):
             with pytest.raises(RuntimeError, match="Authentication failed"):
                 extract_from_adr_consequences("consequences", config)
 
     def test_adr_consequences_rate_limit_returns_empty(self) -> None:
         config = LLMConfig()
-        with patch("mementic.extraction.get_client",
+        with patch("mementic.extraction.llm.get_client",
                    return_value=self._make_raising_client(self._make_rate_limit_error())):
             output, _usage = extract_from_adr_consequences("consequences", config)
         assert output == []
 
     def test_adr_consequences_timeout_returns_empty(self) -> None:
         config = LLMConfig()
-        with patch("mementic.extraction.get_client",
+        with patch("mementic.extraction.llm.get_client",
                    return_value=self._make_raising_client(APITimeoutError(request=MagicMock()))):
             output, _usage = extract_from_adr_consequences("consequences", config)
         assert output == []
 
     def test_adr_consequences_connection_error_returns_empty(self) -> None:
         config = LLMConfig()
-        with patch("mementic.extraction.get_client",
+        with patch("mementic.extraction.llm.get_client",
                    return_value=self._make_raising_client(APIConnectionError(request=MagicMock()))):
             output, _usage = extract_from_adr_consequences("consequences", config)
         assert output == []
 
     def test_adr_consequences_api_error_returns_empty(self) -> None:
         config = LLMConfig()
-        with patch("mementic.extraction.get_client",
+        with patch("mementic.extraction.llm.get_client",
                    return_value=self._make_raising_client(
                        APIError("err", request=MagicMock(), body=None))):
             output, _usage = extract_from_adr_consequences("consequences", config)
@@ -455,7 +455,7 @@ class TestErrorHandling:
         response_obj = MagicMock()
         response_obj.choices = [choice]
         client.chat.completions.create.return_value = response_obj
-        with patch("mementic.extraction.get_client", return_value=client):
+        with patch("mementic.extraction.llm.get_client", return_value=client):
             output, _usage = extract_from_adr_consequences("text", config)
         assert output == []
 
@@ -467,7 +467,7 @@ class TestErrorHandling:
         response_obj = MagicMock()
         response_obj.choices = [choice]
         client.chat.completions.create.return_value = response_obj
-        with patch("mementic.extraction.get_client", return_value=client):
+        with patch("mementic.extraction.llm.get_client", return_value=client):
             output, _usage = extract_from_adr_consequences("text", config)
         assert output == []
 
@@ -479,7 +479,7 @@ class TestMissingApiKey:
         """When get_client raises RuntimeError (missing key), extraction propagates it."""
         config = LLMConfig(provider="openai", model="gpt-4o")
         with patch(
-            "mementic.extraction.get_client",
+            "mementic.extraction.llm.get_client",
             side_effect=RuntimeError("Mementic requires an API key for provider 'openai'.\n"
                                      "  Set the environment variable: OPENAI_API_KEY"),
         ):
@@ -490,7 +490,7 @@ class TestMissingApiKey:
         """Session extraction also propagates missing-key error."""
         config = LLMConfig(provider="openai", model="gpt-4o")
         with patch(
-            "mementic.extraction.get_client",
+            "mementic.extraction.llm.get_client",
             side_effect=RuntimeError("Mementic requires an API key for provider 'openai'."),
         ):
             with pytest.raises(RuntimeError, match="openai"):
@@ -759,7 +759,7 @@ class TestExtractFromSessionTruncation:
         result_obj = ExtractionResult()
         client = _mock_client(result_obj)
 
-        with patch("mementic.extraction.get_client", return_value=client):
+        with patch("mementic.extraction.llm.get_client", return_value=client):
             extract_from_session(
                 session_log=log,
                 git_diff="",
@@ -782,7 +782,7 @@ class TestExtractFromSessionTruncation:
         result_obj = ExtractionResult()
         client = _mock_client(result_obj)
 
-        with patch("mementic.extraction.get_client", return_value=client):
+        with patch("mementic.extraction.llm.get_client", return_value=client):
             extract_from_session(
                 session_log=log,
                 git_diff="",
@@ -806,7 +806,7 @@ class TestExtractFromSessionTruncation:
         result_obj = ExtractionResult()
         client = _mock_client(result_obj)
 
-        with patch("mementic.extraction.get_client", return_value=client):
+        with patch("mementic.extraction.llm.get_client", return_value=client):
             extract_from_session(
                 session_log=log,
                 git_diff="+import os",
@@ -832,7 +832,7 @@ class TestExtractFromSessionTruncation:
         result_obj = ExtractionResult()
         client = _mock_client(result_obj)
 
-        with patch("mementic.extraction.get_client", return_value=client):
+        with patch("mementic.extraction.llm.get_client", return_value=client):
             extract_from_session(
                 session_log=log,
                 git_diff="",
@@ -860,7 +860,7 @@ class TestExtractFromSessionTruncation:
         result_obj = ExtractionResult()
         client = _mock_client(result_obj)
 
-        with patch("mementic.extraction.get_client", return_value=client):
+        with patch("mementic.extraction.llm.get_client", return_value=client):
             extract_from_session(
                 session_log=log,
                 git_diff="",
@@ -888,7 +888,7 @@ class TestExtractFromSessionTruncation:
         result_obj = ExtractionResult()
         client = _mock_client(result_obj)
 
-        with patch("mementic.extraction.get_client", return_value=client):
+        with patch("mementic.extraction.llm.get_client", return_value=client):
             extract_from_session(
                 session_log=log,
                 git_diff="",
@@ -1097,7 +1097,7 @@ class TestExtractFromCodebaseSummary:
         response = self._make_codebase_mock_response(decisions=[decision])
         client.chat.completions.create.return_value = response
 
-        with patch("mementic.extraction.get_client", return_value=client):
+        with patch("mementic.extraction.llm.get_client", return_value=client):
             output, usage = extract_from_codebase_summary(
                 "## Repository Structure\nsrc/app.py (imports: fastapi)",
                 config,
@@ -1140,7 +1140,7 @@ class TestExtractFromCodebaseSummary:
         response.choices = [choice]
         client.chat.completions.create.return_value = response
 
-        with patch("mementic.extraction.get_client", return_value=client):
+        with patch("mementic.extraction.llm.get_client", return_value=client):
             output, usage = extract_from_codebase_summary(
                 "## Repository Structure\nsome info",
                 config,
@@ -1160,7 +1160,7 @@ class TestExtractFromCodebaseSummary:
         response.choices = [choice]
         client.chat.completions.create.return_value = response
 
-        with patch("mementic.extraction.get_client", return_value=client):
+        with patch("mementic.extraction.llm.get_client", return_value=client):
             output, usage = extract_from_codebase_summary(
                 "## Repository Structure\nsome info",
                 config,
@@ -1180,7 +1180,7 @@ class TestExtractFromCodebaseSummary:
         response.choices = [choice]
         client.chat.completions.create.return_value = response
 
-        with patch("mementic.extraction.get_client", return_value=client):
+        with patch("mementic.extraction.llm.get_client", return_value=client):
             output, usage = extract_from_codebase_summary(
                 "## Repository Structure\nsome info",
                 config,
@@ -1198,7 +1198,7 @@ class TestExtractFromCodebaseSummary:
         client = MagicMock()
         client.chat.completions.create.side_effect = auth_err
 
-        with patch("mementic.extraction.get_client", return_value=client):
+        with patch("mementic.extraction.llm.get_client", return_value=client):
             with pytest.raises(RuntimeError, match="Authentication failed"):
                 extract_from_codebase_summary("summary", config)
 
@@ -1210,7 +1210,7 @@ class TestExtractFromCodebaseSummary:
             message="limit", response=MagicMock(), body=None
         )
 
-        with patch("mementic.extraction.get_client", return_value=client):
+        with patch("mementic.extraction.llm.get_client", return_value=client):
             output, usage = extract_from_codebase_summary("summary", config)
 
         assert output == ExtractionResult()
@@ -1224,7 +1224,7 @@ class TestExtractFromCodebaseSummary:
             request=MagicMock()
         )
 
-        with patch("mementic.extraction.get_client", return_value=client):
+        with patch("mementic.extraction.llm.get_client", return_value=client):
             output, usage = extract_from_codebase_summary("summary", config)
 
         assert output == ExtractionResult()

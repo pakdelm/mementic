@@ -41,7 +41,6 @@ def generate_html_graph(
         heading="",
     )
 
-    # ── Physics & interaction configuration ───────────────────────
     # Higher damping + strict stabilization so the graph settles quickly.
     # forceAtlas2Based gives good spatial separation; the fit mode stops
     # the simulation once minimal energy remains.
@@ -79,7 +78,6 @@ def generate_html_graph(
     }
     """)
 
-    # ── Node styling constants ────────────────────────────────────
     _NODE_COLORS: dict[str, dict[str, object]] = {
         "Decision": {
             "background": "#4A90D9",
@@ -110,14 +108,12 @@ def generate_html_graph(
         "highlight": {"background": "#DDDDDD", "border": "#888888"},
     }
 
-    # ── Pre-compute degree from edges ─────────────────────────────
     edges = graph.iter_edges()
     degree: dict[str, int] = {}
     for src, tgt, _rel in edges:
         degree[src] = degree.get(src, 0) + 1
         degree[tgt] = degree.get(tgt, 0) + 1
 
-    # ── Collect & filter nodes ────────────────────────────────────
     all_nodes = graph.iter_nodes()
 
     _FILTER_MAP: dict[str, str] = {
@@ -134,7 +130,6 @@ def generate_html_graph(
     ]
     filtered_ids = {nid for nid, _, _ in filtered_nodes}
 
-    # ── Compute initial positions for CodeEntity clustering ──────
     # Group entities by their top-level path prefix, then place each
     # group along a ring so same-directory entities start near each other.
     entity_prefixes = _group_entity_prefixes(
@@ -142,7 +137,6 @@ def generate_html_graph(
     )
     initial_positions = _compute_prefix_positions(entity_prefixes)
 
-    # ── Add nodes ─────────────────────────────────────────────────
     for node_id, node_type, payload in filtered_nodes:
         label = _build_label(node_type, payload)
         tooltip = _build_tooltip_plain(node_type, payload)
@@ -180,7 +174,6 @@ def generate_html_graph(
 
         net.add_node(node_id, **kwargs)  # type: ignore[arg-type]
 
-    # ── Add edges ─────────────────────────────────────────────────
     _EDGE_STYLES: dict[str, dict[str, object]] = {
         "affects": {"color": "#7EB8E0", "dashes": False, "width": 1.5},
         "binds_to": {"color": "#E8833A", "dashes": True, "width": 1.5},
@@ -205,13 +198,10 @@ def generate_html_graph(
             arrows="to",
         )
 
-    # ── Generate HTML ─────────────────────────────────────────────
     html = net.generate_html()
 
-    # ── Strip CDN references ──────────────────────────────────────
     html = _strip_cdn_bootstrap(html)
 
-    # ── Clean up pyvis template cruft ─────────────────────────────
     html = html.replace("<center>\n<h1></h1>\n</center>", "")
     html = html.replace("<center>\n          <h1></h1>\n        </center>", "")
 
@@ -221,9 +211,6 @@ def generate_html_graph(
     html = html.replace("</body>", heading_html + "\n" + legend_html + "\n</body>")
 
     return html
-
-
-# ── Helpers ─────────────────────────────────────────────────────────────
 
 
 def _group_entity_prefixes(

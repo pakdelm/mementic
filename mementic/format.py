@@ -3,9 +3,15 @@ from __future__ import annotations
 import re
 from collections.abc import Sequence
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Callable
 
 from mementic.models import Constraint, Decision, DecisionStatus
+
+# ID length constants for slugify(). Both decision and constraint IDs
+# share the same max length for consistency.
+DECISION_ID_MAX_LENGTH: int = 40
+CONSTRAINT_ID_MAX_LENGTH: int = 40
 
 
 def count_tokens(text: str) -> int:
@@ -29,6 +35,19 @@ def count_tokens(text: str) -> int:
         return len(text) // 4
 
 
+def find_file_paths(text: str) -> list[str]:
+    """Find potential file paths in text matching common source file patterns.
+
+    Args:
+        text: The text to scan for file paths.
+
+    Returns:
+        A list of unique file path strings found in the text.
+    """
+    pattern = r"[\w/\-]+\.(?:py|ts|js|java|go|rs|rb|yaml|yml|json|toml|md)\b"
+    return list(set(re.findall(pattern, text)))
+
+
 def slugify(text: str, max_length: int | None = None) -> str:
     """Convert text to URL-friendly ID. Lowercase, hyphens, strip special chars.
 
@@ -49,6 +68,52 @@ def slugify(text: str, max_length: int | None = None) -> str:
 def timestamp() -> str:
     """Return ISO 8601 timestamp string."""
     return datetime.now(timezone.utc).isoformat()
+
+
+def detect_repo_path(*, check_global_config: bool = False) -> str:
+    """Detect the repository root path.
+
+    When ``check_global_config`` is ``True``, checks the global config
+    first (matching CWD against registered repos) before falling back
+    to git root.  This is useful for the MCP server which needs a
+    *registered* repo path for proper config resolution.
+
+    Args:
+        check_global_config: If True, check ``~/.mementic/config.json``
+            for a registered repo matching CWD before trying git.
+
+    Returns:
+        The detected repo path, or ``""`` when ``check_global_config``
+        is True and no repo is found.
+    """
+    if check_global_config:
+        try:
+            from mementic.config import load_global_config
+
+            global_cfg = load_global_config()
+            cwd = Path.cwd().resolve()
+            for proj_entry in global_cfg.projects.values():
+                for repo_entry in proj_entry.repos.values():
+                    try:
+                        if Path(repo_entry.path).resolve() == cwd:
+                            return repo_entry.path
+                    except (OSError, ValueError):
+                        continue
+        except Exception:
+            pass
+
+    import subprocess
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            capture_output=True, text=True,
+        )
+        if result.returncode == 0:
+            return result.stdout.strip()
+    except FileNotFoundError:
+        pass
+
+    return "" if check_global_config else str(Path.cwd())
 
 
 # ---------------------------------------------------------------------------
@@ -224,7 +289,7 @@ def format_context_pack(
     task: str,
     decisions: list[tuple[Decision, int]],
     constraints: list[tuple[Constraint, int]],
-    max_tokens: int = 1000,
+    max_tokens: int = 1500,
 ) -> str:
     """Produces structured, token-budgeted markdown for agent context injection.
 
@@ -305,7 +370,7 @@ def format_context_pack(
 def format_evolution(
     entity_path: str,
     decisions: list[tuple[Decision, int]],
-    max_tokens: int = 1000,
+    max_tokens: int = 1500,
 ) -> str:
     """Format evolution trace for a code entity using compact provenance lines.
 

@@ -1,7 +1,7 @@
 """Generic session provider.
 
 Reads any text file as a session log. No auto-discovery — paths must be
-provided explicitly via ``--session`` or configured in ``.mementic.json``.
+provided explicitly via ``--session`` or configured in ``~/.mementic/config.json``.
 """
 
 from __future__ import annotations
@@ -15,7 +15,7 @@ class GenericSessionProvider(SessionProvider):
     """Provider that reads any text file as a session log.
 
     Has no built-in defaults. Session discovery requires either an explicit
-    ``--session`` flag or ``sessions.generic.log_dirs`` in ``.mementic.json``.
+    ``--session`` flag or ``sessions.generic.log_dirs`` in ``~/.mementic/config.json``.
     """
 
     @property

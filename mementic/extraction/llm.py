@@ -23,7 +23,7 @@ from mementic.config import LLMConfig  # noqa: E402
 from mementic.models import Constraint, DecisionStatus, ExtractionResult, UsageStats  # noqa: E402
 
 
-# ── Session truncation (Spec 10a) ────────────────────────────────────
+# Spec 10a — Session truncation
 
 ARCHITECTURE_KEYWORDS: list[str] = [
     "propose_decision", "propose_constraint",  # MCP tool calls (strongest signal)
@@ -197,7 +197,7 @@ def _truncate_tail(session_log: str, max_messages: int = _DEFAULT_MAX_MESSAGES) 
     return "\n".join(lines[start_idx:])
 
 
-# ── Compact extraction formats (Spec 13 — 86% token savings over JSON Schema) ──
+# Spec 13 — Compact extraction formats (86% token savings over JSON Schema)
 
 _EXTRACTION_FORMAT = """{
   "decisions": [{"id": "slug", "title": "Title", "rationale": "Why", "rejected_alternatives": ["Alt1"], "source": "origin", "status": "accepted", "created_at": "ISO8601", "modified_at": "ISO8601"}],
@@ -209,8 +209,6 @@ _EXTRACTION_FORMAT = """{
 _CONSTRAINTS_FORMAT = """{
   "constraints": [{"id": "slug", "description": "Hard rule", "bound_entities": ["file.py"], "enforced_by": "decision-id", "source": "origin", "status": "active", "created_at": "ISO8601"}]
 }"""
-
-# ── System prompts ───────────────────────────────────────────────────
 
 FREE_FORM_SYSTEM_PROMPT = """You are a software architecture analyst. Given text from an engineering document, identify architectural decisions and constraints.
 

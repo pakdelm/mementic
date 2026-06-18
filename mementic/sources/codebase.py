@@ -94,8 +94,10 @@ _CONFIG_FILES: tuple[str, ...] = (
 )
 
 _MAX_DIR_DEPTH = 4
-_PER_MD_FILE_CAP = 2000
-_TOTAL_MD_BUDGET = 5000
+_PER_MD_FILE_CAP = 2000  # tight — LLM path in scan_codebase_structure
+_TOTAL_MD_BUDGET = 5000  # tight — LLM path in scan_codebase_structure
+_DET_PER_FILE_CAP = 10000  # generous — deterministic extraction has no LLM cost
+_DET_CHAR_BUDGET = 250000  # generous — deterministic extraction has no LLM cost
 
 
 def _is_ignored_dir(name: str) -> bool:
@@ -352,7 +354,7 @@ def scan_codebase_structure(repo_path: str) -> str:
     if not os.path.isdir(repo_path):
         return ""
 
-    # ── Single os.walk traversal: collect tree, imports, and markdown data ──
+    # Single os.walk traversal: collect tree, imports, and markdown data
     # (dir_name, depth, [(filename, imports)])
     _dir_entries: list[tuple[int, str, list[tuple[str, list[str]]]]] = []
     _root_py_files: list[tuple[str, list[str]]] = []
@@ -402,7 +404,6 @@ def scan_codebase_structure(repo_path: str) -> str:
                 (os.path.relpath(fpath, repo_path), capped, score, is_adr)
             )
 
-    # ── Assemble output ──
     parts: list[str] = []
 
     # 1. Directory tree
@@ -442,3 +443,69 @@ def scan_codebase_structure(repo_path: str) -> str:
         parts.append("")
 
     return "\n".join(parts)
+
+
+def collect_markdown_files(repo_path: str, char_budget: int = _DET_CHAR_BUDGET, per_file_cap: int = _DET_PER_FILE_CAP) -> list[tuple[str, str]]:
+    """Collect all markdown files from repo, sorted by signal score descending.
+
+    Scans the entire repo for .md files using the same directory filtering
+    rules as ``scan_codebase_structure``. Returns ``(relpath, content)``
+    tuples sorted by ``_md_signal_score`` descending (README, CHANGELOG,
+    CONTRIBUTING rank highest). Each file's content is capped at
+    ``per_file_cap`` chars. Total content across all files is capped at
+    ``char_budget``.
+
+    Budgets are generous by default because deterministic extraction is
+    pure CPU (regex, no LLM cost). ``_PER_MD_FILE_CAP`` (used by
+    ``scan_codebase_structure``) is tighter since its output feeds an LLM.
+
+    Args:
+        repo_path: Absolute or relative path to the repository root.
+        char_budget: Maximum total characters across all collected files.
+            Prevents unbounded memory use in large repos. Files are included
+            in signal-score order until the budget is exhausted.
+        per_file_cap: Maximum characters per file. Prevents a single huge
+            markdown file from consuming the entire budget.
+
+    Returns:
+        List of ``(relpath, content)`` tuples. Empty list if ``repo_path``
+        doesn't exist or is not a directory.
+    """
+    if not os.path.isdir(repo_path):
+        return []
+
+    collected: list[tuple[str, str, int]] = []
+
+    for dirpath, dirnames, filenames in os.walk(repo_path):
+        rel = os.path.relpath(dirpath, repo_path)
+        depth = 0 if rel == "." else len(Path(rel).parts)
+        if _should_skip_dir(dirpath, depth):
+            dirnames[:] = []
+            continue
+        dirnames[:] = sorted(d for d in dirnames if not _is_ignored_dir(d))
+
+        for fname in filenames:
+            if not fname.lower().endswith(".md"):
+                continue
+            fpath = os.path.join(dirpath, fname)
+            try:
+                with open(fpath, encoding="utf-8", errors="replace") as f:
+                    content = f.read()
+            except OSError:
+                continue
+            score = _md_signal_score(fname)
+            capped = content[:per_file_cap]
+            relpath = os.path.relpath(fpath, repo_path).replace("\\", "/")
+            collected.append((relpath, capped, score))
+
+    collected.sort(key=lambda x: (-x[2], x[0]))
+
+    result: list[tuple[str, str]] = []
+    total_chars = 0
+    for relpath, content, _score in collected:
+        if total_chars >= char_budget:
+            break
+        result.append((relpath, content))
+        total_chars += len(content)
+
+    return result

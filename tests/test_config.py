@@ -3,22 +3,27 @@
 from __future__ import annotations
 
 import json
-import tempfile
 from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
 
 from mementic.config import (
+    AdrDirSource,
+    AgentSessionConfig,
+    ClaudeSource,
+    CursorSource,
+    GlobalConfig,
     LLMConfig,
     MementicConfig,
-    SessionsConfig,
-    load_config,
-)
-from mementic.config import (
-    GlobalConfig,
+    OpenCodeSource,
+    OutputConfig,
     ProjectEntry,
     RepoEntry,
+    SessionsConfig,
+    Sources,
+    WindsurfSource,
+    load_config,
     load_global_config,
     resolve_project,
     save_global_config,
@@ -26,43 +31,71 @@ from mementic.config import (
 from mementic.graph import GraphStore
 
 
+def _set_repo_sources(
+    repo_path: str, **sources: list
+) -> None:
+    """Mutate the registered repo's Sources in the global config and persist.
+
+    Args:
+        repo_path: Absolute path of the repo to find.
+        **sources: Keyword args forwarded to ``Sources(...)`` (e.g.
+            ``adr_dirs=[AdrDirSource(path="docs/adr")]``).
+    """
+    global_cfg = load_global_config()
+    for proj in global_cfg.projects.values():
+        for repo in proj.repos.values():
+            if repo.path == repo_path:
+                repo.sources = Sources(**sources)
+    save_global_config(global_cfg)
+
+
+def _set_global_llm(llm: LLMConfig) -> None:
+    """Set the shared LLM config on the global config and persist."""
+    global_cfg = load_global_config()
+    global_cfg.llm = llm
+    save_global_config(global_cfg)
+
+
+def _set_global_sessions(sessions: SessionsConfig) -> None:
+    """Set the shared sessions config on the global config and persist."""
+    global_cfg = load_global_config()
+    global_cfg.sessions = sessions
+    save_global_config(global_cfg)
+
+
 class TestLoadConfig:
     """Tests for load_config()."""
 
-    def test_loads_valid_json_file(self) -> None:
-        """load_config returns MementicConfig from a valid JSON file."""
-        data = {
-            "sources": {
-                "adr_dirs": [{"path": "docs/adr"}],
-                "opencode_instructions": [{"path": ".opencode/instructions"}],
-                "claude_instructions": [{"path": ".claude/instructions"}],
-            },
-            "output": {"graph_path": "./custom/graph.json"},
-            "llm": {"provider": "openai", "model": "gpt-4"},
-        }
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".json", delete=False
-        ) as tmp:
-            json.dump(data, tmp)
+    def test_loads_valid_json_file(self, tmp_global_config) -> None:
+        """load_config composes MementicConfig from global config + repo entry."""
+        config_path, repo_path = tmp_global_config
 
-        try:
-            config = load_config(tmp.name)
-            assert isinstance(config, MementicConfig)
-            assert len(config.sources.adr_dirs) == 1
-            assert config.sources.adr_dirs[0].path == "docs/adr"
-            assert len(config.sources.opencode_instructions) == 1
-            assert config.sources.opencode_instructions[0].path == ".opencode/instructions"
-            assert len(config.sources.claude_instructions) == 1
-            assert config.sources.claude_instructions[0].path == ".claude/instructions"
-            assert config.output.graph_path == "./custom/graph.json"
-            assert config.llm.provider == "openai"
-            assert config.llm.model == "gpt-4"
-        finally:
-            Path(tmp.name).unlink()
+        _set_repo_sources(
+            repo_path,
+            adr_dirs=[AdrDirSource(path="docs/adr")],
+            opencode_instructions=[OpenCodeSource(path=".opencode/instructions")],
+            claude_instructions=[ClaudeSource(path=".claude/instructions")],
+        )
+        _set_global_llm(LLMConfig(provider="openai", model="gpt-4"))
+
+        config = load_config(repo_path=repo_path)
+        assert isinstance(config, MementicConfig)
+        assert len(config.sources.adr_dirs) == 1
+        assert config.sources.adr_dirs[0].path == "docs/adr"
+        assert len(config.sources.opencode_instructions) == 1
+        assert config.sources.opencode_instructions[0].path == ".opencode/instructions"
+        assert len(config.sources.claude_instructions) == 1
+        assert config.sources.claude_instructions[0].path == ".claude/instructions"
+        # graph_path is no longer per-repo; comes from the model default.
+        assert config.output.graph_path == "./.mementic/graph.json"
+        assert config.llm.provider == "openai"
+        assert config.llm.model == "gpt-4"
 
     def test_returns_defaults_when_no_file_exists(self) -> None:
-        """load_config returns default MementicConfig when file is missing."""
-        config = load_config("/nonexistent/path/.mementic.json")
+        """load_config returns default MementicConfig when no global config exists."""
+        # The autouse _isolate_global_config fixture points MEMENTIC_GLOBAL_CONFIG
+        # at a nonexistent path, so load_global_config returns defaults.
+        config = load_config()
         assert isinstance(config, MementicConfig)
         assert config.sources.adr_dirs == []
         assert config.sources.opencode_instructions == []
@@ -72,66 +105,63 @@ class TestLoadConfig:
         assert config.llm.model == "deepseek-chat"
         assert config.llm.extraction_model == "deepseek-chat"
 
-    def test_invalid_fields_raise_validation_error(self) -> None:
-        """load_config raises ValidationError for invalid field types."""
-        data = {"sources": {"adr_dirs": "not_a_list"}}
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".json", delete=False
-        ) as tmp:
-            json.dump(data, tmp)
+    def test_invalid_fields_raise_validation_error(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """load_global_config raises ValidationError for invalid field types."""
+        config_file = tmp_path / "config.json"
+        # Valid JSON but invalid field type: adr_dirs must be a list.
+        config_file.write_text(
+            json.dumps(
+                {
+                    "projects": {
+                        "main": {
+                            "db_path": "x",
+                            "repos": {
+                                "/r": {
+                                    "path": "/r",
+                                    "sources": {"adr_dirs": "not_a_list"},
+                                }
+                            },
+                        }
+                    }
+                }
+            )
+        )
+        monkeypatch.setenv("MEMENTIC_GLOBAL_CONFIG", str(config_file))
 
-        try:
-            with pytest.raises(ValidationError):
-                load_config(tmp.name)
-        finally:
-            Path(tmp.name).unlink()
+        with pytest.raises(ValidationError):
+            load_global_config()
 
     def test_custom_graph_path(self) -> None:
-        """load_config correctly reads a custom graph_path."""
-        data = {"output": {"graph_path": "/tmp/mementic/graph.json"}}
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".json", delete=False
-        ) as tmp:
-            json.dump(data, tmp)
+        """MementicConfig accepts a custom graph_path via the model directly."""
+        config = MementicConfig(output=OutputConfig(graph_path="/tmp/mementic/graph.json"))
+        assert config.output.graph_path == "/tmp/mementic/graph.json"
 
-        try:
-            config = load_config(tmp.name)
-            assert config.output.graph_path == "/tmp/mementic/graph.json"
-        finally:
-            Path(tmp.name).unlink()
+    def test_partial_config_uses_defaults_for_missing_fields(
+        self, tmp_global_config
+    ) -> None:
+        """load_config fills in defaults when the repo entry has empty sources."""
+        config_path, repo_path = tmp_global_config
 
-    def test_partial_config_uses_defaults_for_missing_fields(self) -> None:
-        """load_config fills in defaults for fields omitted from JSON."""
-        data: dict = {}
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".json", delete=False
-        ) as tmp:
-            json.dump(data, tmp)
+        config = load_config(repo_path=repo_path)
+        assert isinstance(config, MementicConfig)
+        assert config.sources.adr_dirs == []
+        assert config.output.graph_path == "./.mementic/graph.json"
+        assert config.llm.provider == "deepseek"
 
-        try:
-            config = load_config(tmp.name)
-            assert isinstance(config, MementicConfig)
-            assert config.sources.adr_dirs == []
-            assert config.output.graph_path == "./.mementic/graph.json"
-            assert config.llm.provider == "deepseek"
-        finally:
-            Path(tmp.name).unlink()
+    def test_invalid_json_returns_defaults(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """load_global_config returns default config when JSON is malformed."""
+        config_file = tmp_path / "config.json"
+        config_file.write_text("{not valid json")
+        monkeypatch.setenv("MEMENTIC_GLOBAL_CONFIG", str(config_file))
 
-    def test_invalid_json_returns_defaults(self) -> None:
-        """load_config returns default config when JSON is malformed."""
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".json", delete=False
-        ) as tmp:
-            tmp.write("{not valid json")
-
-        try:
-            config = load_config(tmp.name)
-            assert isinstance(config, MementicConfig)
-            assert config.sources.adr_dirs == []
-            assert config.sources.opencode_instructions == []
-            assert config.sources.claude_instructions == []
-        finally:
-            Path(tmp.name).unlink()
+        config = load_global_config()
+        assert isinstance(config, GlobalConfig)
+        assert config.projects == {}
+        assert config.llm.provider == "deepseek"
 
 
 class TestMultiProvider:
@@ -228,67 +258,51 @@ class TestCursorWindsurfSources:
 
     def test_sources_model_has_cursor_field(self) -> None:
         """Sources() has cursor_instructions field defaulting to empty list."""
-        from mementic.config import Sources
         sources = Sources()
         assert hasattr(sources, "cursor_instructions")
         assert sources.cursor_instructions == []
 
     def test_sources_model_has_windsurf_field(self) -> None:
         """Sources() has windsurf_instructions field defaulting to empty list."""
-        from mementic.config import Sources
         sources = Sources()
         assert hasattr(sources, "windsurf_instructions")
         assert sources.windsurf_instructions == []
 
     def test_cursor_source_model(self) -> None:
         """CursorSource model stores a path string."""
-        from mementic.config import CursorSource
         source = CursorSource(path=".cursor/instructions")
         assert source.path == ".cursor/instructions"
 
     def test_windsurf_source_model(self) -> None:
         """WindsurfSource model stores a path string."""
-        from mementic.config import WindsurfSource
         source = WindsurfSource(path=".windsurf/instructions")
         assert source.path == ".windsurf/instructions"
 
-    def test_cursor_instructions_in_full_config(self) -> None:
-        """MementicConfig with cursor_instructions deserializes correctly."""
-        data = {
-            "sources": {
-                "cursor_instructions": [{"path": ".cursor/instructions"}],
-            },
-        }
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".json", delete=False
-        ) as tmp:
-            json.dump(data, tmp)
+    def test_cursor_instructions_in_full_config(self, tmp_global_config) -> None:
+        """Cursor sources set on the repo entry are surfaced by load_config."""
+        config_path, repo_path = tmp_global_config
 
-        try:
-            config = load_config(tmp.name)
-            assert len(config.sources.cursor_instructions) == 1
-            assert config.sources.cursor_instructions[0].path == ".cursor/instructions"
-        finally:
-            Path(tmp.name).unlink()
+        _set_repo_sources(
+            repo_path,
+            cursor_instructions=[CursorSource(path=".cursor/instructions")],
+        )
 
-    def test_windsurf_instructions_in_full_config(self) -> None:
-        """MementicConfig with windsurf_instructions deserializes correctly."""
-        data = {
-            "sources": {
-                "windsurf_instructions": [{"path": ".windsurf/instructions"}],
-            },
-        }
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".json", delete=False
-        ) as tmp:
-            json.dump(data, tmp)
+        config = load_config(repo_path=repo_path)
+        assert len(config.sources.cursor_instructions) == 1
+        assert config.sources.cursor_instructions[0].path == ".cursor/instructions"
 
-        try:
-            config = load_config(tmp.name)
-            assert len(config.sources.windsurf_instructions) == 1
-            assert config.sources.windsurf_instructions[0].path == ".windsurf/instructions"
-        finally:
-            Path(tmp.name).unlink()
+    def test_windsurf_instructions_in_full_config(self, tmp_global_config) -> None:
+        """Windsurf sources set on the repo entry are surfaced by load_config."""
+        config_path, repo_path = tmp_global_config
+
+        _set_repo_sources(
+            repo_path,
+            windsurf_instructions=[WindsurfSource(path=".windsurf/instructions")],
+        )
+
+        config = load_config(repo_path=repo_path)
+        assert len(config.sources.windsurf_instructions) == 1
+        assert config.sources.windsurf_instructions[0].path == ".windsurf/instructions"
 
 
 # ── C4: Cursor + Windsurf session config ──────────────────────────────
@@ -309,41 +323,27 @@ class TestCursorWindsurfSessions:
         assert hasattr(sessions, "windsurf")
         assert sessions.windsurf.log_dirs == []
 
-    def test_cursor_sessions_in_full_config(self) -> None:
-        """MementicConfig with sessions.cursor deserializes correctly."""
-        data = {
-            "sessions": {
-                "cursor": {"log_dirs": ["/custom/cursor/logs"]},
-            },
-        }
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".json", delete=False
-        ) as tmp:
-            json.dump(data, tmp)
+    def test_cursor_sessions_in_full_config(self, tmp_global_config) -> None:
+        """Sessions set on the global config are surfaced by load_config."""
+        config_path, repo_path = tmp_global_config
 
-        try:
-            config = load_config(tmp.name)
-            assert config.sessions.cursor.log_dirs == ["/custom/cursor/logs"]
-        finally:
-            Path(tmp.name).unlink()
+        _set_global_sessions(
+            SessionsConfig(cursor=AgentSessionConfig(log_dirs=["/custom/cursor/logs"]))
+        )
 
-    def test_windsurf_sessions_in_full_config(self) -> None:
-        """MementicConfig with sessions.windsurf deserializes correctly."""
-        data = {
-            "sessions": {
-                "windsurf": {"log_dirs": ["/custom/windsurf/logs"]},
-            },
-        }
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".json", delete=False
-        ) as tmp:
-            json.dump(data, tmp)
+        config = load_config(repo_path=repo_path)
+        assert config.sessions.cursor.log_dirs == ["/custom/cursor/logs"]
 
-        try:
-            config = load_config(tmp.name)
-            assert config.sessions.windsurf.log_dirs == ["/custom/windsurf/logs"]
-        finally:
-            Path(tmp.name).unlink()
+    def test_windsurf_sessions_in_full_config(self, tmp_global_config) -> None:
+        """Sessions set on the global config are surfaced by load_config."""
+        config_path, repo_path = tmp_global_config
+
+        _set_global_sessions(
+            SessionsConfig(windsurf=AgentSessionConfig(log_dirs=["/custom/windsurf/logs"]))
+        )
+
+        config = load_config(repo_path=repo_path)
+        assert config.sessions.windsurf.log_dirs == ["/custom/windsurf/logs"]
 
 
 # ── Spec 09b B4: Config corruption recovery ─────────────────────────
@@ -353,64 +353,66 @@ class TestConfigCorruption:
     """Tests for config corruption recovery (Spec 09b B4)."""
 
     def test_corrupt_config_warns(
-        self, capsys: pytest.CaptureFixture[str]
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
     ) -> None:
-        """Corrupt JSON config prints warning to stderr and returns defaults."""
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".json", delete=False
-        ) as tmp:
-            tmp.write("{not valid json at all")
+        """Corrupt global config prints warning to stderr and returns defaults."""
+        config_file = tmp_path / "config.json"
+        config_file.write_text("{not valid json at all")
+        monkeypatch.setenv("MEMENTIC_GLOBAL_CONFIG", str(config_file))
 
-        try:
-            config = load_config(tmp.name)
-            # Should return defaults despite corrupt file
-            assert isinstance(config, MementicConfig)
-            assert config.sources.adr_dirs == []
-            assert config.llm.provider == "deepseek"
+        config = load_global_config()
+        # Should return defaults despite corrupt file
+        assert isinstance(config, GlobalConfig)
+        assert config.projects == {}
+        assert config.llm.provider == "deepseek"
 
-            # Verify stderr warning was printed
-            captured = capsys.readouterr()
-            assert "corrupt" in captured.err.lower()
-            assert "mementic init" in captured.err.lower()
-        finally:
-            Path(tmp.name).unlink()
+        # Verify stderr warning was printed
+        captured = capsys.readouterr()
+        assert "corrupt" in captured.err.lower()
+        assert "mementic init" in captured.err.lower()
 
     def test_corrupt_config_does_not_crash(
-        self, capsys: pytest.CaptureFixture[str]
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Corrupt JSON does not raise an exception — returns defaults gracefully."""
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".json", delete=False
-        ) as tmp:
-            tmp.write("{broken json [[[")
+        """Corrupt JSON does not raise — returns defaults gracefully."""
+        config_file = tmp_path / "config.json"
+        config_file.write_text("{broken json [[[")
+        monkeypatch.setenv("MEMENTIC_GLOBAL_CONFIG", str(config_file))
 
-        try:
-            # Should not raise
-            config = load_config(tmp.name)
-            assert isinstance(config, MementicConfig)
-            assert config.output.graph_path == "./.mementic/graph.json"
-        finally:
-            Path(tmp.name).unlink()
+        # Should not raise
+        config = load_global_config()
+        assert isinstance(config, GlobalConfig)
+        assert config.projects == {}
+        assert config.llm.provider == "deepseek"
 
     def test_missing_source_directory_warns(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+        self,
+        tmp_global_config,
+        capsys: pytest.CaptureFixture[str],
     ) -> None:
         """run_init warns about missing source directories but continues."""
         from mementic.pipeline import run_init
 
-        config_path = tmp_path / ".mementic.json"
-        config_path.write_text(json.dumps({
-            "sources": {
-                "adr_dirs": [{"path": str(tmp_path / "nonexistent_adr")}],
-                "opencode_instructions": [{"path": str(tmp_path / "nonexistent_oc")}],
-                "claude_instructions": [{"path": str(tmp_path / "nonexistent_claude")}],
-            },
-            "output": {"graph_path": str(tmp_path / ".mementic" / "graph.json")},
-            "llm": {"provider": "deepseek", "model": "deepseek-chat"},
-        }))
+        config_path, repo_path = tmp_global_config
+        nonexistent_adr = str(Path(repo_path) / "nonexistent_adr")
+        nonexistent_oc = str(Path(repo_path) / "nonexistent_oc")
+        nonexistent_claude = str(Path(repo_path) / "nonexistent_claude")
 
-        # Should not raise — warns and continues
-        graph, usage = run_init(str(config_path))
+        _set_repo_sources(
+            repo_path,
+            adr_dirs=[AdrDirSource(path=nonexistent_adr)],
+            opencode_instructions=[OpenCodeSource(path=nonexistent_oc)],
+            claude_instructions=[ClaudeSource(path=nonexistent_claude)],
+        )
+
+        # Should not raise — warns and continues. no_scan skips the codebase
+        # LLM scan so the test stays deterministic without an API key.
+        graph, usage = run_init(repo_path=repo_path, no_scan=True)
 
         captured = capsys.readouterr()
         stderr_output = captured.err
@@ -580,4 +582,3 @@ class TestGlobalConfig:
         """RepoEntry(path='/tmp/repo') has label=''."""
         entry = RepoEntry(path="/tmp/repo")
         assert entry.label == ""
-

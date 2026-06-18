@@ -133,6 +133,7 @@ The agent automatically discovers these MCP tools:
 - `get_context_pack` — load constraints before starting work
 - `propose_decision` — record architectural decisions
 - `propose_constraint` — record new constraints
+- `deprecate_entity` — retire outdated decisions or constraints
 - `get_system_evolution` — trace decision history of a code entity
 
 OpenCode custom commands are also available in the TUI:

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
+import sys
 from pathlib import Path
 from typing import Any, TYPE_CHECKING
 
@@ -12,18 +14,21 @@ from pydantic import ValidationError
 load_dotenv()
 
 from mementic.config import (  # noqa: E402
+    PROVIDER_CONFIGS,
+    GLOBAL_CONFIG_DISPLAY_PATH,
+    GlobalConfig,
+    ProjectEntry,
     RepoEntry,
-    get_global_config_path,
+    Sources,
     load_config,
     load_global_config,
     resolve_project,
     save_global_config,
 )
-from mementic.extraction import extract_from_session  # noqa: E402
-from mementic.format import count_tokens, format_context_pack, timestamp  # noqa: E402
+from mementic.format import count_tokens, detect_repo_path, format_context_pack, timestamp  # noqa: E402
 from mementic.graph import GraphStore  # noqa: E402
-from mementic.models import CodeEntity, Decision, DecisionStatus, EntityType, MetricsEntry  # noqa: E402
-from mementic.pipeline import run_init  # noqa: E402
+from mementic.models import CodeEntity, Constraint, Decision, DecisionStatus, EntityType, MetricsEntry  # noqa: E402
+from mementic.pipeline import _extract_session, run_init  # noqa: E402
 from mementic.conflict import auto_resolve_capture  # noqa: E402
 from mementic.metrics import UsageStore  # noqa: E402
 from mementic.sources.adr import scan_adr_dir  # noqa: E402
@@ -31,6 +36,13 @@ from mementic.sources.opencode import scan_opencode_instructions  # noqa: E402
 
 if TYPE_CHECKING:
     from mementic.config import MementicConfig  # noqa: F401
+
+_CODEBASE_INDICATORS: tuple[str, ...] = (
+    "pyproject.toml", "package.json", "go.mod", "Cargo.toml",
+    "Makefile", "setup.py", "setup.cfg", "CMakeLists.txt",
+    "meson.build", "pom.xml", "build.gradle", "Gemfile",
+    "Cargo.lock", "mix.exs", "rebar.config",
+)
 
 app = typer.Typer(help="Mementic — semantic memory for engineering teams and AI agents")
 
@@ -79,7 +91,7 @@ def _resolve_graph(project: str | None = None) -> tuple[GraphStore, "MementicCon
     Raises:
         typer.Exit: When an explicit ``--project`` is not found.
     """
-    cfg = load_config()
+    cfg = load_config(repo_path=detect_repo_path())
 
     try:
         proj_name, global_cfg = resolve_project(project)
@@ -116,7 +128,6 @@ def _run_git_diff(reference: str) -> tuple[str, int]:
 
 @app.command()
 def init(
-    config_path: str = ".mementic.json",
     repo: str | None = typer.Option(
         None, "--repo",
         help="Path to repository root for codebase structural scan",
@@ -128,10 +139,6 @@ def init(
     interactive: bool = typer.Option(
         False, "--interactive", help="Walk through setup interactively"
     ),
-    force: bool = typer.Option(
-        False, "--force",
-        help="Skip auto-bootstrap; fail if .mementic.json is missing"
-    ),
     project: str | None = typer.Option(
         None, "--project",
         help="Target project name for project-aware init",
@@ -139,86 +146,91 @@ def init(
 ) -> None:
     """Initialize the knowledge graph from configured sources.
 
-    If .mementic.json doesn't exist, auto-discovers ./docs/adr/ and
-    ./docs/instructions/ directories and creates a default config.
+    Auto-discovers ``./docs/adr/``, ``./docs/instructions/``,
+    ``.cursor/instructions/`` and ``.windsurf/instructions/`` directories
+    and registers the repo in the global config at ``~/.mementic/config.json``.
 
     With --repo, scans the codebase structure for architectural patterns
     before processing configured sources. Use --no-scan to skip.
     """
-    config_file = Path(config_path)
+    cwd = Path(detect_repo_path())
+    cwd_resolved = str(cwd.resolve())
 
-    if not config_file.exists():
-        if force:
-            typer.echo(
-                f"No config found at {config_path} and --force is set. "
-                f"Cannot proceed.",
-                err=True,
-            )
-            raise typer.Exit(code=1)
-
-        typer.echo("No config found — auto-discovering sources...")
-        discovered: dict[str, list[dict[str, str]]] = {
-            "adr_dirs": [],
-            "opencode_instructions": [],
-            "cursor_instructions": [],
-            "windsurf_instructions": [],
-        }
-
-        if Path("./docs/adr").is_dir():
-            discovered["adr_dirs"].append({"path": "./docs/adr"})
-            typer.echo("  Found: ./docs/adr/")
-        if Path("./docs/instructions").is_dir():
-            discovered["opencode_instructions"].append({"path": "./docs/instructions"})
-            typer.echo("  Found: ./docs/instructions/")
-        if Path(".cursor/instructions").is_dir():
-            discovered["cursor_instructions"].append({"path": ".cursor/instructions"})
-            typer.echo("  Found: .cursor/instructions/")
-        if Path(".windsurf/instructions").is_dir():
-            discovered["windsurf_instructions"].append({"path": ".windsurf/instructions"})
-            typer.echo("  Found: .windsurf/instructions/")
-
-        if not any(discovered.values()):
-            typer.echo(
-                "No sources discovered. Create .mementic.json manually or "
-                "add docs/adr/ and docs/instructions/ directories.",
-                err=True,
-            )
-            raise typer.Exit(code=1)
-
-        auto_config: dict[str, Any] = {
-            "sources": {k: v for k, v in discovered.items() if v},
-            "output": {"graph_path": "./.mementic/graph.json"},
-        }
-        config_file.write_text(json.dumps(auto_config, indent=2))
-        typer.echo(f"Created {config_path}")
-
-    if interactive:
-        typer.echo("Interactive setup — writing to ~/.mementic/config.json")
-        typer.echo(f"  Global config: {get_global_config_path()}")
-        typer.echo("Supported LLM providers: deepseek, openai, openrouter, ollama")
-        provider = typer.prompt(
-            "LLM provider", default="deepseek"
-        )
-        model = typer.prompt(
-            f"Model for '{provider}'", default="deepseek-chat"
-        )
-        # Write to global config
+    try:
         global_cfg = load_global_config()
-        global_cfg.llm.provider = provider
-        global_cfg.llm.model = model
-        global_cfg.llm.extraction_model = model
+    except ValueError as e:
+        # load_global_config rejects empty projects dicts to catch manual
+        # editing mistakes.  In init() we recover by creating a fresh project.
+        typer.echo(f"Warning: {e}", err=True)
+        global_cfg = GlobalConfig()
+
+    already_registered = False
+    for _proj_name, proj_entry in global_cfg.projects.items():
+        for repo_entry in proj_entry.repos.values():
+            try:
+                if Path(repo_entry.path).resolve() == Path(cwd_resolved):
+                    already_registered = True
+                    break
+            except (OSError, ValueError):
+                continue
+        if already_registered:
+            break
+
+    if not already_registered:
+        # Register with empty sources — pipeline Phase 0 handles markdown scanning.
+        discovered_sources = Sources()
+
+        if not any(
+            (
+                discovered_sources.adr_dirs,
+                discovered_sources.opencode_instructions,
+            )
+        ):
+            typer.echo(
+                "No pre-configured sources. All markdown files will be "
+                "scanned during init."
+            )
+
+        # Detect codebase-only repos (relax: register with empty sources)
+        has_codebase = any((cwd / ind).is_file() for ind in _CODEBASE_INDICATORS)
+
+        if not any(
+            (
+                discovered_sources.adr_dirs,
+                discovered_sources.opencode_instructions,
+                discovered_sources.claude_instructions,
+                discovered_sources.cursor_instructions,
+                discovered_sources.windsurf_instructions,
+            )
+        ) and not has_codebase:
+            typer.echo(
+                "No sources discovered. Graph will start empty — use "
+                "inline proposals during sessions to populate it."
+            )
+
+        if not global_cfg.projects:
+            global_cfg.projects["main"] = ProjectEntry(
+                db_path="~/.mementic/projects/main.mementic.db",
+            )
+            global_cfg.default_project = "main"
+        proj_name = global_cfg.default_project
+        proj_entry = global_cfg.projects[proj_name]
+
+        repo_name = cwd.name
+        proj_entry.repos[cwd_resolved] = RepoEntry(
+            path=cwd_resolved,
+            label=repo_name,
+            sources=discovered_sources,
+        )
         save_global_config(global_cfg)
-        typer.echo(f"Updated {get_global_config_path()}")
+        typer.echo(
+            f"Registered repo '{repo_name}' in project '{proj_name}'."
+        )
 
     # Auto-detect repo if not explicitly given
     effective_repo = repo
     if effective_repo is None and not no_scan:
-        cwd = Path.cwd()
-        indicators = (
-            "pyproject.toml", "package.json", "go.mod", "Cargo.toml",
-            "Makefile", "setup.py", "setup.cfg",
-        )
-        for indicator in indicators:
+        for indicator in _CODEBASE_INDICATORS:
             if (cwd / indicator).is_file():
                 effective_repo = str(cwd)
                 break
@@ -235,19 +247,77 @@ def init(
         except ValueError as e:
             typer.echo(str(e), err=True)
             raise typer.Exit(code=1)
+    else:
+        # Use default project's db_path so init writes to the project DB
+        try:
+            project_name, project_global_cfg = resolve_project(None)
+            proj_entry = project_global_cfg.projects[project_name]
+            project_db_path = str(Path(proj_entry.db_path).expanduser())
+        except ValueError:
+            project_db_path = None
 
+    # Spec 15 — API key setup prompt
+    global_cfg = load_global_config()
+    api_key = global_cfg.llm.get_api_key()
+
+    if not api_key and sys.stdin.isatty():
+        typer.echo()
+        typer.echo("Mementic can extract richer architectural context using an LLM.")
+        typer.echo("Deterministic mode (no key) works but produces lower-quality results.")
+        typer.echo()
+        setup_key = typer.confirm("Set up an LLM provider now?", default=True)
+
+        if setup_key:
+            typer.echo()
+            typer.echo(f"Available providers: {', '.join(PROVIDER_CONFIGS.keys())}")
+            provider = typer.prompt("LLM provider", default="")
+
+            if provider not in PROVIDER_CONFIGS:
+                typer.echo(f"Unknown provider '{provider}'. Skipping LLM setup.")
+            else:
+                provider_cfg = PROVIDER_CONFIGS[provider]
+                env_var = provider_cfg["key_env_var"]
+
+                if env_var is None:
+                    # ollama — no key needed
+                    typer.echo("Ollama runs locally — no API key needed.")
+                    typer.echo("Make sure ollama is running on localhost:11434")
+                else:
+                    key = typer.prompt(
+                        f"Enter {env_var}", hide_input=True, default=""
+                    )
+                    if key.strip():
+                        os.environ[env_var] = key.strip()
+                        typer.echo(
+                            "Key set for this session. Add to your shell "
+                            "profile to persist:"
+                        )
+                        typer.echo(f"  export {env_var}=\"your-key-here\"")
+
+                default_model = ""  # user must choose
+                model = typer.prompt(
+                    f"Model for {provider}", default=default_model
+                )
+                global_cfg.llm.provider = provider
+                global_cfg.llm.model = model
+                global_cfg.llm.extraction_model = model
+                save_global_config(global_cfg)
+                typer.echo(f"Saved to {GLOBAL_CONFIG_DISPLAY_PATH}")
+
+    # Run init — pipeline reads global config (no config_path)
     try:
         graph, all_usage = run_init(
-            config_path,
             repo_path=effective_repo,
             no_scan=no_scan,
             db_path=project_db_path,
+            project=project,
         )
     except RuntimeError as e:
         typer.echo(str(e), err=True)
         raise typer.Exit(code=1)
+
     # Load config for source counts in post-bootstrap output
-    cfg = load_config(config_path)
+    cfg = load_config(repo_path=str(cwd), project=project)
     stats = graph.stats()
     typer.echo()
     typer.echo("Mementic initialized")
@@ -288,18 +358,13 @@ def init(
     typer.echo()
     typer.echo("  Next: mementic capture --agent opencode")
 
-    # Register repo in project config when project mode is active
-    if project_db_path is not None and project_name is not None and effective_repo:
-        repo_path = str(Path(effective_repo).resolve())
-        repo_name = Path(repo_path).name
-        proj_entry.repos[repo_name] = RepoEntry(
-            path=repo_path, label=repo_name
-        )
-        save_global_config(project_global_cfg)
-        typer.echo(
-            f"Registered repo '{repo_name}' in project '{project_name}'."
-        )
-        typer.echo(f"Project '{project_name}' initialized.")
+    # Quality notice for deterministic mode
+    post_cfg = load_global_config()
+    if not post_cfg.llm.get_api_key():
+        typer.echo()
+        typer.echo("  Note  Running without LLM API key — deterministic extraction only.")
+        typer.echo(f"        Graph quality is reduced. Set a provider key in {GLOBAL_CONFIG_DISPLAY_PATH}")
+        typer.echo("        for richer extraction, or continue as-is (inline proposals work regardless).")
 
     # Log extraction costs to metrics (project database only)
     if all_usage and graph._conn is not None:
@@ -346,7 +411,7 @@ def capture(
     from mementic.session import get_registry
 
     registry = get_registry()
-    cfg = load_config()
+    cfg = load_config(repo_path=detect_repo_path())
     detected_agent: str | None = None
 
     if not session and not agent:
@@ -386,7 +451,7 @@ def capture(
 
     session_text = Path(session).read_text()
 
-    # ── Load or create graph early (needed for checkpoint query) ──
+    # Load or create graph — needed for checkpoint query
     is_project = False
     project_display: str | None = None
     repo_path = str(Path.cwd())
@@ -422,7 +487,7 @@ def capture(
         else:
             graph = GraphStore()
 
-    # ── Compute git diff (incremental via SQLite checkpoint) ──
+    # Compute git diff — incremental via SQLite checkpoint
     checkpoint = graph.get_capture_checkpoint(repo_path)
     got_diff = False
     if checkpoint:
@@ -474,8 +539,8 @@ def capture(
             git_diff = ""
 
     try:
-        extraction, _usage = extract_from_session(
-            session_text, git_diff, notes or "", cfg.llm,
+        extraction, _usage = _extract_session(
+            session_text, git_diff, notes or "", cfg,
             max_messages=tail, custom_keywords=keyword or None,
         )
     except RuntimeError as e:
@@ -486,14 +551,13 @@ def capture(
         typer.echo("No architectural decisions or constraints found.")
         raise typer.Exit()
 
-    # ── Auto-resolve capture ──
-    from mementic.format import slugify
+    from mementic.format import DECISION_ID_MAX_LENGTH, CONSTRAINT_ID_MAX_LENGTH, slugify
 
     # Replace LLM-generated IDs (dec-001, etc.) with deterministic slugs
     for d in extraction.decisions:
-        d.id = slugify(d.title, max_length=80)
+        d.id = slugify(d.title, max_length=DECISION_ID_MAX_LENGTH)
     for c in extraction.constraints:
-        c.id = slugify(c.description, max_length=80)
+        c.id = slugify(c.description, max_length=CONSTRAINT_ID_MAX_LENGTH)
 
     counts = auto_resolve_capture(
         graph, extraction.decisions, extraction.constraints
@@ -537,7 +601,7 @@ def capture(
         Path(graph_path).parent.mkdir(parents=True, exist_ok=True)
         graph.save(graph_path)
 
-    # ── Summary output (F6) ──
+    # F6 — Summary output
     typer.echo()
     typer.echo("=" * 50)
     typer.echo("Capture complete")
@@ -554,6 +618,8 @@ def capture(
         typer.echo(f"  Written to project '{project_display}' database")
     else:
         typer.echo(f"  Written to {graph_path}")
+    if _usage.model == "deterministic":
+        typer.echo("  Mode:        deterministic (no API key — reduced quality)")
 
     # Log capture metrics (project database only)
     if graph._conn is not None:
@@ -1002,7 +1068,7 @@ def metrics(
     if json_output:
         typer.echo(json.dumps(summary, indent=2, default=str))
     else:
-        # ── Lazy source material counting (Task 2.2) ──
+        # Task 2.2 — Lazy source material counting
         source_file_count = 0
         source_tokens = 0
 
@@ -1035,7 +1101,6 @@ def metrics(
 
         source_available = source_tokens > 0
 
-        # ── Summary fields ──
         init_calls: int = summary["extraction_init_calls"]
         init_tokens: int = summary["extraction_init_tokens"]
         capture_calls: int = summary["extraction_capture_calls"]
@@ -1047,7 +1112,6 @@ def metrics(
         extraction_total = init_tokens + capture_tokens
         capture_avg = capture_tokens / capture_calls if capture_calls > 0 else 0.0
 
-        # ── Computed values ──
         compression_ratio = (
             (init_tokens / source_tokens * 100) if source_tokens > 0 else None
         )
@@ -1063,7 +1127,6 @@ def metrics(
             (extraction_total / cp_queries) if cp_queries > 0 else None
         )
 
-        # ── Formatting helpers ──
         def _n(v: int) -> str:
             return f"{v:,}"
 
@@ -1084,7 +1147,6 @@ def metrics(
         def _ref_row(label: str, value: str) -> None:
             typer.echo(f"  {label:<28}  {value}")
 
-        # ── Render ──
         sep = "=" * 56
         typer.echo(sep)
         typer.echo("                  MEMENTIC TOKEN USAGE")
@@ -1140,7 +1202,7 @@ def metrics(
 
 @app.command()
 def deprecate(
-    id: str = typer.Argument(..., help="Decision ID to deprecate"),
+    id: str = typer.Argument(..., help="Decision or constraint ID to deprecate"),
     reason: str = typer.Option(
         "", "--reason", "-r",
         help="Reason for deprecation",
@@ -1150,51 +1212,62 @@ def deprecate(
         help="Target project name",
     ),
 ) -> None:
-    """Mark a decision as deprecated.
+    """Mark a decision or constraint as deprecated.
 
-    Appends a deprecation note to the rationale and writes an audit entry.
-    The next capture will create a better decision — don't edit history.
+    Appends a deprecation note and writes an audit entry.
+    The entity remains in the graph for history but is excluded
+    from context packs.
     """
     graph, cfg = _resolve_graph(project)
 
     if not graph.has_node(id):
         typer.echo(
-            f"Decision '{id}' not found. Run 'mementic list decisions' to see IDs.",
+            f"Entity '{id}' not found. Run 'mementic list' to see IDs.",
             err=True,
         )
         raise typer.Exit(code=1)
 
-    # Find the node and its payload in one pass
+    # Find the node and its type/payload in one pass
+    node_type: str | None = None
     target_payload: dict | None = None
     for nid, ntype, payload in graph.iter_nodes():
         if nid == id:
-            if ntype != "Decision":
-                typer.echo(f"'{id}' is a {ntype}, not a Decision.", err=True)
-                raise typer.Exit(code=1)
+            node_type = ntype
             target_payload = payload
             break
 
     if target_payload is None:
-        typer.echo(f"Decision '{id}' could not be loaded.", err=True)
+        typer.echo(f"Entity '{id}' could not be loaded.", err=True)
         raise typer.Exit(code=1)
 
-    target = Decision(**target_payload)
+    if node_type == "Decision":
+        decision = Decision(**target_payload)
+        if decision.status == DecisionStatus.DEPRECATED:
+            typer.echo(f"Decision '{id}' is already deprecated.")
+            raise typer.Exit()
+        deprecation_note = f" [DEPRECATED: {reason}]" if reason else " [DEPRECATED]"
+        decision.rationale += deprecation_note
+        decision.status = DecisionStatus.DEPRECATED
+        graph.add_decision(decision)
+        graph.save(cfg.output.graph_path)
+        typer.echo(f"Deprecated decision '{id}': {decision.title}")
 
-    if target.status == DecisionStatus.DEPRECATED:
-        typer.echo(f"Decision '{id}' is already deprecated.")
-        raise typer.Exit()
+    elif node_type == "Constraint":
+        constraint = Constraint(**target_payload)
+        if constraint.status == "deprecated":
+            typer.echo(f"Constraint '{id}' is already deprecated.")
+            raise typer.Exit()
+        deprecation_note = f" [DEPRECATED: {reason}]" if reason else " [DEPRECATED]"
+        constraint.description += deprecation_note
+        constraint.status = "deprecated"
+        graph.add_constraint(constraint)
+        graph.save(cfg.output.graph_path)
+        typer.echo(f"Deprecated constraint '{id}': {constraint.description}")
 
-    deprecation_note = f" [DEPRECATED: {reason}]" if reason else " [DEPRECATED]"
-    target.rationale += deprecation_note
-    target.status = DecisionStatus.DEPRECATED
-    graph.add_decision(target)
+    else:
+        typer.echo(f"'{id}' is a {node_type}, not a decision or constraint.", err=True)
+        raise typer.Exit(code=1)
 
-    # save() is no-op when db-backed; writes JSON otherwise
-    graph.save(cfg.output.graph_path)
-    typer.echo(f"Deprecated decision '{id}': {target.title}")
-
-
-# ── Project management commands ──────────────────────────────────────
 
 project_app = typer.Typer(help="Manage Mementic projects")
 app.add_typer(project_app, name="project")

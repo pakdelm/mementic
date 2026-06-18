@@ -6,6 +6,7 @@ import json
 import os
 import sys
 from pathlib import Path
+from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -35,8 +36,6 @@ __all__ = [
     "save_global_config",
 ]
 
-# ── Provider metadata ──────────────────────────────────────────────
-
 PROVIDER_CONFIGS: dict[str, dict[str, str | None]] = {
     "deepseek": {
         "base_url": "https://api.deepseek.com",
@@ -59,6 +58,8 @@ PROVIDER_CONFIGS: dict[str, dict[str, str | None]] = {
 DEFAULT_PROVIDER = "deepseek"
 DEFAULT_MODEL = "deepseek-chat"
 
+GLOBAL_CONFIG_DISPLAY_PATH: str = "~/.mementic/config.json"
+
 
 def get_provider_config(provider: str) -> dict[str, str | None]:
     """Return provider config dict, raising KeyError if unknown.
@@ -80,9 +81,6 @@ def get_provider_config(provider: str) -> dict[str, str | None]:
         )
         raise ValueError(msg)
     return PROVIDER_CONFIGS[provider]
-
-
-# ── Source models ──────────────────────────────────────────────────
 
 
 class AdrDirSource(BaseModel):
@@ -164,6 +162,7 @@ class LLMConfig(BaseModel):
     provider: str = DEFAULT_PROVIDER
     model: str = DEFAULT_MODEL
     extraction_model: str = DEFAULT_MODEL
+    extraction_mode: Literal["auto", "deterministic", "llm"] = "auto"
 
     @model_validator(mode="after")
     def _validate_provider(self: LLMConfig) -> LLMConfig:
@@ -212,7 +211,7 @@ class LLMConfig(BaseModel):
                 f"Mementic requires an API key for provider '{self.provider}'.\n"
                 f"  Set the environment variable: {env_var}\n"
                 f"  Example: export {env_var}=\"your-key-here\"\n\n"
-                f"  Or switch to a different provider in ~/.mementic/config.json:\n"
+                f"  Or switch to a different provider in {GLOBAL_CONFIG_DISPLAY_PATH}:\n"
                 f"  {{ \"llm\": {{ \"provider\": \"ollama\" }} }} (local, no key needed)\n"
                 f"  {{ \"llm\": {{ \"provider\": \"openai\", \"model\": \"gpt-4o\" }} }}"
             )
@@ -229,66 +228,69 @@ class MementicConfig(BaseModel):
     llm: LLMConfig = Field(default_factory=LLMConfig)
 
 
-def load_config(path: str = ".mementic.json") -> MementicConfig:
-    """Load and validate config from a JSON file, merging global overrides.
+def load_config(repo_path: str | None = None, project: str | None = None) -> MementicConfig:
+    """Assemble MementicConfig from global config + repo entry.
 
-    If no explicit path is given, checks the MEMENTIC_CONFIG environment
-    variable first, then falls back to .mementic.json.
-
-    When the per-repo config is missing ``llm`` or ``sessions`` sections,
-    the values from ``~/.mementic/config.json`` (the global config) are
-    used as fallbacks.  This allows migrating shared configuration out of
-    per-repo files without breaking existing setups.
+    Sources come from the RepoEntry matching repo_path in the global
+    config. LLM and sessions come from the global config.
 
     Args:
-        path: Path to the JSON configuration file. If the default
-            (".mementic.json") and MEMENTIC_CONFIG is set, that variable
-            is used instead.
+        repo_path: Path to the repository root. When None or not matching
+            a registered repo, returns defaults with empty sources.
+        project: Optional project name to resolve within.
 
     Returns:
-        A validated MementicConfig instance. Returns defaults for missing fields
-        or when the file does not exist.
-
-    Raises:
-        ValidationError: If the JSON file contains invalid field types, values,
-            or an unknown LLM provider.
+        A composed MementicConfig.
     """
-    # Respect MEMENTIC_CONFIG env var when no explicit path given
-    if path == ".mementic.json":
-        path = os.environ.get("MEMENTIC_CONFIG", path)
-
-    config_file = Path(path)
-    if not config_file.is_file():
-        return MementicConfig()
-
-    try:
-        data = json.loads(config_file.read_text(encoding="utf-8"))
-    except json.JSONDecodeError:
-        sys.stderr.write(
-            f"Config file {config_file} is corrupt. "
-            "Run 'mementic init' to regenerate.\n"
-        )
-        return MementicConfig()
-
-    config = MementicConfig.model_validate(data)
-
-    # Merge global fallbacks for missing shared sections
-    if data.get("llm") and data.get("sessions"):
-        return config  # both present — no merge needed
     try:
         global_cfg = load_global_config()
     except Exception:
-        return config  # global config unavailable, use what we have
+        return MementicConfig()
 
-    if not data.get("llm"):
-        config.llm = global_cfg.llm
-    if not data.get("sessions"):
-        config.sessions = global_cfg.sessions
+    if repo_path is None:
+        return MementicConfig(
+            llm=global_cfg.llm,
+            sessions=global_cfg.sessions,
+        )
 
-    return config
+    try:
+        resolved_repo = Path(repo_path).resolve()
+    except (OSError, ValueError):
+        return MementicConfig(
+            llm=global_cfg.llm,
+            sessions=global_cfg.sessions,
+        )
+
+    # Choose which projects to search
+    if project is not None:
+        proj_entries = global_cfg.projects.get(project)
+        if proj_entries is None:
+            return MementicConfig(
+                llm=global_cfg.llm,
+                sessions=global_cfg.sessions,
+            )
+        projects_to_search = [(project, proj_entries)]
+    else:
+        projects_to_search = list(global_cfg.projects.items())
+
+    for _proj_name, proj_entry in projects_to_search:
+        for repo_entry in proj_entry.repos.values():
+            try:
+                if Path(repo_entry.path).resolve() == resolved_repo:
+                    return MementicConfig(
+                        sources=repo_entry.sources,
+                        llm=global_cfg.llm,
+                        sessions=global_cfg.sessions,
+                    )
+            except (OSError, ValueError):
+                continue
+
+    return MementicConfig(
+        llm=global_cfg.llm,
+        sessions=global_cfg.sessions,
+    )
 
 
-# ── Global config models ──────────────────────────────────────────────
 
 
 class RepoEntry(BaseModel):
@@ -301,6 +303,7 @@ class RepoEntry(BaseModel):
 
     path: str
     label: str = ""
+    sources: Sources = Field(default_factory=Sources)
 
 
 class ProjectEntry(BaseModel):
@@ -324,7 +327,7 @@ class GlobalConfig(BaseModel):
     This file defines named projects, each with its own database and
     registered repos.  It also holds shared configuration (LLM provider,
     session discovery) that was previously duplicated across per-repo
-    ``.mementic.json`` files.
+    config files.
 
     Attributes:
         version: Schema version of the config file.
@@ -346,7 +349,6 @@ class GlobalConfig(BaseModel):
     sessions: SessionsConfig = Field(default_factory=SessionsConfig)
 
 
-# ── Global config I/O ────────────────────────────────────────────────
 
 
 def get_global_config_path() -> Path:
@@ -376,17 +378,19 @@ def has_global_config() -> bool:
 def load_global_config() -> GlobalConfig:
     """Load the global project config from ``~/.mementic/config.json``.
 
-    If the file does not exist, a default ``GlobalConfig`` with a
-    single ``"main"`` project is returned.  Corrupt JSON produces a
-    warning on stderr and also falls back to the default.
+    If the file does not exist, a default ``GlobalConfig`` with no
+    projects is returned.  Corrupt JSON produces a warning on stderr
+    and also falls back to the default.
 
     Returns:
         A validated ``GlobalConfig`` instance.
 
     Raises:
+        ValueError: If the config file exists but contains an empty
+            ``projects`` dict — this indicates a manual editing mistake
+            and must not be silently overwritten.
         pydantic.ValidationError: If the file contains valid JSON but
-            invalid field types or values (e.g. an empty ``projects``
-            dict after ``mementic init`` has been run).
+            invalid field types or values.
     """
     config_path = get_global_config_path()
     if not config_path.is_file():
@@ -401,7 +405,16 @@ def load_global_config() -> GlobalConfig:
         )
         return _default_global_config()
 
-    return GlobalConfig.model_validate(data)
+    config = GlobalConfig.model_validate(data)
+
+    if not config.projects:
+        raise ValueError(
+            f"Config file {config_path} has an empty 'projects' dict. "
+            "If you edited the file manually, restore a valid project entry "
+            "or delete the file and run 'mementic init' to regenerate."
+        )
+
+    return config
 
 
 def save_global_config(config: GlobalConfig) -> None:

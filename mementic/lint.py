@@ -110,8 +110,6 @@ def lint(graph: GraphStore) -> LintResult:
     """
     findings: list[LintFinding] = []
 
-    # ── Rule: orphaned-constraint (warning) ──
-    # Constraint with no enforcing decision
     decision_ids = _get_decision_node_ids(graph)
     for cid, constraint in _get_constraint_nodes(graph):
         if constraint.enforced_by and constraint.enforced_by not in decision_ids:
@@ -126,8 +124,6 @@ def lint(graph: GraphStore) -> LintResult:
                 related_id=constraint.enforced_by,
             ))
 
-    # ── Rule: unlinked-decision (warning) ──
-    # Decision with no affected entities (no outgoing edges)
     for nid in decision_ids:
         if not graph.has_outgoing_edges(nid):
             findings.append(LintFinding(
@@ -137,8 +133,6 @@ def lint(graph: GraphStore) -> LintResult:
                 node_id=nid,
             ))
 
-    # ── Rule: stale-entity (info) ──
-    # Entity referencing a deleted file
     entity_ids = _get_entity_ids(graph)
     for eid in entity_ids:
         # Only check FILE-type entities (skip CLASS, FUNCTION, MODULE)
@@ -151,8 +145,6 @@ def lint(graph: GraphStore) -> LintResult:
                 node_id=eid,
             ))
 
-    # ── Rule: status-inconsistency (warning) ──
-    # Deprecated decision with active constraints
     for nid, ntype, payload in graph.iter_nodes():
         if ntype != "Decision":
             continue
@@ -173,8 +165,6 @@ def lint(graph: GraphStore) -> LintResult:
                     related_id=cid,
                 ))
 
-    # ── Rule: orphaned-entity (info) ──
-    # Entity with no incoming edges
     for eid in entity_ids:
         has_incoming = False
         for _, target, _ in graph.iter_edges():

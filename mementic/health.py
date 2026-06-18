@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
@@ -42,12 +41,11 @@ def check_health(graph: GraphStore | None = None) -> list[HealthItem]:
     """
     items: list[HealthItem] = []
 
-    # 1. Config check (project-aware: global config or legacy)
+    # 1. Config check (project-aware: global config)
     from mementic.config import get_global_config_path
 
     global_config = get_global_config_path()
-    legacy_config = Path(".mementic.json")
-    if global_config.exists() or legacy_config.exists():
+    if global_config.exists():
         items.append(HealthItem(label="Config", status="ok"))
     else:
         items.append(
@@ -78,7 +76,7 @@ def check_health(graph: GraphStore | None = None) -> list[HealthItem]:
             HealthItem(
                 label="API key",
                 status="fail",
-                hint="not set. Set MEMENTIC_API_KEY in env or ~/.mementic/config.json",
+                hint="not set. Mementic runs in deterministic mode with reduced extraction quality. Set a key in ~/.mementic/config.json for full quality, or continue as-is.",
             )
         )
 
