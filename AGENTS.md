@@ -6,6 +6,9 @@ This is a Python project.
 
 This project dogfoods Mementic as its own architectural memory layer. These rules
 are not optional. They apply to **every task, every session, no exceptions.**
+"Task" means ANY user request — including questions, exploration, planning,
+code review, and informational queries. There are no read-only exceptions.
+If you are about to read files or search code, you need context first.
 
 The context pack replaces reading **ADRs, specs, and instruction files** — it
 tells you WHAT rules exist. It does NOT replace reading the **code you are about
@@ -26,6 +29,11 @@ that is the token waste the graph eliminates.
    that violates an active constraint.
 5. Only read raw ADR or instruction files if the context pack leaves
    ambiguity you must resolve to proceed safely.
+
+**You may NOT skip these steps by classifying a task as "read-only", "quick",
+or "informational". The context pack exists precisely so you don't waste tokens
+reading raw files to understand what rules apply. Skipping it defeats the
+purpose.**
 
 **If the context pack fails:** State the error explicitly, fall back to
 targeted reads only (grep first, read specific sections), and report the

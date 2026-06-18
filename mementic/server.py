@@ -28,7 +28,15 @@ from mementic.models import (
     MetricsEntry,
 )
 
-mcp = FastMCP("Mementic")
+_INSTRUCTIONS = """\
+Mementic is an architectural memory layer. Before ANY task, you MUST call \
+`mementic_get_task_context` with the task description and affected files. \
+"Task" means ANY user request — questions, exploration, planning, and \
+informational queries are NOT exempt. Output the sufficiency gate before \
+proceeding. Do NOT read files or search code without calling this tool first.\
+"""
+
+mcp = FastMCP("Mementic", instructions=_INSTRUCTIONS)
 
 
 def _load_graph(project: str | None = None) -> tuple[GraphStore, MementicConfig]:
