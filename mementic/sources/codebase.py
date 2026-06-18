@@ -94,8 +94,10 @@ _CONFIG_FILES: tuple[str, ...] = (
 )
 
 _MAX_DIR_DEPTH = 4
-_PER_MD_FILE_CAP = 2000
-_TOTAL_MD_BUDGET = 5000
+_PER_MD_FILE_CAP = 2000  # tight — LLM path in scan_codebase_structure
+_TOTAL_MD_BUDGET = 5000  # tight — LLM path in scan_codebase_structure
+_DET_PER_FILE_CAP = 10000  # generous — deterministic extraction has no LLM cost
+_DET_CHAR_BUDGET = 250000  # generous — deterministic extraction has no LLM cost
 
 
 def _is_ignored_dir(name: str) -> bool:
@@ -444,7 +446,7 @@ def scan_codebase_structure(repo_path: str) -> str:
     return "\n".join(parts)
 
 
-def collect_markdown_files(repo_path: str, char_budget: int = 250000, per_file_cap: int = 10000) -> list[tuple[str, str]]:
+def collect_markdown_files(repo_path: str, char_budget: int = _DET_CHAR_BUDGET, per_file_cap: int = _DET_PER_FILE_CAP) -> list[tuple[str, str]]:
     """Collect all markdown files from repo, sorted by signal score descending.
 
     Scans the entire repo for .md files using the same directory filtering
