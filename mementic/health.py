@@ -6,7 +6,6 @@ No network calls. No LLM cost. All checks are presence-only.
 
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
@@ -62,13 +61,13 @@ def check_health(
             )
         )
 
-    # 2. API key check (presence only — no validation call)
-    api_key = (
-        os.environ.get("MEMENTIC_API_KEY")
-        or os.environ.get("DEEPSEEK_API_KEY")
-        or os.environ.get("OPENAI_API_KEY")
-        or os.environ.get("OPENROUTER_API_KEY")
-    )
+    # 2. API key check (via keyring → env fallback)
+    try:
+        from mementic.config import load_global_config
+        cfg = load_global_config()
+        api_key = cfg.llm.get_api_key()
+    except Exception:
+        api_key = None
     if api_key:
         items.append(
             HealthItem(

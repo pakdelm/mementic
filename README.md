@@ -34,31 +34,31 @@ uv sync
 Mementic supports LLM-based extraction for richer results. Without an API
 key, it runs in deterministic mode (reduced quality). Supported providers:
 
-| Provider | Set env var | Model example |
+| Provider | Key stored in | Model example |
 |---|---|---|
-| DeepSeek (default) | `DEEPSEEK_API_KEY` | `deepseek-chat` |
-| OpenAI | `OPENAI_API_KEY` | `gpt-4o` |
-| OpenRouter | `OPENROUTER_API_KEY` | `openai/gpt-4o` |
-| Ollama (local) | none | `llama3` |
+| DeepSeek (default) | OS keyring / `DEEPSEEK_API_KEY` | `deepseek-chat` |
+| OpenAI | OS keyring / `OPENAI_API_KEY` | `gpt-4o` |
+| OpenRouter | OS keyring / `OPENROUTER_API_KEY` | `openai/gpt-4o` |
+| Ollama (local) | none required | `llama3` |
+
+**Interactive setup (recommended):** `mementic init` prompts for provider,
+model, and API key. The key is stored in your OS keychain (Windows Credential
+Locker, macOS Keychain, Linux Secret Service) — never in a file.
 
 ```bash
-# DeepSeek (default) — pass inline to avoid persisting in your shell
-DEEPSEEK_API_KEY="sk-..." mementic init
+mementic init           # first-time setup, prompts for key
+mementic init --key     # rotate an existing key
+```
 
-# Or export for the current session
+**CI / headless environments:** set the environment variable for your provider.
+
+```bash
 export DEEPSEEK_API_KEY="sk-..."
-```
-```pwsh
-# PowerShell
-$env:DEEPSEEK_API_KEY="sk-..."; mementic init
-```
-```bat
-:: cmd.exe
-cmd /c "set DEEPSEEK_API_KEY=sk-... && mementic init"
+mementic init
 ```
 
-If the API key is missing or invalid, mementic exits immediately with a clear error
-naming the required environment variable. No silent fallback.
+If no API key is available from keyring or env, mementic exits with a clear
+error naming the required environment variable and suggesting `mementic init --key`.
 
 ## Quick start
 
@@ -221,7 +221,7 @@ no manual review step.
 
 | Command | Description |
 |---|---|
-| `mementic init [--repo PATH] [--no-scan] [--interactive] [--project NAME]` | Initialize graph from configured sources |
+| `mementic init [--repo PATH] [--no-scan] [--interactive] [--key] [--project NAME]` | Initialize graph from configured sources |
 | `mementic capture [--session PATH] [--notes TEXT] [--tail N] [-k KEYWORD]` | Extract decisions from session (auto-resolves: new/skip/update) |
 | `mementic context --task TEXT --files FILE... [--prefix]` | Generate context pack with relevant constraints and decisions |
 | `mementic query [--entity PATH] [--search TERM] [--depth N]` | Search graph |
