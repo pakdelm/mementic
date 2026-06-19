@@ -221,14 +221,24 @@ class LLMConfig(BaseModel):
             key: The API key string to store.
 
         Raises:
-            RuntimeError: If the provider does not require a key (e.g. ollama).
+            RuntimeError: If the provider does not require a key (e.g. ollama),
+                or if the keyring backend is unavailable.
         """
         env_var = self.key_env_var
         if env_var is None:
             raise RuntimeError(
                 f"Provider '{self.provider}' does not require an API key."
             )
-        keyring.set_password(self._KEYRING_SERVICE, self.provider, key)
+        try:
+            keyring.set_password(self._KEYRING_SERVICE, self.provider, key)
+        except Exception:
+            raise RuntimeError(
+                f"Failed to store API key in OS keyring for provider "
+                f"'{self.provider}'. The keyring backend may be unavailable.\n"
+                f"\n"
+                f"  Set the environment variable instead:\n"
+                f"    export {env_var}=\"your-key-here\"\n"
+            )
 
     def ensure_api_key(self) -> str:
         """Return the API key or raise a clear error message.

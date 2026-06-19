@@ -9,7 +9,7 @@ from typing import Any, TYPE_CHECKING
 import typer
 from pydantic import ValidationError
 
-from mementic.config import (  # noqa: E402
+from mementic.config import (
     PROVIDER_CONFIGS,
     GLOBAL_CONFIG_DISPLAY_PATH,
     GlobalConfig,
@@ -21,7 +21,7 @@ from mementic.config import (  # noqa: E402
     resolve_project,
     save_global_config,
 )
-from mementic.format import (  # noqa: E402
+from mementic.format import (
     CONTEXT_PACK_DEFAULT_MAX_CONSTRAINT_TOKENS,
     CONTEXT_PACK_DEFAULT_MAX_DECISION_TOKENS,
     MMR_DEFAULT_LAMBDA,
@@ -33,14 +33,14 @@ from mementic.format import (  # noqa: E402
     format_context_pack,
     timestamp,
 )
-from mementic.graph import GraphStore  # noqa: E402
-from mementic.models import CodeEntity, Constraint, Decision, DecisionStatus, EntityType, MetricsEntry  # noqa: E402
-from mementic.pipeline import _extract_session, run_init  # noqa: E402
-from mementic.conflict import auto_resolve_capture  # noqa: E402
-from mementic.metrics import UsageStore  # noqa: E402
-from mementic.sources.adr import scan_adr_dir  # noqa: E402
-from mementic.sources.opencode import scan_opencode_instructions  # noqa: E402
-from mementic.inject import (  # noqa: E402
+from mementic.graph import GraphStore
+from mementic.models import CodeEntity, Constraint, Decision, DecisionStatus, EntityType, MetricsEntry
+from mementic.pipeline import _extract_session, run_init
+from mementic.conflict import auto_resolve_capture
+from mementic.metrics import UsageStore
+from mementic.sources.adr import scan_adr_dir
+from mementic.sources.opencode import scan_opencode_instructions
+from mementic.inject import (
     _AGENT_MARKERS,
     detect_agents,
     get_mcp_config_file,
@@ -83,7 +83,6 @@ def _populate_session_defaults(global_cfg: Any) -> None:
     agent — preserves user overrides on subsequent ``mementic init`` runs.
     """
     import importlib
-    import sys
     system = sys.platform  # "win32" / "linux" / "darwin" — matches DEFAULT_*_PATHS keys
     updated = False
 
@@ -334,7 +333,7 @@ def init(
         except ValueError:
             project_db_path = None
 
-    # ── API key setup via OS keyring ────────────────────────────
+    # API key setup via OS keyring
     global_cfg = load_global_config()
     api_key = global_cfg.llm.get_api_key()
 
@@ -406,7 +405,7 @@ def init(
                 save_global_config(global_cfg)
                 typer.echo(f"Saved to {GLOBAL_CONFIG_DISPLAY_PATH}")
 
-    # ── Populate session log_dirs from provider defaults ─────────
+    # Populate session log_dirs from provider defaults
     # Ensures the config shows default paths for all supported agents so
     # users can see and override them.  Only writes when config currently
     # has empty log_dirs (preserves user overrides on subsequent runs).
