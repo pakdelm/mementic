@@ -25,7 +25,7 @@ from mementic.config import (  # noqa: E402
     resolve_project,
     save_global_config,
 )
-from mementic.format import count_tokens, detect_repo_path, format_context_pack, timestamp  # noqa: E402
+from mementic.format import count_tokens, detect_repo_path, extract_task_keywords, format_context_pack, timestamp  # noqa: E402
 from mementic.graph import GraphStore  # noqa: E402
 from mementic.models import CodeEntity, Constraint, Decision, DecisionStatus, EntityType, MetricsEntry  # noqa: E402
 from mementic.pipeline import _extract_session, run_init  # noqa: E402
@@ -690,10 +690,6 @@ def capture(
 @app.command()
 def context(
     task: str,
-    files: list[str],
-    prefix: bool = typer.Option(
-        False, "--prefix", help="Enable prefix matching for namespace queries (e.g. 'mementic/')"
-    ),
     project: str | None = typer.Option(
         None, "--project",
         help="Target project name",
@@ -701,18 +697,20 @@ def context(
 ) -> None:
     """Load constraints and produce a context pack for a given task.
 
-    Queries the knowledge graph for constraints and decisions relevant to
-    the specified files, then formats them as a context pack for agent injection.
+    Extracts keywords from the task description and ranks constraints by
+    relevance (keyword overlap * specificity).  No file arguments needed —
+    the task description is the sole retrieval signal.
     """
     graph, _cfg = _resolve_graph(project)
     graph.clean_dead_references()
 
-    constraints = graph.get_constraints_for_entities(
-        files, prefix_match=prefix, annotate_overlap=True
-    )
-    decisions = graph.get_decisions_for_entities(files, annotate_overlap=True)
+    constraints = graph.get_all_active_constraints()
+    decisions = graph.get_all_active_decisions()
+    task_keywords = extract_task_keywords(task)
 
-    output = format_context_pack(task, decisions, constraints)
+    output = format_context_pack(
+        task, decisions, constraints, task_keywords=task_keywords,
+    )
     typer.echo(output)
 
 

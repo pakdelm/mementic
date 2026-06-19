@@ -201,8 +201,8 @@ class TestRankAndTruncate:
 
 class TestFormatContextPack:
     def test_produces_expected_structure(self) -> None:
-        decisions = [d(make_decision())]
-        constraints = [c(make_constraint())]
+        decisions = [make_decision()]
+        constraints = [make_constraint()]
 
         output = format_context_pack("Add async support", decisions, constraints)
 
@@ -222,7 +222,7 @@ class TestFormatContextPack:
         assert "_None_" in output
 
     def test_with_only_decisions(self) -> None:
-        decisions = [d(make_decision(title="Use pydantic"))]
+        decisions = [make_decision(title="Use pydantic")]
         output = format_context_pack("Task", decisions, [])
 
         assert "### Constraints (MUST follow)" in output
@@ -231,7 +231,7 @@ class TestFormatContextPack:
         assert "- Better performance (#d-001)" in output
 
     def test_with_only_constraints(self) -> None:
-        constraints = [c(make_constraint(description="Must use type hints"))]
+        constraints = [make_constraint(description="Must use type hints")]
         output = format_context_pack("Task", [], constraints)
 
         assert "### Constraints (MUST follow)" in output
@@ -241,7 +241,7 @@ class TestFormatContextPack:
 
     def test_compact_format_no_c_prefix(self) -> None:
         """Compact format drops the [C] prefix."""
-        constraints = [c(make_constraint(description="Must use double quotes"))]
+        constraints = [make_constraint(description="Must use double quotes")]
         output = format_context_pack("Task", [], constraints)
 
         assert "[C]" not in output
@@ -249,7 +249,7 @@ class TestFormatContextPack:
 
     def test_compact_format_no_enforced_by(self) -> None:
         """Compact format drops (enforced by: X)."""
-        constraints = [c(make_constraint(description="A test rule", enforced_by="dec-42"))]
+        constraints = [make_constraint(description="A test rule", enforced_by="dec-42")]
         output = format_context_pack("Task", [], constraints)
 
         assert "enforced by" not in output
@@ -257,7 +257,7 @@ class TestFormatContextPack:
 
     def test_compact_format_no_decision_title_date(self) -> None:
         """Compact decision format drops title and date."""
-        decisions = [d(make_decision(title="Pick DB", rationale="Chose PostgreSQL"))]
+        decisions = [make_decision(title="Pick DB", rationale="Chose PostgreSQL")]
         output = format_context_pack("Task", decisions, [])
 
         assert "Pick DB" not in output
@@ -267,11 +267,11 @@ class TestFormatContextPack:
     def test_compact_format_no_rejected_alternatives(self) -> None:
         """Compact decision format drops Rejected lines."""
         decisions = [
-            d(make_decision(
+            make_decision(
                 title="Pick DB",
                 rationale="Chose PostgreSQL",
                 rejected=["SQLite", "MongoDB"],
-            ))
+            )
         ]
         output = format_context_pack("Task", decisions, [])
 
@@ -280,12 +280,12 @@ class TestFormatContextPack:
 
     def test_multiple_items(self) -> None:
         decisions = [
-            d(make_decision(id="d-1", rationale="First decision"), 2),
-            d(make_decision(id="d-2", rationale="Second decision"), 1),
+            make_decision(id="d-1", rationale="First decision"),
+            make_decision(id="d-2", rationale="Second decision"),
         ]
         constraints = [
-            c(make_constraint(id="c-1", description="Constraint 1"), 3),
-            c(make_constraint(id="c-2", description="Constraint 2"), 2),
+            make_constraint(id="c-1", description="Constraint 1"),
+            make_constraint(id="c-2", description="Constraint 2"),
         ]
         output = format_context_pack("Multi", decisions, constraints)
 
@@ -297,7 +297,7 @@ class TestFormatContextPack:
     def test_omission_note_constraints(self) -> None:
         """When constraints are truncated, an omission note is shown."""
         constraints = [
-            c(make_constraint(id=f"c-{i}", description=f"Constraint {i}"), 1)
+            make_constraint(id=f"c-{i}", description=f"Constraint {i}")
             for i in range(1, 20)
         ]
         output = format_context_pack(
@@ -308,7 +308,7 @@ class TestFormatContextPack:
     def test_omission_note_decisions(self) -> None:
         """When decisions are truncated, an omission note is shown."""
         decisions = [
-            d(make_decision(id=f"d-{i}", rationale=f"Rationale {i}"), 1)
+            make_decision(id=f"d-{i}", rationale=f"Rationale {i}")
             for i in range(1, 20)
         ]
         output = format_context_pack(
@@ -319,7 +319,7 @@ class TestFormatContextPack:
     def test_no_omission_note_when_all_fit(self) -> None:
         """No omission note when all items fit within the token budget."""
         constraints = [
-            c(make_constraint(id="c-1", description="Only one"), 1)
+            make_constraint(id="c-1", description="Only one")
         ]
         output = format_context_pack(
             "Task", [], constraints, max_tokens=9999
@@ -329,7 +329,7 @@ class TestFormatContextPack:
     def test_omission_note_when_all_omitted(self) -> None:
         """When ALL items are omitted due to tiny budget, italic note is shown."""
         constraints = [
-            c(make_constraint(id="c-1", description="A somewhat long description"), 1)
+            make_constraint(id="c-1", description="A somewhat long description")
         ]
         output = format_context_pack(
             "Task", [], constraints, max_tokens=1  # impossibly small
@@ -340,11 +340,11 @@ class TestFormatContextPack:
         """Constraints are filled first; decisions get remaining budget."""
         # Many constraints consume most of the budget
         constraints = [
-            c(make_constraint(id=f"c-{i}", description=f"Constraint {i}"), 1)
+            make_constraint(id=f"c-{i}", description=f"Constraint {i}")
             for i in range(1, 10)
         ]
         decisions = [
-            d(make_decision(id=f"d-{i}", rationale=f"Rationale {i}"), 1)
+            make_decision(id=f"d-{i}", rationale=f"Rationale {i}")
             for i in range(1, 10)
         ]
         output = format_context_pack(

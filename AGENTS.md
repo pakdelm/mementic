@@ -18,8 +18,9 @@ that is the token waste the graph eliminates.
 
 **After EVERY user message** (not just "before a task" — each message is a new
 context window):
-1. Call `mementic_get_task_context` with the current task description and ALL
-   files you intend to touch — even new files, even speculative changes.
+1. Call `mementic_get_task_context` with a clear task description describing
+   what you are about to do. Be specific about the domain, action, and
+   concerns (e.g., "fix authentication bug in login flow" not just "fix bug").
 2. **Sufficiency gate — output these two lines before any further reads:**
    1. `Context pack says:` — 1-2 sentence summary (or "returned nothing relevant").
    2. `Files I still need to read and why:` — every code file you will open,

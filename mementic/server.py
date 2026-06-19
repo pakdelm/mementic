@@ -12,6 +12,7 @@ from mementic.format import (
     CONSTRAINT_ID_MAX_LENGTH,
     count_tokens,
     detect_repo_path,
+    extract_task_keywords,
     format_context_pack,
     format_evolution,
     slugify,
@@ -30,13 +31,14 @@ from mementic.models import (
 
 _INSTRUCTIONS = """\
 Mementic is an architectural memory layer. After EVERY user message (not just \
-"before a task"), you MUST call `mementic_get_task_context` with the task \
-description and affected files. Each user message is a new context window — \
-do NOT assume previous context is still valid. Context packs are free (SQLite \
-reads, no LLM). "Task" means ANY user request — questions, exploration, \
-planning, and informational queries are NOT exempt. Output the sufficiency \
-gate before proceeding. Do NOT read files or search code without calling \
-this tool first.\
+"before a task"), you MUST call `mementic_get_task_context` with a clear task \
+description describing what you are about to do. Be specific about the domain, \
+action, and concerns (e.g., "fix authentication bug in login flow" not just \
+"fix bug"). Each user message is a new context window — do NOT assume previous \
+context is still valid. Context packs are free (SQLite reads, no LLM). "Task" \
+means ANY user request — questions, exploration, planning, and informational \
+queries are NOT exempt. Output the sufficiency gate before proceeding. Do NOT \
+read files or search code without calling this tool first.\
 """
 
 mcp = FastMCP("Mementic", instructions=_INSTRUCTIONS)
@@ -89,9 +91,7 @@ def _save_graph(graph: GraphStore, cfg: MementicConfig) -> None:
 @mcp.tool()
 async def get_task_context(
     task_description: str,
-    affected_files: list[str],
     project: str | None = None,
-    prefix_match: bool = False,
     max_tokens: int = 1500,
 ) -> str:
     """Return all relevant Decisions and Constraints for a given task.
@@ -102,27 +102,26 @@ async def get_task_context(
 
     Args:
         task_description: Description of the task being started.
-        affected_files: List of file paths that will be affected.
         project: Optional project name to target.  When ``None``,
             auto-resolution is attempted.
-        prefix_match: If True, use prefix matching for entity paths
-            (e.g. directory-level) instead of exact match.
         max_tokens: Maximum token budget for the constraint + decision lines.
-            Defaults to 1000.
 
     Returns:
         Formatted markdown with relevant architectural context.
     """
     graph, cfg = _load_graph(project)
     graph.clean_dead_references()
-    constraints = graph.get_constraints_for_entities(
-        affected_files, prefix_match=prefix_match, annotate_overlap=True
-    )
-    decisions = graph.get_decisions_for_entities(
-        affected_files, prefix_match=prefix_match, annotate_overlap=True
+    constraints = graph.get_all_active_constraints()
+    decisions = graph.get_all_active_decisions()
+    task_keywords = extract_task_keywords(
+        task_description,
+        top=cfg.constraints.yake_top_k,
+        n=cfg.constraints.yake_ngram,
     )
     pack_text = format_context_pack(
-        task_description, decisions, constraints, max_tokens=max_tokens
+        task_description, decisions, constraints,
+        max_tokens=max_tokens, task_keywords=task_keywords,
+        mmr_lambda=cfg.constraints.mmr_lambda,
     )
     pack_tokens = count_tokens(pack_text)
     entry = MetricsEntry(

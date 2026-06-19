@@ -7,8 +7,9 @@ informational queries. There are no read-only exceptions. If you are
 about to read files or search code, you need context first.
 
 **Before ANY task** (planning, implementation, refactoring, or review):
-1. Call `mementic_get_task_context` with the task description and ALL files
-   you intend to touch — even new files, even speculative changes.
+1. Call `mementic_get_task_context` with a clear task description describing
+   what you are about to do. Be specific about the domain, action, and
+   concerns (e.g., "fix authentication bug in login flow" not just "fix bug").
 2. **Sufficiency gate — output these two lines before any further reads:**
    - `Context pack says:` — 1-2 sentence summary (or "returned nothing relevant").
    - `Files I still need to read and why:` — each with one-clause justification.

@@ -210,6 +210,168 @@ def _compact_evolution_line(d: Decision) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Keyword extraction & scoring (Zero-LLM, Spec 14)
+# ---------------------------------------------------------------------------
+
+
+def extract_task_keywords(
+    task_description: str,
+    *,
+    top: int = 10,
+    n: int = 3,
+) -> list[str]:
+    """Extract scored keywords from a task description using yake.
+
+    Uses yake's statistical features (word position, frequency, casing,
+    sentence context) to identify the most salient terms.  No LLM calls,
+    no model downloads — pure unsupervised keyword extraction.
+
+    Args:
+        task_description: The agent's task description string.
+        top: Maximum number of keywords to extract.
+        n: Maximum n-gram size for keyword extraction.
+
+    Returns:
+        List of keyword strings, ordered by relevance (most relevant first).
+        Empty list for empty input.
+    """
+    if not task_description.strip():
+        return []
+
+    import yake
+
+    extractor = yake.KeywordExtractor(
+        lan="en",
+        n=n,  # max ngram size — captures "auth bug fix", "csrf token"
+        dedupLim=0.9,  # deduplication threshold for similar keywords
+        dedupFunc="seqm",  # sequence matcher deduplication
+        windowsSize=1,  # context window
+        top=top,  # number of keywords
+    )
+    keywords_with_scores = extractor.extract_keywords(task_description)
+    # yake returns (keyword, score) — lower score = more relevant
+    return [kw for kw, _score in keywords_with_scores]
+
+
+def keyword_overlap_score(
+    constraint_description: str,
+    task_keywords: list[str],
+) -> float:
+    """Score a constraint by binary keyword overlap with the task description.
+
+    For each task keyword, checks if it appears as a whole-word or
+    word-beginning match in the constraint description.  Uses ``\\b``
+    word-boundary matching to avoid false positives: "test" matches
+    "testing flow" but NOT "contest results".
+
+    Args:
+        constraint_description: The constraint's description text.
+        task_keywords: Keywords extracted from the task description.
+
+    Returns:
+        Score in [0, 1].  0 = no overlap, 1 = all keywords match.
+        Returns 0.0 when task_keywords is empty.
+    """
+    if not task_keywords:
+        return 0.0
+
+    desc_lower = constraint_description.lower()
+    matched = 0
+    for kw in task_keywords:
+        kw_lower = kw.lower()
+        # ``\\b`` anchor: keyword must start at a word boundary so "auth"
+        # matches "authentication" but NOT "reauth".
+        if re.search(rf"\b{re.escape(kw_lower)}", desc_lower):
+            matched += 1
+    return matched / len(task_keywords)
+
+
+def specificity_factor(bound_entities: list[str]) -> float:
+    """Score multiplier inversely proportional to bound entity count.
+
+    1 file → 1.0x, 2 files → 0.5x, 5 files → 0.2x, 10 files → 0.1x.
+    Zero bound entities → 0.1x (penalized as maximally generic).
+
+    Args:
+        bound_entities: The constraint's bound entity list.
+
+    Returns:
+        0.1 when ``len(bound_entities) == 0``, otherwise ``1.0 / len(bound_entities)``.
+    """
+    if not bound_entities:
+        return 0.1
+    return 1.0 / len(bound_entities)
+
+
+def token_jaccard(a: str, b: str) -> float:
+    """Token-level Jaccard similarity between two strings.
+
+    Args:
+        a: First string.
+        b: Second string.
+
+    Returns:
+        ``|intersection| / |union|`` of their lowercased token sets.
+    """
+    tokens_a = set(a.lower().split())
+    tokens_b = set(b.lower().split())
+    if not tokens_a and not tokens_b:
+        return 1.0
+    if not tokens_a or not tokens_b:
+        return 0.0
+    return len(tokens_a & tokens_b) / len(tokens_a | tokens_b)
+
+
+def mmr_select(
+    scored: list[tuple[Constraint, float]],
+    max_items: int,
+    lambda_: float = 0.7,
+) -> list[tuple[Constraint, float]]:
+    """Select diverse constraints using Maximum Marginal Relevance.
+
+    MMR = λ * relevance(c) - (1-λ) * max(similarity(c, already_selected))
+
+    Args:
+        scored: List of ``(Constraint, combined_score)`` sorted descending.
+        max_items: Maximum number of items to select.
+        lambda_: Trade-off between relevance (1.0) and diversity (0.0).
+            Default 0.7 favors relevance with diversity as a tiebreak.
+
+    Returns:
+        Selected list of ``(Constraint, mmr_score)`` in selection order.
+    """
+    if not scored or max_items <= 0:
+        return []
+
+    selected: list[tuple[Constraint, float]] = []
+    remaining = list(scored)
+
+    while remaining and len(selected) < max_items:
+        best_idx = -1
+        best_mmr = -1.0
+
+        for i, (candidate, relevance) in enumerate(remaining):
+            # Similarity to already-selected items
+            if selected:
+                max_sim = max(
+                    token_jaccard(candidate.description, s.description)
+                    for s, _ in selected
+                )
+            else:
+                max_sim = 0.0
+
+            mmr_score = lambda_ * relevance - (1 - lambda_) * max_sim
+            if mmr_score > best_mmr:
+                best_mmr = mmr_score
+                best_idx = i
+
+        if best_idx >= 0:
+            selected.append(remaining.pop(best_idx))
+
+    return selected
+
+
+# ---------------------------------------------------------------------------
 # Ranking helpers
 # ---------------------------------------------------------------------------
 
@@ -287,25 +449,40 @@ def rank_and_truncate(
 
 def format_context_pack(
     task: str,
-    decisions: list[tuple[Decision, int]],
-    constraints: list[tuple[Constraint, int]],
+    decisions: list[Decision],
+    constraints: list[Constraint],
     max_tokens: int = 1500,
+    *,
+    task_keywords: list[str] | None = None,
+    mmr_lambda: float = 0.7,
 ) -> str:
     """Produces structured, token-budgeted markdown for agent context injection.
+
+    **Signature change from Spec 14:** Previously accepted
+    ``list[tuple[Decision, int]]`` and ``list[tuple[Constraint, int]]``
+    where the ``int`` was an overlap count from file-path matching.
+    With ``affected_files`` abolished, overlap counts are gone —
+    decisions and constraints are passed as plain lists.
+
+    When ``task_keywords`` is provided, constraints are ranked by keyword
+    overlap * specificity factor, then MMR-selected for diversity.
+
+    When ``task_keywords`` is ``None``, falls back to recency + status
+    ranking (backward compatible).
 
     Constraints are filled *first* against the full ``max_tokens`` budget.
     Decisions receive the remaining budget.  Both sections always appear
     (even when empty, with an omission note).
 
-    Uses compact format lines (``_compact_*_line``) to maximise information
-    density within the budget.  Items are ranked by overlap score, recency,
-    and status via :func:`rank_and_truncate`.
-
     Args:
         task: Description of the task requesting context.
-        decisions: List of ``(Decision, overlap_score)`` tuples.
-        constraints: List of ``(Constraint, overlap_score)`` tuples.
+        decisions: List of Decision objects (ranked by recency + status).
+        constraints: List of Constraint objects.
         max_tokens: Maximum token budget for the constraint + decision lines.
+        task_keywords: Keywords extracted from the task description.
+            When ``None``, constraints are ranked by recency + status.
+        mmr_lambda: MMR relevance/diversity trade-off (1.0 = pure relevance,
+            0.0 = pure diversity).  Default 0.7.
 
     Returns:
         Formatted markdown string.
@@ -313,13 +490,43 @@ def format_context_pack(
     lines = [f"## Architectural Context for: {task}"]
 
     # --- Constraints section (always present) ---
-    selected_c, shown_c, total_c = rank_and_truncate(
-        constraints, max_tokens, line_formatter=_compact_constraint_line
-    )
-    tokens_used_c = 0
-    for c in selected_c:
-        tokens_used_c += count_tokens(
-            _compact_constraint_line(c)  # type: ignore[arg-type]
+    total_c = len(constraints)
+    shown_c: int
+    selected_c: list[Constraint]
+
+    if task_keywords:
+        # Keyword-based ranking (Spec 14 primary path)
+        scored: list[tuple[Constraint, float]] = []
+        for c in constraints:
+            score = keyword_overlap_score(c.description, task_keywords)
+            score *= specificity_factor(c.bound_entities)
+            if score > 0:
+                scored.append((c, score))
+        scored.sort(key=lambda x: x[1], reverse=True)
+
+        # MMR selection — select all scored items (MMR reorders for diversity)
+        selected_tuples = mmr_select(scored, len(scored), lambda_=mmr_lambda)
+
+        # Truncate to token budget
+        selected_c = []
+        tokens_used_c = 0
+        for c, _ in selected_tuples:
+            line_tokens = count_tokens(_compact_constraint_line(c))
+            if tokens_used_c + line_tokens > max_tokens:
+                break
+            selected_c.append(c)
+            tokens_used_c += line_tokens
+        shown_c = len(selected_c)
+    else:
+        # Fallback: recency + status ranking (no keywords available)
+        constraint_tuples = [(c, 0) for c in constraints]
+        selected_c_tuples, shown_c = rank_and_truncate(
+            constraint_tuples, max_tokens,
+            line_formatter=_compact_constraint_line,
+        )[:2]
+        selected_c = selected_c_tuples  # type: ignore[assignment]
+        tokens_used_c = sum(
+            count_tokens(_compact_constraint_line(c)) for c in selected_c  # type: ignore[arg-type]
         )
 
     lines.append("")
@@ -333,7 +540,7 @@ def format_context_pack(
             )
     else:
         for c in selected_c:
-            lines.append(_compact_constraint_line(c))  # type: ignore[arg-type]
+            lines.append(_compact_constraint_line(c))
         if shown_c < total_c:
             lines.append(
                 f"... and {total_c - shown_c} more constraints omitted "
@@ -342,9 +549,14 @@ def format_context_pack(
 
     # --- Decisions section (always present) ---
     remaining = max_tokens - tokens_used_c
-    selected_d, shown_d, total_d = rank_and_truncate(
-        decisions, max(remaining, 0), line_formatter=_compact_decision_line
-    )
+    if decisions:
+        decision_tuples = [(d, 0) for d in decisions]
+        selected_d, shown_d, total_d = rank_and_truncate(
+            decision_tuples, max(remaining, 0),
+            line_formatter=_compact_decision_line,
+        )
+    else:
+        selected_d, shown_d, total_d = [], 0, 0
 
     lines.append("")
     lines.append("### Relevant Decisions")

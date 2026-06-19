@@ -12,6 +12,7 @@ from mementic.models import (
     CodeEntity,
     Constraint,
     Decision,
+    DecisionStatus,
     GraphPayload,
 )
 
@@ -691,6 +692,32 @@ class GraphStore:
             for _node_id, attrs in self._g.nodes(data=True)
             if attrs.get("node_type") == "Decision"
         ]
+
+    def get_all_active_constraints(self) -> list[Constraint]:
+        """Return all constraints with ``status == "active"``.
+
+        Filters out deprecated/superseded constraints.  Used by
+        ``get_task_context`` to provide the full active set for
+        keyword-based ranking (Spec 14).
+
+        Returns:
+            List of active Constraint objects.
+        """
+        all_c = self.get_all_constraints()
+        return [c for c in all_c if c.status == "active"]
+
+    def get_all_active_decisions(self) -> list[Decision]:
+        """Return all decisions with ``status == "accepted"``.
+
+        Filters out deprecated/rejected decisions.  Used by
+        ``get_task_context`` to provide the full accepted set for
+        relevance ranking (Spec 14).
+
+        Returns:
+            List of accepted Decision objects.
+        """
+        all_d = self.get_all_decisions()
+        return [d for d in all_d if d.status == DecisionStatus.ACCEPTED]
 
     def get_all_constraints(self) -> list[Constraint]:
         if self._conn is not None:
