@@ -300,30 +300,34 @@ class TestErrorHandling:
 
     def test_freeform_rate_limit_returns_empty(self) -> None:
         config = LLMConfig()
-        with patch("mementic.extraction.llm.get_client",
-                   return_value=self._make_raising_client(self._make_rate_limit_error())):
+        with (patch("mementic.extraction.llm.get_client",
+                   return_value=self._make_raising_client(self._make_rate_limit_error())),
+              patch("time.sleep", return_value=None)):
             output, _usage = extract_from_freeform("text", "src", config)
         assert output == ExtractionResult()
 
     def test_freeform_timeout_returns_empty(self) -> None:
         config = LLMConfig()
-        with patch("mementic.extraction.llm.get_client",
-                   return_value=self._make_raising_client(APITimeoutError(request=MagicMock()))):
+        with (patch("mementic.extraction.llm.get_client",
+                   return_value=self._make_raising_client(APITimeoutError(request=MagicMock()))),
+              patch("time.sleep", return_value=None)):
             output, _usage = extract_from_freeform("text", "src", config)
         assert output == ExtractionResult()
 
     def test_freeform_connection_error_returns_empty(self) -> None:
         config = LLMConfig()
-        with patch("mementic.extraction.llm.get_client",
-                   return_value=self._make_raising_client(APIConnectionError(request=MagicMock()))):
+        with (patch("mementic.extraction.llm.get_client",
+                   return_value=self._make_raising_client(APIConnectionError(request=MagicMock()))),
+              patch("time.sleep", return_value=None)):
             output, _usage = extract_from_freeform("text", "src", config)
         assert output == ExtractionResult()
 
     def test_freeform_api_error_returns_empty(self) -> None:
         config = LLMConfig()
-        with patch("mementic.extraction.llm.get_client",
+        with (patch("mementic.extraction.llm.get_client",
                    return_value=self._make_raising_client(
-                       APIError("err", request=MagicMock(), body=None))):
+                        APIError("err", request=MagicMock(), body=None))),
+              patch("time.sleep", return_value=None)):
             output, _usage = extract_from_freeform("text", "src", config)
         assert output == ExtractionResult()
 
@@ -360,30 +364,34 @@ class TestErrorHandling:
 
     def test_session_rate_limit_returns_empty(self) -> None:
         config = LLMConfig()
-        with patch("mementic.extraction.llm.get_client",
-                   return_value=self._make_raising_client(self._make_rate_limit_error())):
+        with (patch("mementic.extraction.llm.get_client",
+                   return_value=self._make_raising_client(self._make_rate_limit_error())),
+              patch("time.sleep", return_value=None)):
             output, _usage = extract_from_session("log", "diff", "notes", config)
         assert output == ExtractionResult()
 
     def test_session_timeout_returns_empty(self) -> None:
         config = LLMConfig()
-        with patch("mementic.extraction.llm.get_client",
-                   return_value=self._make_raising_client(APITimeoutError(request=MagicMock()))):
+        with (patch("mementic.extraction.llm.get_client",
+                   return_value=self._make_raising_client(APITimeoutError(request=MagicMock()))),
+              patch("time.sleep", return_value=None)):
             output, _usage = extract_from_session("log", "diff", "notes", config)
         assert output == ExtractionResult()
 
     def test_session_connection_error_returns_empty(self) -> None:
         config = LLMConfig()
-        with patch("mementic.extraction.llm.get_client",
-                   return_value=self._make_raising_client(APIConnectionError(request=MagicMock()))):
+        with (patch("mementic.extraction.llm.get_client",
+                   return_value=self._make_raising_client(APIConnectionError(request=MagicMock()))),
+              patch("time.sleep", return_value=None)):
             output, _usage = extract_from_session("log", "diff", "notes", config)
         assert output == ExtractionResult()
 
     def test_session_api_error_returns_empty(self) -> None:
         config = LLMConfig()
-        with patch("mementic.extraction.llm.get_client",
+        with (patch("mementic.extraction.llm.get_client",
                    return_value=self._make_raising_client(
-                       APIError("err", request=MagicMock(), body=None))):
+                        APIError("err", request=MagicMock(), body=None))),
+              patch("time.sleep", return_value=None)):
             output, _usage = extract_from_session("log", "diff", "notes", config)
         assert output == ExtractionResult()
 
@@ -420,30 +428,34 @@ class TestErrorHandling:
 
     def test_adr_consequences_rate_limit_returns_empty(self) -> None:
         config = LLMConfig()
-        with patch("mementic.extraction.llm.get_client",
-                   return_value=self._make_raising_client(self._make_rate_limit_error())):
+        with (patch("mementic.extraction.llm.get_client",
+                   return_value=self._make_raising_client(self._make_rate_limit_error())),
+              patch("time.sleep", return_value=None)):
             output, _usage = extract_from_adr_consequences("consequences", config)
         assert output == []
 
     def test_adr_consequences_timeout_returns_empty(self) -> None:
         config = LLMConfig()
-        with patch("mementic.extraction.llm.get_client",
-                   return_value=self._make_raising_client(APITimeoutError(request=MagicMock()))):
+        with (patch("mementic.extraction.llm.get_client",
+                   return_value=self._make_raising_client(APITimeoutError(request=MagicMock()))),
+              patch("time.sleep", return_value=None)):
             output, _usage = extract_from_adr_consequences("consequences", config)
         assert output == []
 
     def test_adr_consequences_connection_error_returns_empty(self) -> None:
         config = LLMConfig()
-        with patch("mementic.extraction.llm.get_client",
-                   return_value=self._make_raising_client(APIConnectionError(request=MagicMock()))):
+        with (patch("mementic.extraction.llm.get_client",
+                   return_value=self._make_raising_client(APIConnectionError(request=MagicMock()))),
+              patch("time.sleep", return_value=None)):
             output, _usage = extract_from_adr_consequences("consequences", config)
         assert output == []
 
     def test_adr_consequences_api_error_returns_empty(self) -> None:
         config = LLMConfig()
-        with patch("mementic.extraction.llm.get_client",
+        with (patch("mementic.extraction.llm.get_client",
                    return_value=self._make_raising_client(
-                       APIError("err", request=MagicMock(), body=None))):
+                        APIError("err", request=MagicMock(), body=None))),
+              patch("time.sleep", return_value=None)):
             output, _usage = extract_from_adr_consequences("consequences", config)
         assert output == []
 
@@ -1210,7 +1222,8 @@ class TestExtractFromCodebaseSummary:
             message="limit", response=MagicMock(), body=None
         )
 
-        with patch("mementic.extraction.llm.get_client", return_value=client):
+        with (patch("mementic.extraction.llm.get_client", return_value=client),
+              patch("time.sleep", return_value=None)):
             output, usage = extract_from_codebase_summary("summary", config)
 
         assert output == ExtractionResult()
@@ -1224,7 +1237,8 @@ class TestExtractFromCodebaseSummary:
             request=MagicMock()
         )
 
-        with patch("mementic.extraction.llm.get_client", return_value=client):
+        with (patch("mementic.extraction.llm.get_client", return_value=client),
+              patch("time.sleep", return_value=None)):
             output, usage = extract_from_codebase_summary("summary", config)
 
         assert output == ExtractionResult()

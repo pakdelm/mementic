@@ -213,8 +213,8 @@ def init(
     ),
     key: bool = typer.Option(
         False, "--key",
-        help="Set or rotate the API key for the configured LLM provider "
-             "(stored in OS keyring)",
+        help="Set or rotate the API key. Opens an interactive prompt to "
+             "select a provider and enter the key (stored in OS keyring).",
     ),
 ) -> None:
     """Initialize the knowledge graph from configured sources.
@@ -227,8 +227,8 @@ def init(
     before processing configured sources. Use --no-scan to skip.
 
     API keys are stored in the OS keyring (Windows Credential Locker,
-    macOS Keychain, Linux Secret Service). Use --key to set or rotate
-    the key without changing provider or model.
+    macOS Keychain, Linux Secret Service). Use --key to select a provider
+    and set or rotate the key interactively.
     """
     cwd = Path(detect_repo_path())
     cwd_resolved = str(cwd.resolve())
@@ -337,24 +337,69 @@ def init(
     global_cfg = load_global_config()
     api_key = global_cfg.llm.get_api_key()
 
-    if key and sys.stdin.isatty():
-        # --key flag: rotate/set key without changing provider
-        env_var = global_cfg.llm.key_env_var
-        if env_var is None:
+    if key:
+        # --key flag: select provider and set/rotate key interactively
+        if not sys.stdin.isatty():
             typer.echo(
-                f"Provider '{global_cfg.llm.provider}' does not require "
-                f"an API key."
+                "Error: --key requires an interactive terminal.\n"
+                "  Run 'mementic init' without --key for guided setup, or\n"
+                "  set the environment variable for your provider:\n"
+                "    export DEEPSEEK_API_KEY=\"your-key-here\"\n"
+                "    export OPENAI_API_KEY=\"your-key-here\"\n"
+                "    export OPENROUTER_API_KEY=\"your-key-here\"",
+                err=True,
             )
+            raise typer.Exit(code=1)
+
+        typer.echo()
+        typer.echo("Select an LLM provider.")
+        typer.echo(f"  {', '.join(PROVIDER_CONFIGS.keys())}")
+        typer.echo(
+            f"  Press Enter to keep current ({global_cfg.llm.provider})."
+        )
+        provider = typer.prompt("Provider", default=global_cfg.llm.provider).strip()
+
+        if provider not in PROVIDER_CONFIGS:
+            typer.echo(
+                f"Error: Unknown provider '{provider}'.\n"
+                f"  Known: {', '.join(PROVIDER_CONFIGS.keys())}",
+                err=True,
+            )
+            raise typer.Exit(code=1)
+
+        provider_cfg = PROVIDER_CONFIGS[provider]
+        env_var = provider_cfg["key_env_var"]
+
+        if env_var is None:
+            global_cfg.llm.provider = provider
+            typer.echo("Ollama runs locally — no API key needed.")
+            typer.echo("Make sure ollama is running on localhost:11434")
+            save_global_config(global_cfg)
+            typer.echo(f"Saved to {GLOBAL_CONFIG_DISPLAY_PATH}")
         else:
-            new_key = typer.prompt(
-                f"Enter {env_var}", hide_input=True, default=""
+            key_val = typer.prompt(
+                f"API key for {provider} ({env_var})",
+                hide_input=True,
+                show_default=False,
             )
-            if new_key.strip():
-                global_cfg.llm.set_api_key(new_key.strip())
+            if not key_val.strip():
+                typer.echo("No key entered — no changes made.")
+            else:
+                global_cfg.llm.provider = provider
+                try:
+                    global_cfg.llm.set_api_key(key_val.strip())
+                except RuntimeError as e:
+                    typer.echo(str(e), err=True)
+                    raise typer.Exit(code=1)
+
                 typer.echo("Key stored in OS keyring.")
                 typer.echo(
                     f"Fallback (CI/containers): export {env_var}=\"your-key-here\""
                 )
+                save_global_config(global_cfg)
+                typer.echo(f"Saved to {GLOBAL_CONFIG_DISPLAY_PATH}")
+
+        return
     elif not api_key and sys.stdin.isatty():
         # No key found — offer to set one up
         typer.echo()
@@ -367,10 +412,11 @@ def init(
 
         if setup_key:
             typer.echo()
-            typer.echo(
-                f"Available providers: {', '.join(PROVIDER_CONFIGS.keys())}"
+            typer.echo("Select an LLM provider.")
+            typer.echo(f"  {', '.join(PROVIDER_CONFIGS.keys())}")
+            provider = typer.prompt(
+                "Provider", default="", show_default=False
             )
-            provider = typer.prompt("LLM provider", default="")
 
             if provider not in PROVIDER_CONFIGS:
                 typer.echo(f"Unknown provider '{provider}'. Skipping LLM setup.")
@@ -384,12 +430,18 @@ def init(
                     typer.echo("Make sure ollama is running on localhost:11434")
                 else:
                     key_val = typer.prompt(
-                        f"Enter {env_var}", hide_input=True, default=""
+                        f"API key for {provider} ({env_var})",
+                        hide_input=True,
+                        show_default=False,
                     )
                     if key_val.strip():
                         # Store in OS keyring (primary)
                         global_cfg.llm.provider = provider
-                        global_cfg.llm.set_api_key(key_val.strip())
+                        try:
+                            global_cfg.llm.set_api_key(key_val.strip())
+                        except RuntimeError as e:
+                            typer.echo(str(e), err=True)
+                            raise typer.Exit(code=1)
                         typer.echo("Key stored in OS keyring.")
                         typer.echo(
                             f"Fallback for CI/headless: export {env_var}=..."
