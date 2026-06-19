@@ -169,7 +169,7 @@ class TestReviewContext:
 
         result = asyncio.run(review_context("Test feature"))
 
-        assert result.startswith("---SUMMARY: review_context: 'Test feature'")
+        assert result.startswith("[mementic: review_context: 'Test feature'")
         assert "4 active" in result
         assert "2 decisions" in result
         assert "2 constraints" in result
@@ -294,7 +294,7 @@ class TestSummaryPrefixes:
             server.get_task_context("Fix auth bug in login flow")
         )
 
-        assert result.startswith("---SUMMARY: get_task_context: ")
+        assert result.startswith("[mementic: get_task_context: ")
         assert "1 constraints" in result
         assert "2 decisions" in result
         assert "Fix auth bug" in result
@@ -346,6 +346,6 @@ class TestSummaryPrefixes:
             server.get_entity_history("src/auth.py")
         )
 
-        assert result.startswith("---SUMMARY: get_entity_history: ")
+        assert result.startswith("[mementic: get_entity_history: ")
         assert "decisions touching 'src/auth.py'" in result
         assert "1 decisions" in result

@@ -209,9 +209,9 @@ async def get_task_context(
         metrics_store.append(entry)
 
     summary = (
-        f"---SUMMARY: get_task_context: "
+        f"[mementic: get_task_context: "
         f"{len(constraints)} constraints, {len(decisions)} decisions "
-        f"for '{task_description[:60]}'"
+        f"for '{task_description[:60]}']"
     )
     return f"{summary}\n\n{pack_text}"
 
@@ -387,7 +387,7 @@ async def review_context(
     active_decisions = len(graph.get_all_active_decisions())
 
     parts: list[str] = [
-        f"---SUMMARY: review_context: '{feature_description[:60]}'"
+        f"[mementic: review_context: '{feature_description[:60]}'"
     ]
     if deprecated:
         parts.append(f"deprecated {', '.join(deprecated)}")
@@ -398,7 +398,7 @@ async def review_context(
     parts.append(f"{active_decisions + active_constraints} active "
                  f"({active_decisions} decisions, {active_constraints} constraints)")
 
-    return " — ".join(parts)
+    return " — ".join(parts) + "]"
 
 
 @mcp.tool()
@@ -429,7 +429,7 @@ async def get_entity_history(
     )
     evolution_text = format_evolution(entity_path, decisions, max_tokens=max_tokens)
     summary = (
-        f"---SUMMARY: get_entity_history: "
-        f"{len(decisions)} decisions touching '{entity_path}'"
+        f"[mementic: get_entity_history: "
+        f"{len(decisions)} decisions touching '{entity_path}']"
     )
     return f"{summary}\n\n{evolution_text}"

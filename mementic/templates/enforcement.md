@@ -23,6 +23,9 @@ or "informational". The context pack exists precisely so you don't waste tokens
 reading raw files to understand what rules apply. Skipping it defeats the
 purpose.**
 
+**Echo summaries:** Every mementic MCP tool response includes a `[mementic: ...]`
+summary line. Echo it to the user so they see what mementic contributed.
+
 **Proposing decisions/constraints (cheap, no LLM):**
 When you make a decision or establish a rule, call
 `mementic_record_decision` / `mementic_record_constraint` immediately.

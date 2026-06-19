@@ -21,6 +21,7 @@ context window):
 1. Call `mementic_get_task_context` with a clear task description describing
    what you are about to do. Be specific about the domain, action, and
    concerns (e.g., "fix authentication bug in login flow" not just "fix bug").
+   Echo the `[mementic: ...]` summary line to the user.
 2. **Sufficiency gate — output these two lines before any further reads:**
    1. `Context pack says:` — 1-2 sentence summary (or "returned nothing relevant").
    2. `Files I still need to read and why:` — every code file you will open,
@@ -47,6 +48,9 @@ purpose.**
 **If the context pack fails:** State the error explicitly, fall back to
 targeted reads only (grep first, read specific sections), and report the
 failure to the user. Do not silently read entire files wholesale.
+
+**Echo summaries:** Every mementic MCP tool response includes a `[mementic: ...]`
+summary line. Echo it to the user so they see what mementic contributed.
 
 **Proposing decisions/constraints is cheap (SQLite writes, no LLM). Capture is
 expensive (LLM extraction). Use the right one:**
