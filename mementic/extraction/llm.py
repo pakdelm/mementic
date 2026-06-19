@@ -23,6 +23,19 @@ from mementic.config import LLMConfig  # noqa: E402
 from mementic.models import Constraint, DecisionStatus, ExtractionResult, UsageStats  # noqa: E402
 
 
+def _parse_llm_json(content: str) -> dict:
+    """Parse JSON from an LLM response, stripping markdown code fences if present.
+
+    Some LLMs wrap JSON in ```json ... ``` blocks despite system prompt
+    instructions. This handles that gracefully.
+    """
+    text = content.strip()
+    m = re.match(r"```(?:json)?\s*\n(.*?)```", text, re.DOTALL)
+    if m:
+        text = m.group(1).strip()
+    return json.loads(text)
+
+
 # Spec 10a — Session truncation
 
 ARCHITECTURE_KEYWORDS: list[str] = [
@@ -433,7 +446,7 @@ def extract_from_freeform(
         return ExtractionResult(), stats
 
     try:
-        data = json.loads(content)
+        data = _parse_llm_json(content)
         result = ExtractionResult.model_validate(data)
         if usage:
             stats = UsageStats(
@@ -578,7 +591,7 @@ def extract_from_session(
         return ExtractionResult(), stats
 
     try:
-        data = json.loads(content)
+        data = _parse_llm_json(content)
         result = ExtractionResult.model_validate(data)
         if usage:
             stats = UsageStats(
@@ -671,7 +684,7 @@ def extract_from_adr_consequences(
         return [], stats
 
     try:
-        data = json.loads(content)
+        data = _parse_llm_json(content)
         parsed = _ConstraintListResponse.model_validate(data)
         if usage:
             stats = UsageStats(
@@ -771,7 +784,7 @@ def extract_from_codebase_summary(
         return ExtractionResult(), stats
 
     try:
-        data = json.loads(content)
+        data = _parse_llm_json(content)
         result = ExtractionResult.model_validate(data)
     except (json.JSONDecodeError, ValidationError):
         sys.stderr.write("WARNING: LLM returned invalid JSON for codebase scan. Skipping.\n")
