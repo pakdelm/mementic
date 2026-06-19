@@ -28,7 +28,8 @@ context window):
       do not read it.
 3. Call `mementic_get_entity_history` for each file being modified.
 4. Validate your plan against every returned constraint. Do NOT write code
-   that violates an active constraint.
+   that violates an active constraint. Cite every entity you apply or
+   reject with `[mementic: <id>]` so usage is auditable in the session log.
 5. Only read raw ADR or instruction files if the context pack leaves
    ambiguity you must resolve to proceed safely.
 
@@ -59,6 +60,11 @@ expensive (LLM extraction). Use the right one:**
   discussions happened but were NOT proposed inline (e.g., a design
   conversation that never produced an explicit proposal). The user decides when
   that's worth the extraction cost — do not run it yourself mid-task.
+
+**Post-recording cleanup:** After recording decisions or constraints via
+`mementic_record_decision` / `mementic_record_constraint`, call
+`mementic_review_context` with the feature description and any entities
+you deprecated.
 
 **If you skip these steps, you are violating project constraints.**
 A graph with no new decisions after a sprint of development is evidence

@@ -14,7 +14,8 @@ about to read files or search code, you need context first.
    - `Context pack says:` — 1-2 sentence summary (or "returned nothing relevant").
    - `Files I still need to read and why:` — each with one-clause justification.
 3. Call `mementic_get_entity_history` for each file being modified.
-4. Validate your plan against every returned constraint.
+4. Validate your plan against every returned constraint. Cite every entity you
+   apply or reject with `[mementic: <id>]` so usage is auditable in the session log.
 5. Only read raw ADR or instruction files if the context pack leaves ambiguity.
 
 **You may NOT skip these steps by classifying a task as "read-only", "quick",
@@ -30,6 +31,11 @@ To retire an outdated rule, call `mementic_deprecate_rule`.
 **Session capture (expensive, LLM-driven):**
 Run `mementic capture` at most once per session (end of session). Skip if
 all decisions were proposed inline via the MCP tools above.
+
+**Post-recording cleanup:** After recording decisions or constraints via
+`mementic_record_decision` / `mementic_record_constraint`, call
+`mementic_review_context` with the feature description and any entities
+you deprecated.
 
 **If the context pack fails:** State the error explicitly, fall back to
 targeted reads only, and report the failure to the user.

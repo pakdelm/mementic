@@ -1413,6 +1413,98 @@ def deprecate(
 
 
 @app.command()
+def session_cleanup(
+    feature_description: str = typer.Argument(
+        ..., help="Description of the feature/task just completed",
+    ),
+    deprecated_ids: list[str] | None = typer.Option(
+        None, "--deprecate", "-d",
+        help="Decision or constraint IDs to deprecate (repeatable)",
+    ),
+    project: str | None = typer.Option(
+        None, "--project",
+        help="Target project name",
+    ),
+) -> None:
+    """Clean up mementic context after recording decisions/constraints.
+
+    Deprecates superseded entities, cleans dead references, and reports
+    graph state. Use after recording inline proposals during a session.
+    """
+    graph, cfg = _resolve_graph(project)
+    deprecated: list[str] = []
+    already: list[str] = []
+    not_found: list[str] = []
+
+    for entity_id in (deprecated_ids or []):
+        if not graph.has_node(entity_id):
+            not_found.append(entity_id)
+            continue
+
+        node_type = None
+        target_payload = None
+        for nid, ntype, payload in graph.iter_nodes():
+            if nid == entity_id:
+                node_type = ntype
+                target_payload = payload
+                break
+
+        if target_payload is None:
+            not_found.append(entity_id)
+            continue
+
+        if node_type == "Decision":
+            decision = Decision(**target_payload)
+            if decision.status == DecisionStatus.DEPRECATED:
+                already.append(entity_id)
+                continue
+            decision.rationale += " [DEPRECATED]"
+            decision.status = DecisionStatus.DEPRECATED
+            graph.add_decision(decision)
+            deprecated.append(entity_id)
+
+        elif node_type == "Constraint":
+            constraint = Constraint(**target_payload)
+            if constraint.status == "deprecated":
+                already.append(entity_id)
+                continue
+            constraint.description += " [DEPRECATED]"
+            constraint.status = "deprecated"
+            graph.add_constraint(constraint)
+            deprecated.append(entity_id)
+
+        else:
+            not_found.append(entity_id)
+
+    # Write deprecations before cleanup
+    graph.save(cfg.output.graph_path)
+
+    # Clean dead references
+    graph.clean_dead_references()
+    graph.save(cfg.output.graph_path)
+
+    # Count active
+    active_constraints = len(graph.get_all_active_constraints())
+    active_decisions = len(graph.get_all_active_decisions())
+
+    parts: list[str] = [
+        f"session-cleanup: '{feature_description}'"
+    ]
+    if deprecated:
+        parts.append(f"deprecated {', '.join(deprecated)}")
+    if already:
+        parts.append(f"(already deprecated: {', '.join(already)})")
+    if not_found:
+        parts.append(f"(not found: {', '.join(not_found)})")
+    parts.append(
+        f"{active_decisions + active_constraints} active "
+        f"({active_decisions} decisions, {active_constraints} constraints)"
+    )
+
+    typer.echo(" — ".join(parts))
+
+
+@app.command()
 def inject(
     agent: str | None = typer.Option(
         None, "--agent",
