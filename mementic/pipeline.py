@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from mementic.config import MementicConfig, load_config
+from mementic.config import MementicConfig, load_config, load_global_config
 from mementic.extraction import (
     extract_constraints_from_consequences,
     extract_from_adr_consequences,
@@ -252,6 +252,149 @@ def _extract_session(
         return result, _zero_usage()
 
 
+def _resolve_db_path(repo_path: str | None) -> str | None:
+    """Resolve the SQLite db_path from the global config's project entry.
+
+    Searches for a project whose repos contain ``repo_path``.  Falls back
+    to the default project's ``db_path`` when no match is found.
+
+    Args:
+        repo_path: Absolute path to the repository root.
+
+    Returns:
+        The ``db_path`` string, or ``None`` if no project config is found.
+    """
+    try:
+        global_cfg = load_global_config()
+    except Exception:
+        return None
+
+    if repo_path:
+        resolved = Path(repo_path).resolve()
+        for proj_entry in global_cfg.projects.values():
+            for repo_entry in proj_entry.repos.values():
+                try:
+                    if Path(repo_entry.path).resolve() == resolved:
+                        return proj_entry.db_path
+                except (OSError, ValueError):
+                    continue
+
+    if global_cfg.default_project:
+        try:
+            return global_cfg.projects[global_cfg.default_project].db_path
+        except KeyError:
+            pass
+
+    return None
+
+
+def _run_codebase_scan(
+    graph: GraphStore, repo_path: str, cfg: MementicConfig, no_scan: bool
+) -> list[UsageStats]:
+    """Phase 1: scan codebase structure for architectural patterns (Spec 12a).
+
+    Only runs when an LLM is available — there is no deterministic equivalent.
+    """
+    if no_scan or not _should_use_llm(cfg):
+        return []
+
+    summary = scan_codebase_structure(repo_path)
+    if not summary.strip():
+        return []
+
+    result, usage = extract_from_codebase_summary(summary, cfg.llm)
+    if result.decisions:
+        sys.stderr.write(
+            f"Codebase scan: detected {len(result.decisions)} "
+            f"potential decision(s) from structural patterns.\n"
+        )
+    _ingest_result(graph, result, source_path=f"repo:{repo_path}", repo_path=repo_path)
+    return [usage]
+
+
+def _run_markdown_scan(
+    graph: GraphStore, repo_path: str, cfg: MementicConfig
+) -> list[UsageStats]:
+    """Phase 0: scan repo-wide markdown files for decisions (Spec 15)."""
+    usage_list: list[UsageStats] = []
+    for md_relpath, md_content in collect_markdown_files(repo_path):
+        result, usage = _extract_markdown(md_content, md_relpath, cfg)
+        usage_list.append(usage)
+        _ingest_result(graph, result, source_path=md_relpath, repo_path=repo_path)
+    return usage_list
+
+
+def _ingest_adr_source(
+    graph: GraphStore, adr_dir_path: str, cfg: MementicConfig, repo_path: str | None
+) -> list[UsageStats]:
+    """Process a single ADR source directory.
+
+    Creates ``Decision`` nodes from ADR files, extracts constraints from
+    consequences sections, and links file-path ``CodeEntity`` nodes.
+    """
+    if not Path(adr_dir_path).is_dir():
+        sys.stderr.write(f"Warning: Source '{adr_dir_path}' not found. Skipping.\n")
+        return []
+
+    usage_list: list[UsageStats] = []
+    for adr in scan_adr_dir(adr_dir_path):
+        decision_id = slugify(adr.title)
+        decision = Decision(
+            id=decision_id,
+            title=adr.title,
+            rationale=f"Context: {adr.context}\n\nDecision: {adr.decision}",
+            rejected_alternatives=[],
+            source=f"adr:{adr.path}",
+            status=_status_from_adr(adr.status),
+            author="adr",
+            created_at=adr.timestamp,
+            modified_at=adr.timestamp,
+            repo=repo_path or "",
+        )
+        _add_decision_dedup(graph, decision)
+
+        if adr.consequences.strip():
+            constraints, usage = _extract_consequences(
+                adr.consequences, adr.path, decision_id, cfg
+            )
+            usage_list.append(usage)
+            for c in constraints:
+                c.repo = repo_path or ""
+                c.enforced_by = decision_id
+                if _add_constraint_dedup(graph, c):
+                    _ensure_code_entities(
+                        graph, c, adr.path, ExtractionResult(), repo_path=repo_path,
+                    )
+
+        for path_ in find_file_paths(adr.decision + " " + adr.consequences):
+            eid = _entity_id(repo_path, path_)
+            graph.add_code_entity(
+                CodeEntity(id=eid, type=EntityType.FILE, repo=repo_path or "")
+            )
+            graph.link(decision.id, eid, "affects")
+
+    return usage_list
+
+
+def _ingest_instruction_source(
+    graph: GraphStore, source_path: str, cfg: MementicConfig, repo_path: str | None
+) -> list[UsageStats]:
+    """Process a single instruction source directory.
+
+    Used for opencode, claude, cursor, and windsurf instruction dirs.
+    """
+    if not Path(source_path).is_dir():
+        sys.stderr.write(f"Warning: Source '{source_path}' not found. Skipping.\n")
+        return []
+
+    usage_list: list[UsageStats] = []
+    for instr in scan_opencode_instructions(source_path):
+        result, usage = _extract_markdown(instr.content, instr.path, cfg)
+        usage_list.append(usage)
+        _ingest_result(graph, result, instr.path, repo_path=repo_path)
+    return usage_list
+
+
 def run_init(
     repo_path: str | None = None,
     no_scan: bool = False,
@@ -284,32 +427,9 @@ def run_init(
     cfg = load_config(repo_path=repo_path, project=project)
 
     # Resolve db_path from project config when not explicitly provided.
-    # This avoids falling back to the deprecated .mementic/graph.json path
-    # when a SQLite database is configured for the project.
+    # Avoids falling back to the deprecated .mementic/graph.json path.
     if db_path is None:
-        from mementic.config import load_global_config
-        try:
-            global_cfg = load_global_config()
-            if repo_path:
-                resolved = Path(repo_path).resolve()
-                for proj_entry in global_cfg.projects.values():
-                    for repo_entry in proj_entry.repos.values():
-                        try:
-                            if Path(repo_entry.path).resolve() == resolved:
-                                db_path = proj_entry.db_path
-                                break
-                        except (OSError, ValueError):
-                            continue
-                    if db_path:
-                        break
-            if db_path is None and global_cfg.default_project:
-                try:
-                    proj = global_cfg.projects[global_cfg.default_project]
-                    db_path = proj.db_path
-                except KeyError:
-                    pass
-        except Exception:
-            pass
+        db_path = _resolve_db_path(repo_path)
     if db_path:
         db_path = str(Path(db_path).expanduser())
 
@@ -317,114 +437,28 @@ def run_init(
     all_usage: list[UsageStats] = []
 
     # Phase 1: Codebase structural scan (Spec 12a) — cold-start killer.
-    # Only runs when repo_path is explicitly provided (auto-detection is CLI
-    # concern) and an LLM is available (no deterministic equivalent exists).
-    if repo_path and not no_scan and _should_use_llm(cfg):
-        summary = scan_codebase_structure(repo_path)
-        if summary.strip():
-            result, usage = extract_from_codebase_summary(summary, cfg.llm)
-            all_usage.append(usage)
-            if result.decisions:
-                sys.stderr.write(
-                    f"Codebase scan: detected {len(result.decisions)} "
-                    f"potential decision(s) from structural patterns.\n"
-                )
-            _ingest_result(
-                graph, result, source_path=f"repo:{repo_path}",
-                repo_path=repo_path,
-            )
-
-    # Phase 0: Repo-wide markdown scan (Spec 15) — deterministic-friendly cold start
     if repo_path:
-        md_files = collect_markdown_files(repo_path)
-        for md_relpath, md_content in md_files:
-            result, usage = _extract_markdown(md_content, md_relpath, cfg)
-            all_usage.append(usage)
-            _ingest_result(graph, result, source_path=md_relpath, repo_path=repo_path)
+        all_usage.extend(_run_codebase_scan(graph, repo_path, cfg, no_scan))
 
+    # Phase 0: Repo-wide markdown scan (Spec 15) — deterministic-friendly.
+    if repo_path:
+        all_usage.extend(_run_markdown_scan(graph, repo_path, cfg))
+
+    # ADR sources
     for adr_source in cfg.sources.adr_dirs:
-        if not Path(adr_source.path).is_dir():
-            sys.stderr.write(
-                f"Warning: Source '{adr_source.path}' not found. Skipping.\n"
-            )
-            continue
-        adrs = scan_adr_dir(adr_source.path)
-        for adr in adrs:
-            decision_id = slugify(adr.title)
+        all_usage.extend(_ingest_adr_source(graph, adr_source.path, cfg, repo_path))
 
-            decision = Decision(
-                id=decision_id,
-                title=adr.title,
-                rationale=f"Context: {adr.context}\n\nDecision: {adr.decision}",
-                rejected_alternatives=[],
-                source=f"adr:{adr.path}",
-                status=_status_from_adr(adr.status),
-                author="adr",
-                created_at=adr.timestamp,
-                modified_at=adr.timestamp,
-                repo=repo_path or "",
-            )
-            _add_decision_dedup(graph, decision)
+    # Instruction sources
+    for oc_src in cfg.sources.opencode_instructions:
+        all_usage.extend(_ingest_instruction_source(graph, oc_src.path, cfg, repo_path))
+    for cl_src in cfg.sources.claude_instructions:
+        all_usage.extend(_ingest_instruction_source(graph, cl_src.path, cfg, repo_path))
+    for cu_src in cfg.sources.cursor_instructions:
+        all_usage.extend(_ingest_instruction_source(graph, cu_src.path, cfg, repo_path))
+    for ws_src in cfg.sources.windsurf_instructions:
+        all_usage.extend(_ingest_instruction_source(graph, ws_src.path, cfg, repo_path))
 
-            if adr.consequences.strip():
-                constraints, usage = _extract_consequences(
-                    adr.consequences, adr.path, decision_id, cfg
-                )
-                all_usage.append(usage)
-                for c in constraints:
-                    c.repo = repo_path or ""
-                    c.enforced_by = decision_id
-                    if _add_constraint_dedup(graph, c):
-                        _ensure_code_entities(
-                            graph, c, adr.path, ExtractionResult(),
-                            repo_path=repo_path,
-                        )
-
-            for path_ in find_file_paths(adr.decision + " " + adr.consequences):
-                eid = _entity_id(repo_path, path_)
-                graph.add_code_entity(
-                    CodeEntity(id=eid, type=EntityType.FILE, repo=repo_path or "")
-                )
-                graph.link(decision.id, eid, "affects")
-
-    for oc_source in cfg.sources.opencode_instructions:
-        if not Path(oc_source.path).is_dir():
-            sys.stderr.write(
-                f"Warning: Source '{oc_source.path}' not found. Skipping.\n"
-            )
-            continue
-        instructions = scan_opencode_instructions(oc_source.path)
-        for instr in instructions:
-            result, usage = _extract_markdown(instr.content, instr.path, cfg)
-            all_usage.append(usage)
-            _ingest_result(graph, result, instr.path, repo_path=repo_path)
-
-    for claude_source in cfg.sources.claude_instructions:
-        if not Path(claude_source.path).is_dir():
-            sys.stderr.write(
-                f"Warning: Source '{claude_source.path}' not found. Skipping.\n"
-            )
-            continue
-        instructions = scan_opencode_instructions(claude_source.path)
-        for instr in instructions:
-            result, usage = _extract_markdown(instr.content, instr.path, cfg)
-            all_usage.append(usage)
-            _ingest_result(graph, result, instr.path, repo_path=repo_path)
-
-    for cursor_source in cfg.sources.cursor_instructions:
-        instructions = scan_opencode_instructions(cursor_source.path)
-        for instr in instructions:
-            result, usage = _extract_markdown(instr.content, instr.path, cfg)
-            all_usage.append(usage)
-            _ingest_result(graph, result, instr.path, repo_path=repo_path)
-
-    for windsurf_source in cfg.sources.windsurf_instructions:
-        instructions = scan_opencode_instructions(windsurf_source.path)
-        for instr in instructions:
-            result, usage = _extract_markdown(instr.content, instr.path, cfg)
-            all_usage.append(usage)
-            _ingest_result(graph, result, instr.path, repo_path=repo_path)
-
+    # Backfill edges + persist
     has_sources = bool(
         cfg.sources.adr_dirs
         or cfg.sources.opencode_instructions
@@ -436,12 +470,11 @@ def run_init(
         _backfill_edges(graph, repo_path=repo_path)
         _backfill_decision_edges(graph, repo_path=repo_path)
         if db_path is None:
-            # Legacy: save to graph.json
+            # Legacy: save to graph.json (last resort when no SQLite config)
             Path(cfg.output.graph_path).parent.mkdir(parents=True, exist_ok=True)
             graph.save(cfg.output.graph_path)
-        # When db_path is set, data is auto-persisted to SQLite via _write_back()
 
-    # Track the repo in project_sources for multi-repo awareness
+    # Track repo in project_sources for multi-repo awareness
     if db_path and repo_path and graph._conn is not None:
         graph._conn.execute(
             "INSERT OR REPLACE INTO project_sources (repo_path, ingested_at) "
