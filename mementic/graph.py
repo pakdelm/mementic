@@ -398,6 +398,90 @@ class GraphStore:
             {"source": source_id, "target": target_id, "relation": relation},
         )
 
+    def deprecate_entity(self, entity_id: str, reason: str = "") -> dict:
+        """Deprecate a single decision or constraint by ID.
+
+        Appends a ``[DEPRECATED]`` (or ``[DEPRECATED: {reason}]``) note
+        to the entity's rationale/description, sets its status, and
+        persists the change.
+
+        Args:
+            entity_id: The decision or constraint ID to deprecate.
+            reason: Optional reason for deprecation.
+
+        Returns:
+            Dict with keys ``status`` and ``message``.
+            ``status`` is one of ``"deprecated"``, ``"already_deprecated"``,
+            ``"not_found"``, or ``"wrong_type"``.
+        """
+        if not self.has_node(entity_id):
+            return {
+                "status": "not_found",
+                "message": f"Entity '{entity_id}' not found.",
+            }
+
+        node_type: str | None = None
+        for nid, ntype, _payload in self.iter_nodes():
+            if nid == entity_id:
+                node_type = ntype
+                break
+
+        if node_type is None:
+            return {
+                "status": "not_found",
+                "message": f"Entity '{entity_id}' not found.",
+            }
+
+        if node_type == "Decision":
+            payload = self.get_node_payload(entity_id)
+            decision = Decision(**payload)
+            if decision.status == DecisionStatus.DEPRECATED:
+                return {
+                    "status": "already_deprecated",
+                    "message": f"Decision '{entity_id}' is already deprecated.",
+                }
+            deprecation_note = (
+                f" [DEPRECATED: {reason}]" if reason else " [DEPRECATED]"
+            )
+            original_title = decision.title
+            decision.rationale += deprecation_note
+            decision.status = DecisionStatus.DEPRECATED
+            self.add_decision(decision)
+            return {
+                "status": "deprecated",
+                "message": f"Deprecated decision '{entity_id}': {original_title}",
+            }
+
+        if node_type == "Constraint":
+            payload = self.get_node_payload(entity_id)
+            constraint = Constraint(**payload)
+            if constraint.status == "deprecated":
+                return {
+                    "status": "already_deprecated",
+                    "message": f"Constraint '{entity_id}' is already deprecated.",
+                }
+            deprecation_note = (
+                f" [DEPRECATED: {reason}]" if reason else " [DEPRECATED]"
+            )
+            original_description = constraint.description
+            constraint.description += deprecation_note
+            constraint.status = "deprecated"
+            self.add_constraint(constraint)
+            return {
+                "status": "deprecated",
+                "message": (
+                    f"Deprecated constraint '{entity_id}': {original_description}"
+                ),
+            }
+
+        return {
+            "status": "wrong_type",
+            "message": (
+                f"Entity '{entity_id}' is a {node_type} node, "
+                f"not a decision or constraint."
+            ),
+        }
+
     # ------------------------------------------------------------------
     # Queries (SQLite when available, otherwise NetworkX)
     # ------------------------------------------------------------------

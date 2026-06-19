@@ -87,72 +87,6 @@ def _save_graph(graph: GraphStore, cfg: MementicConfig) -> None:
     graph.save(cfg.output.graph_path)
 
 
-def _deprecate_entity(
-    graph: GraphStore, entity_id: str, reason: str = ""
-) -> dict:
-    """Deprecate a single decision or constraint by ID.
-
-    Args:
-        graph: The knowledge graph.
-        entity_id: The decision or constraint ID to deprecate.
-        reason: Optional reason for deprecation.
-
-    Returns:
-        Dict with keys 'status' and 'message'.
-        status: 'deprecated', 'already_deprecated', 'not_found', or 'wrong_type'.
-    """
-    if not graph.has_node(entity_id):
-        return {"status": "not_found", "message": f"Entity '{entity_id}' not found."}
-
-    node_type = None
-    for nid, ntype, _payload in graph.iter_nodes():
-        if nid == entity_id:
-            node_type = ntype
-            break
-
-    if node_type == "Decision":
-        payload = graph.get_node_payload(entity_id)
-        decision = Decision(**payload)
-        if decision.status == DecisionStatus.DEPRECATED:
-            return {
-                "status": "already_deprecated",
-                "message": f"Decision '{entity_id}' is already deprecated.",
-            }
-        deprecation_note = (
-            f" [DEPRECATED: {reason}]" if reason else " [DEPRECATED]"
-        )
-        decision.rationale += deprecation_note
-        decision.status = DecisionStatus.DEPRECATED
-        graph.add_decision(decision)
-        return {
-            "status": "deprecated",
-            "message": f"Deprecated decision '{entity_id}': {decision.title}",
-        }
-
-    if node_type == "Constraint":
-        payload = graph.get_node_payload(entity_id)
-        constraint = Constraint(**payload)
-        if constraint.status == "deprecated":
-            return {
-                "status": "already_deprecated",
-                "message": f"Constraint '{entity_id}' is already deprecated.",
-            }
-        deprecation_note = (
-            f" [DEPRECATED: {reason}]" if reason else " [DEPRECATED]"
-        )
-        constraint.description += deprecation_note
-        constraint.status = "deprecated"
-        graph.add_constraint(constraint)
-        return {
-            "status": "deprecated",
-            "message": f"Deprecated constraint '{entity_id}': {constraint.description}",
-        }
-
-    return {
-        "status": "wrong_type",
-        "message": f"Entity '{entity_id}' is a {node_type}, not a decision or constraint.",
-    }
-
 
 @mcp.tool()
 async def get_task_context(
@@ -341,7 +275,7 @@ async def deprecate_rule(
     """
     graph, cfg = _load_graph()
 
-    result = _deprecate_entity(graph, id, reason)
+    result = graph.deprecate_entity(id, reason)
     _save_graph(graph, cfg)
     return result["message"]
 
@@ -370,7 +304,7 @@ async def review_context(
     not_found: list[str] = []
 
     for entity_id in (deprecated_ids or []):
-        result = _deprecate_entity(graph, entity_id)
+        result = graph.deprecate_entity(entity_id)
         if result["status"] == "deprecated":
             deprecated.append(entity_id)
         elif result["status"] == "already_deprecated":

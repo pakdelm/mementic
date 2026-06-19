@@ -8,7 +8,7 @@ import pytest
 from mementic.config import MementicConfig
 from mementic.graph import GraphStore
 from mementic.models import Constraint, Decision, DecisionStatus, EntityType, CodeEntity
-from mementic.server import _deprecate_entity, review_context
+from mementic.server import review_context
 
 # ── Helpers ──────────────────────────────────────────────────────────
 
@@ -53,7 +53,7 @@ class TestDeprecateEntity:
         gs = GraphStore()
         _add_decision(gs, "d1", DecisionStatus.ACCEPTED)
 
-        result = _deprecate_entity(gs, "d1")
+        result = gs.deprecate_entity("d1")
         assert result["status"] == "deprecated"
         assert "d1" in result["message"]
 
@@ -65,7 +65,7 @@ class TestDeprecateEntity:
         gs = GraphStore()
         _add_decision(gs, "d2", DecisionStatus.ACCEPTED)
 
-        result = _deprecate_entity(gs, "d2", reason="No longer needed")
+        result = gs.deprecate_entity("d2", reason="No longer needed")
         assert result["status"] == "deprecated"
         payload = gs.get_node_payload("d2")
         assert "[DEPRECATED: No longer needed]" in payload["rationale"]
@@ -74,7 +74,7 @@ class TestDeprecateEntity:
         gs = GraphStore()
         _add_constraint(gs, "c1", "active")
 
-        result = _deprecate_entity(gs, "c1")
+        result = gs.deprecate_entity("c1")
         assert result["status"] == "deprecated"
 
         payload = gs.get_node_payload("c1")
@@ -85,7 +85,7 @@ class TestDeprecateEntity:
         gs = GraphStore()
         _add_constraint(gs, "c2", "active")
 
-        result = _deprecate_entity(gs, "c2", reason="Obsolete")
+        result = gs.deprecate_entity("c2", reason="Obsolete")
         assert result["status"] == "deprecated"
         payload = gs.get_node_payload("c2")
         assert "[DEPRECATED: Obsolete]" in payload["description"]
@@ -94,7 +94,7 @@ class TestDeprecateEntity:
         gs = GraphStore()
         _add_decision(gs, "d_dep", DecisionStatus.DEPRECATED)
 
-        result = _deprecate_entity(gs, "d_dep")
+        result = gs.deprecate_entity("d_dep")
         assert result["status"] == "already_deprecated"
         assert "already deprecated" in result["message"].lower()
 
@@ -102,14 +102,14 @@ class TestDeprecateEntity:
         gs = GraphStore()
         _add_constraint(gs, "c_dep", "deprecated")
 
-        result = _deprecate_entity(gs, "c_dep")
+        result = gs.deprecate_entity("c_dep")
         assert result["status"] == "already_deprecated"
         assert "already deprecated" in result["message"].lower()
 
     def test_deprecate_nonexistent_entity(self) -> None:
         gs = GraphStore()
 
-        result = _deprecate_entity(gs, "nonexistent")
+        result = gs.deprecate_entity("nonexistent")
         assert result["status"] == "not_found"
         assert "not found" in result["message"].lower()
 
@@ -117,7 +117,7 @@ class TestDeprecateEntity:
         gs = GraphStore()
         _add_code_entity(gs, "src/test.py")
 
-        result = _deprecate_entity(gs, "src/test.py")
+        result = gs.deprecate_entity("src/test.py")
         assert result["status"] == "wrong_type"
         assert "CodeEntity" in result["message"]
 
@@ -200,7 +200,7 @@ class TestReviewContext:
         cfg = _mock_config()
 
         # Pre-deprecate one decision
-        _deprecate_entity(gs, "d_active")
+        gs.deprecate_entity("d_active")
 
         from mementic import server
         monkeypatch.setattr(server, "_load_graph", lambda project=None: (gs, cfg))

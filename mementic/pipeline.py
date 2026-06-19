@@ -282,6 +282,37 @@ def run_init(
         LLM extraction calls made during init.
     """
     cfg = load_config(repo_path=repo_path, project=project)
+
+    # Resolve db_path from project config when not explicitly provided.
+    # This avoids falling back to the deprecated .mementic/graph.json path
+    # when a SQLite database is configured for the project.
+    if db_path is None:
+        from mementic.config import load_global_config
+        try:
+            global_cfg = load_global_config()
+            if repo_path:
+                resolved = Path(repo_path).resolve()
+                for proj_entry in global_cfg.projects.values():
+                    for repo_entry in proj_entry.repos.values():
+                        try:
+                            if Path(repo_entry.path).resolve() == resolved:
+                                db_path = proj_entry.db_path
+                                break
+                        except (OSError, ValueError):
+                            continue
+                    if db_path:
+                        break
+            if db_path is None and global_cfg.default_project:
+                try:
+                    proj = global_cfg.projects[global_cfg.default_project]
+                    db_path = proj.db_path
+                except KeyError:
+                    pass
+        except Exception:
+            pass
+    if db_path:
+        db_path = str(Path(db_path).expanduser())
+
     graph = GraphStore(db_path=db_path) if db_path else GraphStore()
     all_usage: list[UsageStats] = []
 

@@ -49,8 +49,16 @@ purpose.**
 targeted reads only (grep first, read specific sections), and report the
 failure to the user. Do not silently read entire files wholesale.
 
-**Echo summaries:** Every mementic MCP tool response includes a `[mementic: ...]`
-summary line. Echo it to the user so they see what mementic contributed.
+**Echo summaries (HARD GATE — check before responding):** EVERY mementic MCP
+tool call returns a `[mementic: ...]` summary line. You MUST echo that line
+verbatim to the user in your response. This applies to `get_task_context`,
+`get_entity_history`, `record_decision`, `record_constraint`, `review_context`,
+and every other mementic tool. If you called a mementic tool and the
+`[mementic: ...]` line is not in your response text, fix it before sending.
+The user should see exactly what mementic contributed to every message.
+Skipping this is a hard constraint violation — equivalent to skipping
+`get_task_context` itself. The cost is zero (already computed), so there is
+no excuse.
 
 **Proposing decisions/constraints is cheap (SQLite writes, no LLM). Capture is
 expensive (LLM extraction). Use the right one:**
