@@ -1,19 +1,15 @@
 from __future__ import annotations
 
 import json
-import os
 import subprocess
 import sys
 from pathlib import Path
 from typing import Any, TYPE_CHECKING
 
 import typer
-from dotenv import load_dotenv
 from pydantic import ValidationError
 
-load_dotenv()
-
-from mementic.config import (  # noqa: E402
+from mementic.config import (
     PROVIDER_CONFIGS,
     GLOBAL_CONFIG_DISPLAY_PATH,
     GlobalConfig,
@@ -25,7 +21,7 @@ from mementic.config import (  # noqa: E402
     resolve_project,
     save_global_config,
 )
-from mementic.format import (  # noqa: E402
+from mementic.format import (
     CONTEXT_PACK_DEFAULT_MAX_CONSTRAINT_TOKENS,
     CONTEXT_PACK_DEFAULT_MAX_DECISION_TOKENS,
     MMR_DEFAULT_LAMBDA,
@@ -37,14 +33,14 @@ from mementic.format import (  # noqa: E402
     format_context_pack,
     timestamp,
 )
-from mementic.graph import GraphStore  # noqa: E402
-from mementic.models import CodeEntity, Constraint, Decision, DecisionStatus, EntityType, MetricsEntry  # noqa: E402
-from mementic.pipeline import _extract_session, run_init  # noqa: E402
-from mementic.conflict import auto_resolve_capture  # noqa: E402
-from mementic.metrics import UsageStore  # noqa: E402
-from mementic.sources.adr import scan_adr_dir  # noqa: E402
-from mementic.sources.opencode import scan_opencode_instructions  # noqa: E402
-from mementic.inject import (  # noqa: E402
+from mementic.graph import GraphStore
+from mementic.models import CodeEntity, Constraint, Decision, DecisionStatus, EntityType, MetricsEntry
+from mementic.pipeline import _extract_session, run_init
+from mementic.conflict import auto_resolve_capture
+from mementic.metrics import UsageStore
+from mementic.sources.adr import scan_adr_dir
+from mementic.sources.opencode import scan_opencode_instructions
+from mementic.inject import (
     _AGENT_MARKERS,
     detect_agents,
     get_mcp_config_file,
@@ -62,6 +58,59 @@ _CODEBASE_INDICATORS: tuple[str, ...] = (
     "meson.build", "pom.xml", "build.gradle", "Gemfile",
     "Cargo.lock", "mix.exs", "rebar.config",
 )
+
+# Agent name → SessionsConfig field name (hyphenated agent names use
+# underscore field names — Claude Code is "claude-code" but the config
+# field is claude_code via validation_alias).
+_SESSION_PROVIDER_IMPORTS: dict[str, str] = {
+    "opencode": "mementic.session.opencode",
+    "claude-code": "mementic.session.claude_code",
+    "cursor": "mementic.session.cursor",
+    "windsurf": "mementic.session.windsurf",
+}
+_SESSION_FIELD_NAMES: dict[str, str] = {
+    "opencode": "opencode",
+    "claude-code": "claude_code",
+    "cursor": "cursor",
+    "windsurf": "windsurf",
+}
+
+
+def _populate_session_defaults(global_cfg: Any) -> None:
+    """Populate session log_dirs from each provider's platform defaults.
+
+    Only writes when the config currently has empty log_dirs for a given
+    agent — preserves user overrides on subsequent ``mementic init`` runs.
+    """
+    import importlib
+    system = sys.platform  # "win32" / "linux" / "darwin" — matches DEFAULT_*_PATHS keys
+    updated = False
+
+    for agent_name, module_name in _SESSION_PROVIDER_IMPORTS.items():
+        field = _SESSION_FIELD_NAMES.get(agent_name, agent_name.replace("-", "_"))
+        agent_cfg = getattr(global_cfg.sessions, field, None)
+        if agent_cfg is None or agent_cfg.log_dirs:
+            continue  # already has user-configured paths
+
+        try:
+            mod = importlib.import_module(module_name)
+        except ImportError:
+            continue
+
+        # Each provider module exports DEFAULT_*_PATHS: dict[platform, list[str]]
+        for attr_name in dir(mod):
+            if attr_name.startswith("DEFAULT_") and attr_name.endswith("_PATHS"):
+                default_paths = getattr(mod, attr_name, None)
+                if isinstance(default_paths, dict):
+                    paths = default_paths.get(system, default_paths.get("linux", []))
+                    if paths:
+                        agent_cfg.log_dirs = list(paths)
+                        updated = True
+                    break
+
+    if updated:
+        from mementic.config import save_global_config
+        save_global_config(global_cfg)
 
 app = typer.Typer(help="Mementic — semantic memory for engineering teams and AI agents")
 
@@ -162,6 +211,11 @@ def init(
         None, "--project",
         help="Target project name for project-aware init",
     ),
+    key: bool = typer.Option(
+        False, "--key",
+        help="Set or rotate the API key for the configured LLM provider "
+             "(stored in OS keyring)",
+    ),
 ) -> None:
     """Initialize the knowledge graph from configured sources.
 
@@ -171,6 +225,10 @@ def init(
 
     With --repo, scans the codebase structure for architectural patterns
     before processing configured sources. Use --no-scan to skip.
+
+    API keys are stored in the OS keyring (Windows Credential Locker,
+    macOS Keychain, Linux Secret Service). Use --key to set or rotate
+    the key without changing provider or model.
     """
     cwd = Path(detect_repo_path())
     cwd_resolved = str(cwd.resolve())
@@ -275,20 +333,43 @@ def init(
         except ValueError:
             project_db_path = None
 
-    # Spec 15 — API key setup prompt
+    # API key setup via OS keyring
     global_cfg = load_global_config()
     api_key = global_cfg.llm.get_api_key()
 
-    if not api_key and sys.stdin.isatty():
+    if key and sys.stdin.isatty():
+        # --key flag: rotate/set key without changing provider
+        env_var = global_cfg.llm.key_env_var
+        if env_var is None:
+            typer.echo(
+                f"Provider '{global_cfg.llm.provider}' does not require "
+                f"an API key."
+            )
+        else:
+            new_key = typer.prompt(
+                f"Enter {env_var}", hide_input=True, default=""
+            )
+            if new_key.strip():
+                global_cfg.llm.set_api_key(new_key.strip())
+                typer.echo("Key stored in OS keyring.")
+                typer.echo(
+                    f"Fallback (CI/containers): export {env_var}=\"your-key-here\""
+                )
+    elif not api_key and sys.stdin.isatty():
+        # No key found — offer to set one up
         typer.echo()
         typer.echo("Mementic can extract richer architectural context using an LLM.")
-        typer.echo("Deterministic mode (no key) works but produces lower-quality results.")
+        typer.echo(
+            "Deterministic mode (no key) works but produces lower-quality results."
+        )
         typer.echo()
         setup_key = typer.confirm("Set up an LLM provider now?", default=True)
 
         if setup_key:
             typer.echo()
-            typer.echo(f"Available providers: {', '.join(PROVIDER_CONFIGS.keys())}")
+            typer.echo(
+                f"Available providers: {', '.join(PROVIDER_CONFIGS.keys())}"
+            )
             provider = typer.prompt("LLM provider", default="")
 
             if provider not in PROVIDER_CONFIGS:
@@ -302,16 +383,17 @@ def init(
                     typer.echo("Ollama runs locally — no API key needed.")
                     typer.echo("Make sure ollama is running on localhost:11434")
                 else:
-                    key = typer.prompt(
+                    key_val = typer.prompt(
                         f"Enter {env_var}", hide_input=True, default=""
                     )
-                    if key.strip():
-                        os.environ[env_var] = key.strip()
+                    if key_val.strip():
+                        # Store in OS keyring (primary)
+                        global_cfg.llm.provider = provider
+                        global_cfg.llm.set_api_key(key_val.strip())
+                        typer.echo("Key stored in OS keyring.")
                         typer.echo(
-                            "Key set for this session. Add to your shell "
-                            "profile to persist:"
+                            f"Fallback for CI/headless: export {env_var}=..."
                         )
-                        typer.echo(f"  export {env_var}=\"your-key-here\"")
 
                 default_model = ""  # user must choose
                 model = typer.prompt(
@@ -322,6 +404,12 @@ def init(
                 global_cfg.llm.extraction_model = model
                 save_global_config(global_cfg)
                 typer.echo(f"Saved to {GLOBAL_CONFIG_DISPLAY_PATH}")
+
+    # Populate session log_dirs from provider defaults
+    # Ensures the config shows default paths for all supported agents so
+    # users can see and override them.  Only writes when config currently
+    # has empty log_dirs (preserves user overrides on subsequent runs).
+    _populate_session_defaults(global_cfg)
 
     # Run init — pipeline reads global config (no config_path)
     try:

@@ -167,6 +167,7 @@ async def record_decision(
     """
     graph, cfg = _load_graph()
     repo = detect_repo_path(check_global_config=True)
+    entity_list = affected_entities or []
 
     now = timestamp()
     decision = Decision(
@@ -174,6 +175,7 @@ async def record_decision(
         title=title,
         rationale=rationale,
         rejected_alternatives=rejected_alternatives or [],
+        affected_entities=entity_list,
         source=f"agent-proposal:{now}",
         status=DecisionStatus.ACCEPTED,
         author="opencode",
@@ -184,7 +186,7 @@ async def record_decision(
 
     graph.add_decision(decision)
 
-    for entity_path in affected_entities or []:
+    for entity_path in entity_list:
         if entity_path == decision.id or not entity_path:
             continue
         entity = CodeEntity(id=entity_path, type=EntityType.FILE, repo=repo)
@@ -192,9 +194,7 @@ async def record_decision(
         graph.link(decision.id, entity_path, "affects")
 
     _save_graph(graph, cfg)
-    return (
-        f"Decision '{title}' saved (status: accepted)."
-    )
+    return f"Decision '{title}' saved (status: accepted)."
 
 
 @mcp.tool()
@@ -205,6 +205,8 @@ async def record_constraint(
     id: str | None = None,
 ) -> str:
     """Record a new constraint.
+
+    Saved with status 'active'.
 
     Args:
         description: Description of the constraint.

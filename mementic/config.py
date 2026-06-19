@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 from typing import Literal
 
+import keyring
 from pydantic import BaseModel, Field, model_validator
 
 
@@ -159,7 +160,13 @@ class LLMConfig(BaseModel):
     """LLM provider configuration.
 
     Supported providers: deepseek, openai, openrouter, ollama.
+
+    API keys are stored in the OS keyring (primary) with environment
+    variables as a fallback for CI/containers.  ``mementic init``
+    stores the key automatically; ``mementic init --key`` rotates it.
     """
+
+    _KEYRING_SERVICE: str = "mementic"
 
     provider: str = DEFAULT_PROVIDER
     model: str = DEFAULT_MODEL
@@ -183,42 +190,91 @@ class LLMConfig(BaseModel):
         return get_provider_config(self.provider)["key_env_var"]
 
     def get_api_key(self) -> str | None:
-        """Read the API key from the configured environment variable.
+        """Read the API key — keyring first, then environment variable.
+
+        Keyring is the primary path (stored by ``mementic init``).
+        Environment variables are a fallback for CI, containers, and
+        headless environments.
 
         Returns:
-            The API key string, or None if the env var is not set.
+            The API key string, or None if neither source provides one.
         """
         env_var = self.key_env_var
         if env_var is None:
             return None
+
+        # 1. OS keyring (primary — interactive users)
+        try:
+            key = keyring.get_password(self._KEYRING_SERVICE, self.provider)
+            if key:
+                return key
+        except Exception:
+            pass  # keyring backend unavailable — fall through to env
+
+        # 2. Environment variable (fallback — CI, containers, headless)
         return os.environ.get(env_var)
+
+    def set_api_key(self, key: str) -> None:
+        """Store the API key in the OS keyring.
+
+        Args:
+            key: The API key string to store.
+
+        Raises:
+            RuntimeError: If the provider does not require a key (e.g. ollama),
+                or if the keyring backend is unavailable.
+        """
+        env_var = self.key_env_var
+        if env_var is None:
+            raise RuntimeError(
+                f"Provider '{self.provider}' does not require an API key."
+            )
+        try:
+            keyring.set_password(self._KEYRING_SERVICE, self.provider, key)
+        except Exception:
+            raise RuntimeError(
+                f"Failed to store API key in OS keyring for provider "
+                f"'{self.provider}'. The keyring backend may be unavailable.\n"
+                f"\n"
+                f"  Set the environment variable instead:\n"
+                f"    export {env_var}=\"your-key-here\"\n"
+            )
 
     def ensure_api_key(self) -> str:
         """Return the API key or raise a clear error message.
+
+        Tries keyring first, then environment variable.  The error
+        message tells the user exactly which env var to set or to run
+        ``mementic init --key`` to store in the keyring.
 
         Returns:
             The API key string.
 
         Raises:
             RuntimeError: If the configured provider requires an API key
-                but the required environment variable is not set.
+                and no key is available from keyring or environment.
         """
         env_var = self.key_env_var
         if env_var is None:
             return "ollama"  # dummy — not used for auth but needed for OpenAI client init
 
-        key = os.environ.get(env_var)
-        if not key:
-            msg = (
-                f"Mementic requires an API key for provider '{self.provider}'.\n"
-                f"  Set the environment variable: {env_var}\n"
-                f"  Example: export {env_var}=\"your-key-here\"\n\n"
-                f"  Or switch to a different provider in {GLOBAL_CONFIG_DISPLAY_PATH}:\n"
-                f"  {{ \"llm\": {{ \"provider\": \"ollama\" }} }} (local, no key needed)\n"
-                f"  {{ \"llm\": {{ \"provider\": \"openai\", \"model\": \"gpt-4o\" }} }}"
-            )
-            raise RuntimeError(msg)
-        return key
+        key = self.get_api_key()
+        if key:
+            return key
+
+        msg = (
+            f"Mementic requires an API key for provider '{self.provider}'.\n"
+            f"\n"
+            f"  To store in OS keyring (recommended):\n"
+            f"    mementic init --key\n"
+            f"\n"
+            f"  Or set the environment variable:\n"
+            f"    export {env_var}=\"your-key-here\"\n"
+            f"\n"
+            f"  Or switch to a local provider in {GLOBAL_CONFIG_DISPLAY_PATH}:\n"
+            f"    {{ \"llm\": {{ \"provider\": \"ollama\" }} }}\n"
+        )
+        raise RuntimeError(msg)
 
 
 class RetrievalConfig(BaseModel):
@@ -432,15 +488,38 @@ def load_global_config() -> GlobalConfig:
 def save_global_config(config: GlobalConfig) -> None:
     """Write a ``GlobalConfig`` to ``~/.mementic/config.json``.
 
-    Creates the parent directory if it is missing.
+    Creates the parent directory if it is missing. Normalizes repo dict keys
+    to match ``RepoEntry.path`` (full resolved path) for consistency with
+    ``mementic init`` registration.  Strips empty ``sources`` from repo
+    entries — Phase 0 auto-scanning handles all ``.md`` files regardless.
 
     Args:
         config: The validated global config to persist.
     """
+    # Normalize repo keys: ensure they match RepoEntry.path (full resolved
+    # path), not legacy short names (e.g. "repo" → "/abs/path/to/repo").
+    # init() already stores the resolved path in RepoEntry.path, so no
+    # need to re-resolve (which requires the directory to exist).
+    for proj in config.projects.values():
+        if proj.repos:
+            normalized: dict[str, RepoEntry] = {}
+            for repo_entry in proj.repos.values():
+                normalized[repo_entry.path] = repo_entry
+            proj.repos = normalized
+
+    # Serialize and strip empty Sources (Phase 0 auto-scans all .md files).
+    data = config.model_dump(mode="json")
+    for proj_data in data.get("projects", {}).values():
+        for repo_data in proj_data.get("repos", {}).values():
+            if "sources" in repo_data:
+                s = repo_data["sources"]
+                if not any(v for v in s.values() if v):  # all arrays empty
+                    del repo_data["sources"]
+
     config_path = get_global_config_path()
     config_path.parent.mkdir(parents=True, exist_ok=True)
     config_path.write_text(
-        config.model_dump_json(indent=2),
+        json.dumps(data, indent=2),
         encoding="utf-8",
     )
 
