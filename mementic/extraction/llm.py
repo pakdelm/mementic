@@ -30,7 +30,7 @@ def _parse_llm_json(content: str) -> dict:
     instructions. This handles that gracefully.
     """
     text = content.strip()
-    m = re.match(r"```(?:json)?\s*\n(.*?)```", text, re.DOTALL)
+    m = re.search(r"```(?:json)?\s*\n(.*?)```", text, re.DOTALL)
     if m:
         text = m.group(1).strip()
     return json.loads(text)

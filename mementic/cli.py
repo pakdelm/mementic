@@ -374,6 +374,8 @@ def init(
             global_cfg.llm.provider = provider
             typer.echo("Ollama runs locally — no API key needed.")
             typer.echo("Make sure ollama is running on localhost:11434")
+            save_global_config(global_cfg)
+            typer.echo(f"Saved to {GLOBAL_CONFIG_DISPLAY_PATH}")
         else:
             key_val = typer.prompt(
                 f"API key for {provider} ({env_var})",
@@ -394,9 +396,9 @@ def init(
                 typer.echo(
                     f"Fallback (CI/containers): export {env_var}=\"your-key-here\""
                 )
+                save_global_config(global_cfg)
+                typer.echo(f"Saved to {GLOBAL_CONFIG_DISPLAY_PATH}")
 
-        save_global_config(global_cfg)
-        typer.echo(f"Saved to {GLOBAL_CONFIG_DISPLAY_PATH}")
         return
     elif not api_key and sys.stdin.isatty():
         # No key found — offer to set one up
