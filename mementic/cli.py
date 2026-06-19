@@ -34,7 +34,7 @@ from mementic.format import (
     timestamp,
 )
 from mementic.graph import GraphStore
-from mementic.models import CodeEntity, Constraint, Decision, DecisionStatus, EntityType, MetricsEntry
+from mementic.models import CodeEntity, DecisionStatus, EntityType, MetricsEntry
 from mementic.pipeline import _extract_session, run_init
 from mementic.conflict import auto_resolve_capture
 from mementic.metrics import UsageStore
@@ -1363,53 +1363,85 @@ def deprecate(
     """
     graph, cfg = _resolve_graph(project)
 
-    if not graph.has_node(id):
-        typer.echo(
-            f"Entity '{id}' not found. Run 'mementic list' to see IDs.",
-            err=True,
-        )
+    result = graph.deprecate_entity(id, reason)
+    graph.save(cfg.output.graph_path)
+
+    if result["status"] == "deprecated":
+        typer.echo(result["message"])
+    elif result["status"] == "already_deprecated":
+        typer.echo(result["message"])
+        raise typer.Exit()
+    elif result["status"] == "wrong_type":
+        typer.echo(result["message"], err=True)
         raise typer.Exit(code=1)
-
-    # Find the node and its type/payload in one pass
-    node_type: str | None = None
-    target_payload: dict | None = None
-    for nid, ntype, payload in graph.iter_nodes():
-        if nid == id:
-            node_type = ntype
-            target_payload = payload
-            break
-
-    if target_payload is None:
-        typer.echo(f"Entity '{id}' could not be loaded.", err=True)
-        raise typer.Exit(code=1)
-
-    if node_type == "Decision":
-        decision = Decision(**target_payload)
-        if decision.status == DecisionStatus.DEPRECATED:
-            typer.echo(f"Decision '{id}' is already deprecated.")
-            raise typer.Exit()
-        deprecation_note = f" [DEPRECATED: {reason}]" if reason else " [DEPRECATED]"
-        decision.rationale += deprecation_note
-        decision.status = DecisionStatus.DEPRECATED
-        graph.add_decision(decision)
-        graph.save(cfg.output.graph_path)
-        typer.echo(f"Deprecated decision '{id}': {decision.title}")
-
-    elif node_type == "Constraint":
-        constraint = Constraint(**target_payload)
-        if constraint.status == "deprecated":
-            typer.echo(f"Constraint '{id}' is already deprecated.")
-            raise typer.Exit()
-        deprecation_note = f" [DEPRECATED: {reason}]" if reason else " [DEPRECATED]"
-        constraint.description += deprecation_note
-        constraint.status = "deprecated"
-        graph.add_constraint(constraint)
-        graph.save(cfg.output.graph_path)
-        typer.echo(f"Deprecated constraint '{id}': {constraint.description}")
-
     else:
-        typer.echo(f"'{id}' is a {node_type}, not a decision or constraint.", err=True)
+        typer.echo(result["message"], err=True)
         raise typer.Exit(code=1)
+
+
+@app.command()
+def session_cleanup(
+    feature_description: str = typer.Argument(
+        ..., help="Description of the feature/task just completed",
+    ),
+    deprecated_ids: list[str] | None = typer.Option(
+        None, "--deprecate", "-d",
+        help="Decision or constraint IDs to deprecate (repeatable)",
+    ),
+    reason: str = typer.Option(
+        "", "--reason", "-r",
+        help="Reason for deprecation (applied to all deprecated IDs)",
+    ),
+    project: str | None = typer.Option(
+        None, "--project",
+        help="Target project name",
+    ),
+) -> None:
+    """Clean up mementic context after recording decisions/constraints.
+
+    Deprecates superseded entities, cleans dead references, and reports
+    graph state. Use after recording inline proposals during a session.
+    """
+    graph, cfg = _resolve_graph(project)
+    deprecated: list[str] = []
+    already: list[str] = []
+    not_found: list[str] = []
+
+    for entity_id in (deprecated_ids or []):
+        result = graph.deprecate_entity(entity_id, reason)
+        if result["status"] == "deprecated":
+            deprecated.append(entity_id)
+        elif result["status"] == "already_deprecated":
+            already.append(entity_id)
+        else:
+            not_found.append(entity_id)
+
+    # Write deprecations before cleanup
+    graph.save(cfg.output.graph_path)
+
+    # Clean dead references
+    graph.clean_dead_references()
+    graph.save(cfg.output.graph_path)
+
+    # Count active
+    active_constraints = len(graph.get_all_active_constraints())
+    active_decisions = len(graph.get_all_active_decisions())
+
+    parts: list[str] = [
+        f"session-cleanup: '{feature_description}'"
+    ]
+    if deprecated:
+        parts.append(f"deprecated {', '.join(deprecated)}")
+    if already:
+        parts.append(f"(already deprecated: {', '.join(already)})")
+    if not_found:
+        parts.append(f"(not found: {', '.join(not_found)})")
+    parts.append(
+        f"{active_decisions + active_constraints} active "
+        f"({active_decisions} decisions, {active_constraints} constraints)"
+    )
+
+    typer.echo(" — ".join(parts))
 
 
 @app.command()

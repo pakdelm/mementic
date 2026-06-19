@@ -641,11 +641,11 @@ class TestSaveAndLoad:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Graph JSON is saved to cfg.output.graph_path and reloads identically.
+        """Graph persisted to SQLite and reloads identically from the same db.
 
-        The new global-config API has no per-repo output path, so graph_path
-        defaults to ``./.mementic/graph.json`` relative to CWD. We chdir into
-        a scratch dir so the write lands in the temp tree.
+        run_init resolves the db_path from the project config, writes to
+        SQLite, and a second GraphStore loaded from the same db_path sees
+        identical data.
         """
         _config_path, repo_path = tmp_global_config
         adr_dir = tmp_path / "adrs"
@@ -653,18 +653,19 @@ class TestSaveAndLoad:
         (adr_dir / "0001-use-postgres.md").write_text(ADR_CONTENT)
         _configure_repo(repo_path, sources={"adr_dirs": [str(adr_dir)]})
 
-        scratch = tmp_path / "scratch"
-        scratch.mkdir()
-        monkeypatch.chdir(scratch)
-        graph_path = scratch / ".mementic" / "graph.json"
+        # Resolve the db_path the same way run_init does
+        from mementic.config import load_global_config
+        global_cfg = load_global_config()
+        default_proj = global_cfg.projects[global_cfg.default_project]
+        db_path = Path(default_proj.db_path).expanduser()
 
         gs1, _all_usage = run_init(repo_path=repo_path)
 
-        assert graph_path.is_file()
+        assert db_path.is_file()
 
         from mementic.graph import GraphStore
 
-        gs2 = GraphStore.load(str(graph_path))
+        gs2 = GraphStore(db_path=db_path)
         assert gs2.get_all_decisions() == gs1.get_all_decisions()
         assert gs2.get_all_constraints() == gs1.get_all_constraints()
         assert gs2.stats() == gs1.stats()

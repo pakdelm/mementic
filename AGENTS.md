@@ -21,6 +21,7 @@ context window):
 1. Call `mementic_get_task_context` with a clear task description describing
    what you are about to do. Be specific about the domain, action, and
    concerns (e.g., "fix authentication bug in login flow" not just "fix bug").
+   Echo the `[mementic: ...]` summary line to the user.
 2. **Sufficiency gate — output these two lines before any further reads:**
    1. `Context pack says:` — 1-2 sentence summary (or "returned nothing relevant").
    2. `Files I still need to read and why:` — every code file you will open,
@@ -28,7 +29,8 @@ context window):
       do not read it.
 3. Call `mementic_get_entity_history` for each file being modified.
 4. Validate your plan against every returned constraint. Do NOT write code
-   that violates an active constraint.
+   that violates an active constraint. Cite every entity you apply or
+   reject with `[mementic: <id>]` so usage is auditable in the session log.
 5. Only read raw ADR or instruction files if the context pack leaves
    ambiguity you must resolve to proceed safely.
 
@@ -47,6 +49,17 @@ purpose.**
 targeted reads only (grep first, read specific sections), and report the
 failure to the user. Do not silently read entire files wholesale.
 
+**Echo summaries (HARD GATE — check before responding):** EVERY mementic MCP
+tool call returns a `[mementic: ...]` summary line. You MUST echo that line
+verbatim to the user in your response. This applies to `get_task_context`,
+`get_entity_history`, `record_decision`, `record_constraint`, `review_context`,
+and every other mementic tool. If you called a mementic tool and the
+`[mementic: ...]` line is not in your response text, fix it before sending.
+The user should see exactly what mementic contributed to every message.
+Skipping this is a hard constraint violation — equivalent to skipping
+`get_task_context` itself. The cost is zero (already computed), so there is
+no excuse.
+
 **Proposing decisions/constraints is cheap (SQLite writes, no LLM). Capture is
 expensive (LLM extraction). Use the right one:**
 
@@ -59,6 +72,11 @@ expensive (LLM extraction). Use the right one:**
   discussions happened but were NOT proposed inline (e.g., a design
   conversation that never produced an explicit proposal). The user decides when
   that's worth the extraction cost — do not run it yourself mid-task.
+
+**Post-recording cleanup:** After recording decisions or constraints via
+`mementic_record_decision` / `mementic_record_constraint`, call
+`mementic_review_context` with the feature description and any entities
+you deprecated.
 
 **If you skip these steps, you are violating project constraints.**
 A graph with no new decisions after a sprint of development is evidence
