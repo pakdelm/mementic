@@ -92,7 +92,7 @@ def _save_graph(graph: GraphStore, cfg: MementicConfig) -> None:
 async def get_task_context(
     task_description: str,
     project: str | None = None,
-    max_tokens: int = 1500,
+    max_tokens: int = 2000,
 ) -> str:
     """Return all relevant Decisions and Constraints for a given task.
 
@@ -104,7 +104,8 @@ async def get_task_context(
         task_description: Description of the task being started.
         project: Optional project name to target.  When ``None``,
             auto-resolution is attempted.
-        max_tokens: Maximum token budget for the constraint + decision lines.
+        max_tokens: Maximum token budget for the constraint and decision lines
+            (default 2000).
 
     Returns:
         Formatted markdown with relevant architectural context.
@@ -115,13 +116,15 @@ async def get_task_context(
     decisions = graph.get_all_active_decisions()
     task_keywords = extract_task_keywords(
         task_description,
-        top=cfg.constraints.yake_top_k,
-        n=cfg.constraints.yake_ngram,
+        top=cfg.retrieval.yake_top_k,
+        n=cfg.retrieval.yake_ngram,
     )
     pack_text = format_context_pack(
         task_description, decisions, constraints,
-        max_tokens=max_tokens, task_keywords=task_keywords,
-        mmr_lambda=cfg.constraints.mmr_lambda,
+        max_constraint_tokens=max_tokens,
+        max_decision_tokens=max_tokens,
+        task_keywords=task_keywords,
+        mmr_lambda=cfg.retrieval.mmr_lambda,
     )
     pack_tokens = count_tokens(pack_text)
     entry = MetricsEntry(

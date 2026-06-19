@@ -294,7 +294,7 @@ Uses `tiktoken` (accurate) if installed, falls back to `len(text) // 4`
 
 ```bash
 uv sync                           # install dependencies
-uv run pytest -n auto             # run tests (parallel)
+uv run pytest                    # run tests (parallel)
 uv run ruff check .               # lint
 uv run mypy .                     # type check
 ```

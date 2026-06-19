@@ -6,6 +6,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
+import yake
+
 from mementic.models import Constraint, Decision, DecisionStatus
 
 # ID length constants for slugify(). Both decision and constraint IDs
@@ -213,12 +215,18 @@ def _compact_evolution_line(d: Decision) -> str:
 # Keyword extraction & scoring (Zero-LLM, Spec 14)
 # ---------------------------------------------------------------------------
 
+YAKE_DEFAULT_TOP: int = 10
+YAKE_DEFAULT_NGRAM: int = 3
+MMR_DEFAULT_LAMBDA: float = 0.7
+CONTEXT_PACK_DEFAULT_MAX_CONSTRAINT_TOKENS: int = 2000
+CONTEXT_PACK_DEFAULT_MAX_DECISION_TOKENS: int = 2000
+
 
 def extract_task_keywords(
     task_description: str,
     *,
-    top: int = 10,
-    n: int = 3,
+    top: int,
+    n: int,
 ) -> list[str]:
     """Extract scored keywords from a task description using yake.
 
@@ -237,8 +245,6 @@ def extract_task_keywords(
     """
     if not task_description.strip():
         return []
-
-    import yake
 
     extractor = yake.KeywordExtractor(
         lan="en",
@@ -323,27 +329,30 @@ def token_jaccard(a: str, b: str) -> float:
 
 
 def mmr_select(
-    scored: list[tuple[Constraint, float]],
+    scored: list[tuple[Any, float]],
     max_items: int,
-    lambda_: float = 0.7,
-) -> list[tuple[Constraint, float]]:
-    """Select diverse constraints using Maximum Marginal Relevance.
+    lambda_: float,
+    *,
+    text: Callable[[Any], str] = lambda c: c.description,
+) -> list[tuple[Any, float]]:
+    """Select diverse items using Maximum Marginal Relevance.
 
     MMR = λ * relevance(c) - (1-λ) * max(similarity(c, already_selected))
 
     Args:
-        scored: List of ``(Constraint, combined_score)`` sorted descending.
+        scored: List of ``(entity, combined_score)`` sorted descending.
         max_items: Maximum number of items to select.
         lambda_: Trade-off between relevance (1.0) and diversity (0.0).
-            Default 0.7 favors relevance with diversity as a tiebreak.
+        text: Callable that extracts a comparison string from an entity
+            (default: ``c.description`` for Constraint objects).
 
     Returns:
-        Selected list of ``(Constraint, mmr_score)`` in selection order.
+        Selected list of ``(entity, mmr_score)`` in selection order.
     """
     if not scored or max_items <= 0:
         return []
 
-    selected: list[tuple[Constraint, float]] = []
+    selected: list[tuple[Any, float]] = []
     remaining = list(scored)
 
     while remaining and len(selected) < max_items:
@@ -354,7 +363,7 @@ def mmr_select(
             # Similarity to already-selected items
             if selected:
                 max_sim = max(
-                    token_jaccard(candidate.description, s.description)
+                    token_jaccard(text(candidate), text(s))
                     for s, _ in selected
                 )
             else:
@@ -451,10 +460,11 @@ def format_context_pack(
     task: str,
     decisions: list[Decision],
     constraints: list[Constraint],
-    max_tokens: int = 1500,
+    max_constraint_tokens: int,
+    max_decision_tokens: int,
     *,
     task_keywords: list[str] | None = None,
-    mmr_lambda: float = 0.7,
+    mmr_lambda: float,
 ) -> str:
     """Produces structured, token-budgeted markdown for agent context injection.
 
@@ -464,25 +474,26 @@ def format_context_pack(
     With ``affected_files`` abolished, overlap counts are gone —
     decisions and constraints are passed as plain lists.
 
-    When ``task_keywords`` is provided, constraints are ranked by keyword
-    overlap * specificity factor, then MMR-selected for diversity.
+    When ``task_keywords`` is provided, constraints *and* decisions are
+    ranked by keyword overlap * specificity factor, then MMR-selected for
+    diversity.  Both entity types use the same pipeline.
 
     When ``task_keywords`` is ``None``, falls back to recency + status
-    ranking (backward compatible).
+    ranking for both (backward compatible).
 
-    Constraints are filled *first* against the full ``max_tokens`` budget.
-    Decisions receive the remaining budget.  Both sections always appear
-    (even when empty, with an omission note).
+    Constraints and decisions each get their own independent token budget.
+    Both sections always appear (even when empty, with an omission note).
 
     Args:
         task: Description of the task requesting context.
-        decisions: List of Decision objects (ranked by recency + status).
+        decisions: List of Decision objects.
         constraints: List of Constraint objects.
-        max_tokens: Maximum token budget for the constraint + decision lines.
+        max_constraint_tokens: Maximum token budget for constraint lines.
+        max_decision_tokens: Maximum token budget for decision lines.
         task_keywords: Keywords extracted from the task description.
             When ``None``, constraints are ranked by recency + status.
         mmr_lambda: MMR relevance/diversity trade-off (1.0 = pure relevance,
-            0.0 = pure diversity).  Default 0.7.
+            0.0 = pure diversity).
 
     Returns:
         Formatted markdown string.
@@ -493,6 +504,9 @@ def format_context_pack(
     total_c = len(constraints)
     shown_c: int
     selected_c: list[Constraint]
+    keywords_missed: bool = False
+    keyword_filtered_count: int = 0
+    budget_truncated_count: int = 0
 
     if task_keywords:
         # Keyword-based ranking (Spec 14 primary path)
@@ -504,6 +518,11 @@ def format_context_pack(
                 scored.append((c, score))
         scored.sort(key=lambda x: x[1], reverse=True)
 
+        if not scored:
+            keywords_missed = True
+        else:
+            keyword_filtered_count = total_c - len(scored)
+
         # MMR selection — select all scored items (MMR reorders for diversity)
         selected_tuples = mmr_select(scored, len(scored), lambda_=mmr_lambda)
 
@@ -512,16 +531,17 @@ def format_context_pack(
         tokens_used_c = 0
         for c, _ in selected_tuples:
             line_tokens = count_tokens(_compact_constraint_line(c))
-            if tokens_used_c + line_tokens > max_tokens:
+            if tokens_used_c + line_tokens > max_constraint_tokens:
                 break
             selected_c.append(c)
             tokens_used_c += line_tokens
         shown_c = len(selected_c)
+        budget_truncated_count = len(scored) - shown_c
     else:
         # Fallback: recency + status ranking (no keywords available)
         constraint_tuples = [(c, 0) for c in constraints]
         selected_c_tuples, shown_c = rank_and_truncate(
-            constraint_tuples, max_tokens,
+            constraint_tuples, max_constraint_tokens,
             line_formatter=_compact_constraint_line,
         )[:2]
         selected_c = selected_c_tuples  # type: ignore[assignment]
@@ -534,6 +554,11 @@ def format_context_pack(
     if shown_c == 0:
         if total_c == 0:
             lines.append("_None_")
+        elif keywords_missed:
+            lines.append(
+                f"_No constraints matched your task keywords "
+                f"({total_c} active constraints total)._"
+            )
         else:
             lines.append(
                 f"_... and {total_c} constraints omitted (token budget)._"
@@ -542,27 +567,85 @@ def format_context_pack(
         for c in selected_c:
             lines.append(_compact_constraint_line(c))
         if shown_c < total_c:
-            lines.append(
-                f"... and {total_c - shown_c} more constraints omitted "
-                f"(token budget)."
-            )
+            omitted = total_c - shown_c
+            if task_keywords and keyword_filtered_count > 0 and budget_truncated_count > 0:
+                lines.append(
+                    f"... and {omitted} more constraints omitted "
+                    f"({keyword_filtered_count} keyword mismatch, "
+                    f"{budget_truncated_count} token budget)."
+                )
+            elif task_keywords and keyword_filtered_count > 0:
+                lines.append(
+                    f"... and {omitted} more constraints omitted "
+                    f"(keyword mismatch)."
+                )
+            else:
+                lines.append(
+                    f"... and {omitted} more constraints omitted "
+                    f"(token budget)."
+                )
 
     # --- Decisions section (always present) ---
-    remaining = max_tokens - tokens_used_c
-    if decisions:
-        decision_tuples = [(d, 0) for d in decisions]
-        selected_d, shown_d, total_d = rank_and_truncate(
-            decision_tuples, max(remaining, 0),
-            line_formatter=_compact_decision_line,
+    total_d = len(decisions)
+    shown_d: int
+    selected_d: list[Decision]
+    decisions_keywords_missed: bool = False
+    decisions_keyword_filtered_count: int = 0
+    decisions_budget_truncated_count: int = 0
+
+    if task_keywords:
+        # Keyword-based ranking (same pipeline as constraints)
+        scored_d: list[tuple[Decision, float]] = []
+        for d in decisions:
+            score = keyword_overlap_score(d.rationale, task_keywords)
+            score *= specificity_factor(d.affected_entities)
+            if score > 0:
+                scored_d.append((d, score))
+        scored_d.sort(key=lambda x: x[1], reverse=True)
+
+        if not scored_d:
+            decisions_keywords_missed = True
+        else:
+            decisions_keyword_filtered_count = total_d - len(scored_d)
+
+        # MMR selection — select all scored items (MMR reorders for diversity)
+        selected_d_tuples = mmr_select(
+            scored_d, len(scored_d), lambda_=mmr_lambda, text=lambda d: d.rationale,
         )
+
+        # Truncate to token budget
+        selected_d = []
+        tokens_used_d = 0
+        for d, _ in selected_d_tuples:
+            line_tokens = count_tokens(_compact_decision_line(d))
+            if tokens_used_d + line_tokens > max_decision_tokens:
+                break
+            selected_d.append(d)
+            tokens_used_d += line_tokens
+        shown_d = len(selected_d)
+        decisions_budget_truncated_count = len(scored_d) - shown_d
     else:
-        selected_d, shown_d, total_d = [], 0, 0
+        # Fallback: recency + status ranking (no keywords available)
+        if decisions:
+            decision_tuples = [(d, 0) for d in decisions]
+            fallback_selected, shown_d = rank_and_truncate(
+                decision_tuples, max_decision_tokens,
+                line_formatter=_compact_decision_line,
+            )[:2]
+            selected_d = fallback_selected  # type: ignore[assignment]
+        else:
+            selected_d, shown_d = [], 0
 
     lines.append("")
     lines.append("### Relevant Decisions")
     if shown_d == 0:
         if total_d == 0:
             lines.append("_None_")
+        elif decisions_keywords_missed:
+            lines.append(
+                f"_No decisions matched your task keywords "
+                f"({total_d} active decisions total)._"
+            )
         else:
             lines.append(
                 f"_... and {total_d} decisions omitted (token budget)._"
@@ -571,10 +654,27 @@ def format_context_pack(
         for d in selected_d:
             lines.append(_compact_decision_line(d))  # type: ignore[arg-type]
         if shown_d < total_d:
-            lines.append(
-                f"... and {total_d - shown_d} more decisions omitted "
-                f"(token budget)."
-            )
+            omitted = total_d - shown_d
+            if (
+                task_keywords
+                and decisions_keyword_filtered_count > 0
+                and decisions_budget_truncated_count > 0
+            ):
+                lines.append(
+                    f"... and {omitted} more decisions omitted "
+                    f"({decisions_keyword_filtered_count} keyword mismatch, "
+                    f"{decisions_budget_truncated_count} token budget)."
+                )
+            elif task_keywords and decisions_keyword_filtered_count > 0:
+                lines.append(
+                    f"... and {omitted} more decisions omitted "
+                    f"(keyword mismatch)."
+                )
+            else:
+                lines.append(
+                    f"... and {omitted} more decisions omitted "
+                    f"(token budget)."
+                )
 
     return "\n".join(lines)
 

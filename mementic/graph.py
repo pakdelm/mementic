@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal, overload
@@ -759,7 +760,7 @@ class GraphStore:
         payload = GraphPayload(nodes=nodes_payload, edges=edges_payload)
         p = Path(path)
         p.parent.mkdir(parents=True, exist_ok=True)
-        tmp = p.with_suffix(p.suffix + ".tmp")
+        tmp = p.with_suffix(p.suffix + f".{uuid.uuid4().hex}.tmp")
         tmp.write_text(
             json.dumps(payload.model_dump(mode="json"), indent=2)
         )

@@ -21,7 +21,7 @@ description: Use when diagnosing and fixing failing tests. Follows a systematic 
 6. Re-run the specific test to confirm the fix.
 7. Run the full suite to check for regressions:
    ```
-   uv run pytest -n auto
+   uv run pytest
    ```
 8. If the bug was in source code, add a regression test that would have caught it.
 

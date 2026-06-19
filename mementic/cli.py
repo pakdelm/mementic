@@ -25,7 +25,18 @@ from mementic.config import (  # noqa: E402
     resolve_project,
     save_global_config,
 )
-from mementic.format import count_tokens, detect_repo_path, extract_task_keywords, format_context_pack, timestamp  # noqa: E402
+from mementic.format import (  # noqa: E402
+    CONTEXT_PACK_DEFAULT_MAX_CONSTRAINT_TOKENS,
+    CONTEXT_PACK_DEFAULT_MAX_DECISION_TOKENS,
+    MMR_DEFAULT_LAMBDA,
+    YAKE_DEFAULT_NGRAM,
+    YAKE_DEFAULT_TOP,
+    count_tokens,
+    detect_repo_path,
+    extract_task_keywords,
+    format_context_pack,
+    timestamp,
+)
 from mementic.graph import GraphStore  # noqa: E402
 from mementic.models import CodeEntity, Constraint, Decision, DecisionStatus, EntityType, MetricsEntry  # noqa: E402
 from mementic.pipeline import _extract_session, run_init  # noqa: E402
@@ -706,10 +717,16 @@ def context(
 
     constraints = graph.get_all_active_constraints()
     decisions = graph.get_all_active_decisions()
-    task_keywords = extract_task_keywords(task)
+    task_keywords = extract_task_keywords(
+        task, top=YAKE_DEFAULT_TOP, n=YAKE_DEFAULT_NGRAM,
+    )
 
     output = format_context_pack(
-        task, decisions, constraints, task_keywords=task_keywords,
+        task, decisions, constraints,
+        max_constraint_tokens=CONTEXT_PACK_DEFAULT_MAX_CONSTRAINT_TOKENS,
+        max_decision_tokens=CONTEXT_PACK_DEFAULT_MAX_DECISION_TOKENS,
+        mmr_lambda=MMR_DEFAULT_LAMBDA,
+        task_keywords=task_keywords,
     )
     typer.echo(output)
 

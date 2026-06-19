@@ -15,7 +15,7 @@ __all__ = [
     "AdrDirSource",
     "AgentSessionConfig",
     "ClaudeSource",
-    "ConstraintsConfig",
+    "RetrievalConfig",
     "CursorSource",
     "delete_project",
     "GlobalConfig",
@@ -221,8 +221,8 @@ class LLMConfig(BaseModel):
         return key
 
 
-class ConstraintsConfig(BaseModel):
-    """Configuration for constraint retrieval and ranking (Spec 14).
+class RetrievalConfig(BaseModel):
+    """Configuration for context retrieval and ranking (Spec 14).
 
     Controls the keyword extraction and MMR diversity parameters
     used by ``format_context_pack``.
@@ -240,7 +240,7 @@ class MementicConfig(BaseModel):
     sessions: SessionsConfig = Field(default_factory=SessionsConfig)
     output: OutputConfig = Field(default_factory=OutputConfig)
     llm: LLMConfig = Field(default_factory=LLMConfig)
-    constraints: ConstraintsConfig = Field(default_factory=ConstraintsConfig)
+    retrieval: RetrievalConfig = Field(default_factory=RetrievalConfig)
 
 
 def load_config(repo_path: str | None = None, project: str | None = None) -> MementicConfig:

@@ -34,6 +34,9 @@ dev = [
     "types-networkx>=3.6.1.20260518",
 ]
 
+[tool.pytest.ini_options]
+addopts = "-n logical"
+
 [tool.ruff]
 line-length = 100
 
