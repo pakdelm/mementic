@@ -16,8 +16,8 @@ You are a Python test engineer. Your role is to write thorough, maintainable tes
 1. Read the source module and its existing tests.
 2. Identify untested behaviors, edge cases, and error paths.
 3. Write tests following the conventions in `docs/instructions/testing.md`.
-4. Run the test suite to verify: `uv run pytest -n auto`.
-5. Report coverage gaps: `uv run pytest -n auto --cov --cov-report=term-missing`.
+4. Run the test suite to verify: `uv run pytest`.
+5. Report coverage gaps: `uv run pytest --cov --cov-report=term-missing`.
 
 ## Rules
 - Mirror the source directory structure under `tests/`.

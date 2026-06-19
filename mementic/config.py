@@ -15,6 +15,7 @@ __all__ = [
     "AdrDirSource",
     "AgentSessionConfig",
     "ClaudeSource",
+    "RetrievalConfig",
     "CursorSource",
     "delete_project",
     "GlobalConfig",
@@ -220,6 +221,18 @@ class LLMConfig(BaseModel):
         return key
 
 
+class RetrievalConfig(BaseModel):
+    """Configuration for context retrieval and ranking (Spec 14).
+
+    Controls the keyword extraction and MMR diversity parameters
+    used by ``format_context_pack``.
+    """
+
+    mmr_lambda: float = Field(default=0.7, ge=0.0, le=1.0)
+    yake_top_k: int = Field(default=10, ge=1, le=50)
+    yake_ngram: int = Field(default=3, ge=1, le=5)
+
+
 class MementicConfig(BaseModel):
     """Root configuration for the Mementic project."""
 
@@ -227,6 +240,7 @@ class MementicConfig(BaseModel):
     sessions: SessionsConfig = Field(default_factory=SessionsConfig)
     output: OutputConfig = Field(default_factory=OutputConfig)
     llm: LLMConfig = Field(default_factory=LLMConfig)
+    retrieval: RetrievalConfig = Field(default_factory=RetrievalConfig)
 
 
 def load_config(repo_path: str | None = None, project: str | None = None) -> MementicConfig:

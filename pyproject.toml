@@ -10,6 +10,7 @@ dependencies = [
     "pyvis>=0.3",
     "tiktoken>=0.5",
     "typer>=0.9",
+    "yake>=0.7.3",
 ]
 
 [project.scripts]
@@ -33,8 +34,16 @@ dev = [
     "types-networkx>=3.6.1.20260518",
 ]
 
+[tool.pytest.ini_options]
+addopts = "-n logical"
+
 [tool.ruff]
 line-length = 100
 
 [tool.ruff.format]
 quote-style = "double"
+
+[tool.mypy]
+[[tool.mypy.overrides]]
+module = "yake"
+ignore_missing_imports = true

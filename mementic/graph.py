@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal, overload
@@ -12,6 +13,7 @@ from mementic.models import (
     CodeEntity,
     Constraint,
     Decision,
+    DecisionStatus,
     GraphPayload,
 )
 
@@ -692,6 +694,32 @@ class GraphStore:
             if attrs.get("node_type") == "Decision"
         ]
 
+    def get_all_active_constraints(self) -> list[Constraint]:
+        """Return all constraints with ``status == "active"``.
+
+        Filters out deprecated/superseded constraints.  Used by
+        ``get_task_context`` to provide the full active set for
+        keyword-based ranking (Spec 14).
+
+        Returns:
+            List of active Constraint objects.
+        """
+        all_c = self.get_all_constraints()
+        return [c for c in all_c if c.status == "active"]
+
+    def get_all_active_decisions(self) -> list[Decision]:
+        """Return all decisions with ``status == "accepted"``.
+
+        Filters out deprecated/rejected decisions.  Used by
+        ``get_task_context`` to provide the full accepted set for
+        relevance ranking (Spec 14).
+
+        Returns:
+            List of accepted Decision objects.
+        """
+        all_d = self.get_all_decisions()
+        return [d for d in all_d if d.status == DecisionStatus.ACCEPTED]
+
     def get_all_constraints(self) -> list[Constraint]:
         if self._conn is not None:
             return [
@@ -732,7 +760,7 @@ class GraphStore:
         payload = GraphPayload(nodes=nodes_payload, edges=edges_payload)
         p = Path(path)
         p.parent.mkdir(parents=True, exist_ok=True)
-        tmp = p.with_suffix(p.suffix + ".tmp")
+        tmp = p.with_suffix(p.suffix + f".{uuid.uuid4().hex}.tmp")
         tmp.write_text(
             json.dumps(payload.model_dump(mode="json"), indent=2)
         )
