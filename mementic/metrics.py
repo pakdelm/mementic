@@ -180,7 +180,7 @@ class UsageStore:
                 extraction_capture_calls += 1
                 extraction_capture_tokens += e.total_tokens
 
-            if e.operation == "mcp_context_pack":
+            if e.operation == "get_task_context":
                 context_pack_queries += 1
                 context_pack_total_tokens += e.total_tokens
 

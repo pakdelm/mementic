@@ -803,7 +803,7 @@ def extract_from_codebase_summary(
     # Force all detected decisions to accepted status
     for decision in result.decisions:
         decision.status = DecisionStatus.ACCEPTED
-        decision.source = "detected:codebase"
+        decision.source = "init"
 
     if usage:
         stats = UsageStats(

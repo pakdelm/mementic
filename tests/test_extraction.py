@@ -1120,7 +1120,7 @@ class TestExtractFromCodebaseSummary:
         d = output.decisions[0]
         assert d.title == "Use FastAPI"
         assert d.status == DecisionStatus.ACCEPTED
-        assert d.source == "detected:codebase"
+        assert d.source == "init"
 
     def test_empty_summary_returns_empty_result(self) -> None:
         """Empty summary string returns empty ExtractionResult with zero tokens."""

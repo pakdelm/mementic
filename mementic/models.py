@@ -28,12 +28,10 @@ class Decision(BaseModel):
     rejected_alternatives: list[str] = Field(default_factory=list)
     source: str
     status: DecisionStatus = DecisionStatus.ACCEPTED
-    author: str = "unknown"
     created_at: str
     modified_at: str
     repo: str = ""
     affected_entities: list[str] = Field(default_factory=list)
-    tags: list[str] = Field(default_factory=list)
 
 
 class Constraint(BaseModel):
@@ -92,7 +90,7 @@ class MetricsEntry(BaseModel):
     """One row in the metrics log, representing a single mementic operation."""
 
     timestamp: str
-    operation: str  # init_freeform / init_adr / capture / mcp_context_pack
+    operation: str  # init_freeform / init_adr / capture / get_task_context
     source_label: str = ""
     input_tokens: int = 0
     output_tokens: int = 0

@@ -46,7 +46,6 @@ def make_decision(
         rejected_alternatives=rejected or [],
         source=source,
         status=status,
-        author="test-author",
         created_at=ts,
         modified_at=ts,
     )

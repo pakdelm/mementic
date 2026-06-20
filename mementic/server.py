@@ -15,6 +15,7 @@ from mementic.format import (
     extract_task_keywords,
     format_context_pack,
     format_evolution,
+    resolve_repo_name,
     slugify,
     timestamp,
 )
@@ -129,7 +130,7 @@ async def get_task_context(
     pack_tokens = count_tokens(pack_text)
     entry = MetricsEntry(
         timestamp=timestamp(),
-        operation="mcp_context_pack",
+        operation="get_task_context",
         source_label=task_description[:80],
         input_tokens=0,
         output_tokens=0,
@@ -171,7 +172,7 @@ async def record_decision(
         Confirmation message with save status.
     """
     graph, cfg = _load_graph()
-    repo = detect_repo_path(check_global_config=True)
+    repo = resolve_repo_name(detect_repo_path(check_global_config=True))
     entity_list = affected_entities or []
 
     now = timestamp()
@@ -181,9 +182,8 @@ async def record_decision(
         rationale=rationale,
         rejected_alternatives=rejected_alternatives or [],
         affected_entities=entity_list,
-        source=f"agent-proposal:{now}",
+        source="mcp",
         status=DecisionStatus.ACCEPTED,
-        author="opencode",
         created_at=now,
         modified_at=now,
         repo=repo,
@@ -224,7 +224,7 @@ async def record_constraint(
         Confirmation message with save status.
     """
     graph, cfg = _load_graph()
-    repo = detect_repo_path(check_global_config=True)
+    repo = resolve_repo_name(detect_repo_path(check_global_config=True))
 
     constraint_id = (
         slugify(id, max_length=CONSTRAINT_ID_MAX_LENGTH)
@@ -238,7 +238,7 @@ async def record_constraint(
         description=description,
         bound_entities=bound_entities,
         enforced_by=decision_id or "",
-        source=f"agent-proposal:{now}",
+        source="mcp",
         status="active",
         created_at=now,
         repo=repo,

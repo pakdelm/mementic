@@ -336,7 +336,7 @@ def extract_from_session_deterministic(
                         id=slugify(line, max_length=DECISION_ID_MAX_LENGTH),
                         title=title,
                         rationale=rationale,
-                        source="session:deterministic",
+                        source="capture",
                         status=DecisionStatus.ACCEPTED,
                         created_at=now,
                         modified_at=now,
@@ -353,7 +353,7 @@ def extract_from_session_deterministic(
                         description=description,
                         bound_entities=find_file_paths(context_text),
                         enforced_by="",
-                        source="session:deterministic",
+                        source="capture",
                         status="active",
                         created_at=now,
                     )
@@ -378,7 +378,7 @@ def extract_from_session_deterministic(
                     description=description,
                     bound_entities=find_file_paths(context_text),
                     enforced_by="",
-                    source="session:deterministic",
+                    source="capture",
                     status="active",
                     created_at=now,
                 )

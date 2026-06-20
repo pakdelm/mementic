@@ -197,7 +197,7 @@ class TestSummary:
     def test_summary_honest_fields_only(self, tmp_path: Path) -> None:
         """summary() does not contain deprecated or dishonest fields."""
         store = UsageStore(path=str(tmp_path / "metrics.jsonl"))
-        store.append(_make_entry(operation="mcp_context_pack", total_tokens=100))
+        store.append(_make_entry(operation="get_task_context", total_tokens=100))
 
         result = store.summary()
 
@@ -214,9 +214,9 @@ class TestSummary:
     def test_summary_context_pack_aggregation(self, tmp_path: Path) -> None:
         """summary() correctly aggregates context pack query metrics."""
         store = UsageStore(path=str(tmp_path / "metrics.jsonl"))
-        store.append(_make_entry(operation="mcp_context_pack", total_tokens=200))
-        store.append(_make_entry(operation="mcp_context_pack", total_tokens=300))
-        store.append(_make_entry(operation="mcp_context_pack", total_tokens=100))
+        store.append(_make_entry(operation="get_task_context", total_tokens=200))
+        store.append(_make_entry(operation="get_task_context", total_tokens=300))
+        store.append(_make_entry(operation="get_task_context", total_tokens=100))
 
         result = store.summary()
 
@@ -229,7 +229,7 @@ class TestSummary:
         store = UsageStore(path=str(tmp_path / "metrics.jsonl"))
         store.append(_make_entry(operation="capture", total_tokens=100))
         store.append(_make_entry(operation="init_adr", total_tokens=200))
-        store.append(_make_entry(operation="mcp_context_pack", total_tokens=50))
+        store.append(_make_entry(operation="get_task_context", total_tokens=50))
 
         result = store.summary()
 
@@ -239,13 +239,13 @@ class TestSummary:
         assert result["extraction_capture_calls"] == 1
         assert result["context_pack_queries"] == 1
         assert result["by_operation"]["capture"]["calls"] == 1
-        assert result["by_operation"]["mcp_context_pack"]["calls"] == 1
+        assert result["by_operation"]["get_task_context"]["calls"] == 1
 
     def test_summary_no_negative_savings_field(self, tmp_path: Path) -> None:
         """summary() never includes a negative savings ratio or similar fake field."""
         store = UsageStore(path=str(tmp_path / "metrics.jsonl"))
         store.append(_make_entry(operation="init_adr", total_tokens=100))
-        store.append(_make_entry(operation="mcp_context_pack", total_tokens=10))
+        store.append(_make_entry(operation="get_task_context", total_tokens=10))
 
         result = store.summary()
 
@@ -314,7 +314,7 @@ class TestRoundtrip:
         store = UsageStore(path=str(tmp_path / "metrics.jsonl"))
         entry = _make_entry(
             timestamp="2024-06-15T12:30:00Z",
-            operation="mcp_context_pack",
+            operation="get_task_context",
             source_label="my-source",
             input_tokens=42,
             output_tokens=7,

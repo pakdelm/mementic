@@ -28,7 +28,6 @@ def _build_sample_graph() -> GraphStore:
         status=DecisionStatus.ACCEPTED,
         created_at="2024-01-01T00:00:00Z",
         modified_at="2024-01-01T00:00:00Z",
-        tags=["performance"],
     )
     d2 = Decision(
         id="dec-002",

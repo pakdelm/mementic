@@ -77,8 +77,6 @@ class GraphStore:
                     repo TEXT DEFAULT '',
                     affected_entities TEXT DEFAULT '[]',
                     rejected_alternatives TEXT DEFAULT '[]',
-                    author TEXT DEFAULT 'unknown',
-                    tags TEXT DEFAULT '[]',
                     created_at TEXT NOT NULL,
                     modified_at TEXT NOT NULL
                 );
@@ -110,7 +108,7 @@ class GraphStore:
 
                 CREATE TABLE IF NOT EXISTS project_sources (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    repo_path TEXT NOT NULL UNIQUE,
+                    repo TEXT NOT NULL UNIQUE,
                     label TEXT,
                     ingested_at TEXT NOT NULL
                 );
@@ -191,7 +189,6 @@ class GraphStore:
             payload["rejected_alternatives"] = json.loads(
                 payload["rejected_alternatives"]
             )
-            payload["tags"] = json.loads(payload["tags"])
             self._g.add_node(row["id"], node_type="Decision", payload=payload)
 
         for row in self._conn.execute("SELECT * FROM constraints"):
@@ -234,8 +231,8 @@ class GraphStore:
                         """INSERT OR REPLACE INTO decisions
                            (id, title, status, rationale, source, repo,
                             affected_entities, rejected_alternatives,
-                            author, tags, created_at, modified_at)
-                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                            created_at, modified_at)
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                         (
                             payload.get("id", node_id),
                             payload.get("title", ""),
@@ -247,8 +244,6 @@ class GraphStore:
                             json.dumps(
                                 payload.get("rejected_alternatives", [])
                             ),
-                            payload.get("author", "unknown"),
-                            json.dumps(payload.get("tags", [])),
                             payload.get("created_at", now),
                             payload.get("modified_at", now),
                         ),
@@ -294,7 +289,6 @@ class GraphStore:
         payload["rejected_alternatives"] = json.loads(
             payload["rejected_alternatives"]
         )
-        payload["tags"] = json.loads(payload["tags"])
         return Decision(**payload)
 
     @staticmethod
@@ -1084,7 +1078,7 @@ class GraphStore:
         if self._conn is None:
             return ""
         row = self._conn.execute(
-            "SELECT last_captured_commit FROM project_sources WHERE repo_path = ?",
+            "SELECT last_captured_commit FROM project_sources WHERE repo = ?",
             (repo_path,),
         ).fetchone()
         return row[0] if row else ""
@@ -1092,7 +1086,7 @@ class GraphStore:
     def set_capture_checkpoint(self, repo_path: str, commit: str) -> None:
         """Set the last captured git commit SHA for a repo.
 
-        Uses INSERT OR REPLACE against the UNIQUE constraint on repo_path.
+        Uses INSERT OR REPLACE against the UNIQUE constraint on repo.
         If the repo isn't registered yet, creates a row.  If it exists,
         updates the commit and bumps ingested_at.
 
@@ -1105,9 +1099,9 @@ class GraphStore:
         now = datetime.now(timezone.utc).isoformat()
         self._conn.execute(
             """INSERT OR REPLACE INTO project_sources
-               (repo_path, label, ingested_at, last_captured_commit)
+               (repo, label, ingested_at, last_captured_commit)
                VALUES (?, ?, COALESCE(
-                   (SELECT ingested_at FROM project_sources WHERE repo_path = ?),
+                   (SELECT ingested_at FROM project_sources WHERE repo = ?),
                    ?
                ), ?)""",
             (repo_path, "", repo_path, now, commit),

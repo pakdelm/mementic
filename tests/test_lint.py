@@ -14,7 +14,6 @@ def make_decision(
     title: str = "Use async",
     rationale: str = "Better performance",
     status: DecisionStatus = DecisionStatus.ACCEPTED,
-    tags: list[str] | None = None,
 ) -> Decision:
     return Decision(
         id=id,
@@ -24,7 +23,6 @@ def make_decision(
         status=status,
         created_at="2024-01-01T00:00:00Z",
         modified_at="2024-01-01T00:00:00Z",
-        tags=tags or [],
     )
 
 
@@ -74,7 +72,7 @@ class TestLintCleanGraph:
 
     def test_healthy_graph_no_issues(self) -> None:
         graph = GraphStore()
-        d = make_decision(tags=["performance"])
+        d = make_decision()
         c = make_constraint(enforced_by="d-001")
         e = CodeEntity(id="src/test.py", type=EntityType.FILE)
         graph.add_decision(d)
@@ -129,7 +127,7 @@ class TestLintOrphanedConstraint:
 class TestLintUnlinkedDecision:
     def test_decision_with_no_outgoing_edges(self) -> None:
         graph = GraphStore()
-        d = make_decision(tags=["test"])
+        d = make_decision()
         graph.add_decision(d)
 
         result = lint(graph)
@@ -139,7 +137,7 @@ class TestLintUnlinkedDecision:
 
     def test_decision_with_outgoing_edges(self) -> None:
         graph = GraphStore()
-        d = make_decision(tags=["test"])
+        d = make_decision()
         graph.add_decision(d)
         graph.add_code_entity(CodeEntity(id="src/test.py", type=EntityType.FILE))
         graph.link("d-001", "src/test.py", "affects")
