@@ -8,7 +8,6 @@ import pytest
 from mementic.format import (
     CONTEXT_PACK_DEFAULT_MAX_CONSTRAINT_TOKENS,
     CONTEXT_PACK_DEFAULT_MAX_DECISION_TOKENS,
-    MMR_DEFAULT_LAMBDA,
     YAKE_DEFAULT_NGRAM,
     YAKE_DEFAULT_TOP,
     _compact_constraint_line,
@@ -218,7 +217,7 @@ class TestFormatContextPack:
             "Add async support", decisions, constraints,
             max_constraint_tokens=CONTEXT_PACK_DEFAULT_MAX_CONSTRAINT_TOKENS,
             max_decision_tokens=CONTEXT_PACK_DEFAULT_MAX_DECISION_TOKENS,
-            mmr_lambda=MMR_DEFAULT_LAMBDA,
+
         )
 
         assert output.startswith("## Architectural Context for: Add async support")
@@ -232,7 +231,7 @@ class TestFormatContextPack:
             "Empty task", [], [],
             max_constraint_tokens=CONTEXT_PACK_DEFAULT_MAX_CONSTRAINT_TOKENS,
             max_decision_tokens=CONTEXT_PACK_DEFAULT_MAX_DECISION_TOKENS,
-            mmr_lambda=MMR_DEFAULT_LAMBDA,
+
         )
 
         assert output.startswith("## Architectural Context for: Empty task")
@@ -247,7 +246,7 @@ class TestFormatContextPack:
             "Task", decisions, [],
             max_constraint_tokens=CONTEXT_PACK_DEFAULT_MAX_CONSTRAINT_TOKENS,
             max_decision_tokens=CONTEXT_PACK_DEFAULT_MAX_DECISION_TOKENS,
-            mmr_lambda=MMR_DEFAULT_LAMBDA,
+
         )
 
         assert "### Constraints (MUST follow)" in output
@@ -261,7 +260,7 @@ class TestFormatContextPack:
             "Task", [], constraints,
             max_constraint_tokens=CONTEXT_PACK_DEFAULT_MAX_CONSTRAINT_TOKENS,
             max_decision_tokens=CONTEXT_PACK_DEFAULT_MAX_DECISION_TOKENS,
-            mmr_lambda=MMR_DEFAULT_LAMBDA,
+
         )
 
         assert "### Constraints (MUST follow)" in output
@@ -276,7 +275,7 @@ class TestFormatContextPack:
             "Task", [], constraints,
             max_constraint_tokens=CONTEXT_PACK_DEFAULT_MAX_CONSTRAINT_TOKENS,
             max_decision_tokens=CONTEXT_PACK_DEFAULT_MAX_DECISION_TOKENS,
-            mmr_lambda=MMR_DEFAULT_LAMBDA,
+
         )
 
         assert "[C]" not in output
@@ -289,7 +288,7 @@ class TestFormatContextPack:
             "Task", [], constraints,
             max_constraint_tokens=CONTEXT_PACK_DEFAULT_MAX_CONSTRAINT_TOKENS,
             max_decision_tokens=CONTEXT_PACK_DEFAULT_MAX_DECISION_TOKENS,
-            mmr_lambda=MMR_DEFAULT_LAMBDA,
+
         )
 
         assert "enforced by" not in output
@@ -302,7 +301,7 @@ class TestFormatContextPack:
             "Task", decisions, [],
             max_constraint_tokens=CONTEXT_PACK_DEFAULT_MAX_CONSTRAINT_TOKENS,
             max_decision_tokens=CONTEXT_PACK_DEFAULT_MAX_DECISION_TOKENS,
-            mmr_lambda=MMR_DEFAULT_LAMBDA,
+
         )
 
         assert "Pick DB" not in output
@@ -322,7 +321,7 @@ class TestFormatContextPack:
             "Task", decisions, [],
             max_constraint_tokens=CONTEXT_PACK_DEFAULT_MAX_CONSTRAINT_TOKENS,
             max_decision_tokens=CONTEXT_PACK_DEFAULT_MAX_DECISION_TOKENS,
-            mmr_lambda=MMR_DEFAULT_LAMBDA,
+
         )
 
         assert "Rejected" not in output
@@ -341,7 +340,7 @@ class TestFormatContextPack:
             "Multi", decisions, constraints,
             max_constraint_tokens=CONTEXT_PACK_DEFAULT_MAX_CONSTRAINT_TOKENS,
             max_decision_tokens=CONTEXT_PACK_DEFAULT_MAX_DECISION_TOKENS,
-            mmr_lambda=MMR_DEFAULT_LAMBDA,
+
         )
 
         assert "- Constraint 1 (#c-1)" in output
@@ -358,7 +357,7 @@ class TestFormatContextPack:
         output = format_context_pack(
             "Task", [], constraints, max_constraint_tokens=60,
             max_decision_tokens=9999,
-            mmr_lambda=MMR_DEFAULT_LAMBDA,
+
         )
         assert "more constraints omitted (token budget)" in output
 
@@ -371,7 +370,7 @@ class TestFormatContextPack:
         output = format_context_pack(
             "Task", decisions, [], max_constraint_tokens=9999,
             max_decision_tokens=60,
-            mmr_lambda=MMR_DEFAULT_LAMBDA,
+
         )
         assert "more decisions omitted (token budget)" in output
 
@@ -383,7 +382,7 @@ class TestFormatContextPack:
         output = format_context_pack(
             "Task", [], constraints, max_constraint_tokens=9999,
             max_decision_tokens=9999,
-            mmr_lambda=MMR_DEFAULT_LAMBDA,
+
         )
         assert "more constraints omitted" not in output
 
@@ -395,7 +394,7 @@ class TestFormatContextPack:
         output = format_context_pack(
             "Task", [], constraints, max_constraint_tokens=1,  # impossibly small
             max_decision_tokens=9999,
-            mmr_lambda=MMR_DEFAULT_LAMBDA,
+
         )
         assert "_... and 1 constraints omitted (token budget)._" in output
 
@@ -413,7 +412,7 @@ class TestFormatContextPack:
         output = format_context_pack(
             "Task", decisions, constraints, max_constraint_tokens=100,
             max_decision_tokens=100,
-            mmr_lambda=MMR_DEFAULT_LAMBDA,
+
         )
 
         # Some constraints should be shown
@@ -1192,14 +1191,14 @@ class TestMmrSelect:
             self._c("validate csrf tokens", 0.8),
             self._c("use snake_case names", 0.3),
         ]
-        selected = mmr_select(items, max_items=10, lambda_=MMR_DEFAULT_LAMBDA)
+        selected = mmr_select(items, max_items=10, lambda_=0.7)
         assert len(selected) == 3
 
     def test_respects_max_items(self) -> None:
         items = [
             self._c(f"rule {i}", 1.0 - i * 0.1) for i in range(10)
         ]
-        selected = mmr_select(items, max_items=3, lambda_=MMR_DEFAULT_LAMBDA)
+        selected = mmr_select(items, max_items=3, lambda_=0.7)
         assert len(selected) == 3
 
     def test_deduplicates_near_duplicates(self) -> None:
@@ -1230,11 +1229,11 @@ class TestMmrSelect:
         assert selected[0][1] == pytest.approx(0.9)
 
     def test_empty_input(self) -> None:
-        assert mmr_select([], max_items=5, lambda_=MMR_DEFAULT_LAMBDA) == []
+        assert mmr_select([], max_items=5, lambda_=0.7) == []
 
     def test_zero_max_items(self) -> None:
         items = [self._c("rule", 1.0)]
-        assert mmr_select(items, max_items=0, lambda_=MMR_DEFAULT_LAMBDA) == []
+        assert mmr_select(items, max_items=0, lambda_=0.7) == []
 
     def test_lambda_zero_pure_diversity(self) -> None:
         """λ=0 means pure diversity — relevance ignored entirely."""
@@ -1260,7 +1259,7 @@ class TestMmrSelect:
             self._c("completely different topic a", 0.8),
             self._c("completely different topic b", 0.8),
         ]
-        selected = mmr_select(items, max_items=2, lambda_=MMR_DEFAULT_LAMBDA)
+        selected = mmr_select(items, max_items=2, lambda_=0.7)
         assert len(selected) == 2
 
 
@@ -1284,7 +1283,7 @@ class TestFormatContextPackKeywordRanking:
             "fix auth token bug", [], constraints,
             max_constraint_tokens=CONTEXT_PACK_DEFAULT_MAX_CONSTRAINT_TOKENS,
             max_decision_tokens=CONTEXT_PACK_DEFAULT_MAX_DECISION_TOKENS,
-            mmr_lambda=MMR_DEFAULT_LAMBDA,
+
             task_keywords=task_keywords,
         )
         # Auth-related constraints should appear before style ones
@@ -1315,7 +1314,7 @@ class TestFormatContextPackKeywordRanking:
         output = format_context_pack(
             "fix", [], constraints, task_keywords=task_keywords,
             max_constraint_tokens=500, max_decision_tokens=500,
-            mmr_lambda=MMR_DEFAULT_LAMBDA,
+
         )
         # Specific constraint should appear; generic might be omitted
         assert "c-specific" in output
@@ -1350,7 +1349,7 @@ class TestFormatContextPackKeywordRanking:
         output = format_context_pack(
             "add type hints", [], constraints, task_keywords=task_keywords,
             max_constraint_tokens=500, max_decision_tokens=500,
-            mmr_lambda=MMR_DEFAULT_LAMBDA,
+
         )
         # With MMR, the two near-duplicate "type hints" constraints
         # should not both crowd out the distinct one.
@@ -1373,7 +1372,7 @@ class TestFormatContextPackKeywordRanking:
         output = format_context_pack(
             "task", [], [old, new], max_constraint_tokens=9999,
             max_decision_tokens=9999,
-            mmr_lambda=MMR_DEFAULT_LAMBDA,
+
         )
         # Newer constraint should appear first (recency ranking)
         assert output.index("c-new") < output.index("c-old")
@@ -1400,6 +1399,6 @@ class TestFormatContextPackKeywordRanking:
         output = format_context_pack(
             "hash passwords", [], constraints, task_keywords=task_keywords,
             max_constraint_tokens=500, max_decision_tokens=500,
-            mmr_lambda=MMR_DEFAULT_LAMBDA,
+
         )
         assert "c-match-specific" in output

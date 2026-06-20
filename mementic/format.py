@@ -245,11 +245,10 @@ def _compact_evolution_line(d: Decision) -> str:
 # Keyword extraction & scoring (Zero-LLM, Spec 14)
 # ---------------------------------------------------------------------------
 
-YAKE_DEFAULT_TOP: int = 10
+YAKE_DEFAULT_TOP: int = 30
 YAKE_DEFAULT_NGRAM: int = 3
-MMR_DEFAULT_LAMBDA: float = 0.7
-CONTEXT_PACK_DEFAULT_MAX_CONSTRAINT_TOKENS: int = 2000
-CONTEXT_PACK_DEFAULT_MAX_DECISION_TOKENS: int = 2000
+CONTEXT_PACK_DEFAULT_MAX_CONSTRAINT_TOKENS: int = 10000
+CONTEXT_PACK_DEFAULT_MAX_DECISION_TOKENS: int = 15000
 
 
 _FILLER_WORDS: frozenset[str] = frozenset({
@@ -598,19 +597,13 @@ def format_context_pack(
     max_decision_tokens: int,
     *,
     task_keywords: list[str] | None = None,
-    mmr_lambda: float,
 ) -> str:
     """Produces structured, token-budgeted markdown for agent context injection.
 
-    **Signature change from Spec 14:** Previously accepted
-    ``list[tuple[Decision, int]]`` and ``list[tuple[Constraint, int]]``
-    where the ``int`` was an overlap count from file-path matching.
-    With ``affected_files`` abolished, overlap counts are gone —
-    decisions and constraints are passed as plain lists.
-
     When ``task_keywords`` is provided, constraints *and* decisions are
-    ranked by keyword overlap * specificity factor, then MMR-selected for
-    diversity.  Both entity types use the same pipeline.
+    ranked by keyword overlap * specificity factor.  Both entity types
+    use the same pipeline.  Items with zero keyword overlap sink to
+    the bottom; token budget controls how many are shown.
 
     When ``task_keywords`` is ``None``, falls back to recency + status
     ranking for both (backward compatible).
@@ -626,8 +619,6 @@ def format_context_pack(
         max_decision_tokens: Maximum token budget for decision lines.
         task_keywords: Keywords extracted from the task description.
             When ``None``, constraints are ranked by recency + status.
-        mmr_lambda: MMR relevance/diversity trade-off (1.0 = pure relevance,
-            0.0 = pure diversity).
 
     Returns:
         Formatted markdown string.
@@ -638,27 +629,18 @@ def format_context_pack(
     total_c = len(constraints)
     shown_c: int
     selected_c: list[Constraint]
-    keywords_missed: bool = False
-    keyword_filtered_count: int = 0
-    budget_truncated_count: int = 0
 
     if task_keywords:
-        # Keyword-based ranking (Spec 14 primary path)
+        # Keyword-based ranking: score all items — no gate.
+        # Items with zero overlap sink to the bottom; token budget
+        # determines how many are shown.
         scored: list[tuple[Constraint, float]] = []
         for c in constraints:
             score = keyword_overlap_score(c.description, task_keywords)
             score *= specificity_factor(c.bound_entities)
-            if score > 0:
-                scored.append((c, score))
+            scored.append((c, score))
         scored.sort(key=lambda x: x[1], reverse=True)
-
-        if not scored:
-            keywords_missed = True
-        else:
-            keyword_filtered_count = total_c - len(scored)
-
-        # MMR selection — select all scored items (MMR reorders for diversity)
-        selected_tuples = mmr_select(scored, len(scored), lambda_=mmr_lambda)
+        selected_tuples = list(scored)
 
         # Truncate to token budget
         selected_c = []
@@ -670,7 +652,6 @@ def format_context_pack(
             selected_c.append(c)
             tokens_used_c += line_tokens
         shown_c = len(selected_c)
-        budget_truncated_count = len(scored) - shown_c
     else:
         # Fallback: recency + status ranking (no keywords available)
         constraint_tuples = [(c, 0) for c in constraints]
@@ -688,11 +669,6 @@ def format_context_pack(
     if shown_c == 0:
         if total_c == 0:
             lines.append("_None_")
-        elif keywords_missed:
-            lines.append(
-                f"_No constraints matched your task keywords "
-                f"({total_c} active constraints total)._"
-            )
         else:
             lines.append(
                 f"_... and {total_c} constraints omitted (token budget)._"
@@ -702,50 +678,25 @@ def format_context_pack(
             lines.append(_compact_constraint_line(c))
         if shown_c < total_c:
             omitted = total_c - shown_c
-            if task_keywords and keyword_filtered_count > 0 and budget_truncated_count > 0:
-                lines.append(
-                    f"... and {omitted} more constraints omitted "
-                    f"({keyword_filtered_count} keyword mismatch, "
-                    f"{budget_truncated_count} token budget)."
-                )
-            elif task_keywords and keyword_filtered_count > 0:
-                lines.append(
-                    f"... and {omitted} more constraints omitted "
-                    f"(keyword mismatch)."
-                )
-            else:
-                lines.append(
-                    f"... and {omitted} more constraints omitted "
-                    f"(token budget)."
-                )
+            lines.append(
+                f"... and {omitted} more constraints omitted "
+                f"(token budget)."
+            )
 
     # --- Decisions section (always present) ---
     total_d = len(decisions)
     shown_d: int
     selected_d: list[Decision]
-    decisions_keywords_missed: bool = False
-    decisions_keyword_filtered_count: int = 0
-    decisions_budget_truncated_count: int = 0
 
     if task_keywords:
-        # Keyword-based ranking (same pipeline as constraints)
+        # Keyword-based ranking: score all items — no gate.
         scored_d: list[tuple[Decision, float]] = []
         for d in decisions:
             score = keyword_overlap_score(d.rationale, task_keywords)
             score *= specificity_factor(d.affected_entities)
-            if score > 0:
-                scored_d.append((d, score))
+            scored_d.append((d, score))
         scored_d.sort(key=lambda x: x[1], reverse=True)
-
-        if not scored_d:
-            decisions_keywords_missed = True
-        else:
-            decisions_keyword_filtered_count = total_d - len(scored_d)
-
-        # MMR selection — select all scored items (MMR reorders for diversity)
-        selected_d_tuples = mmr_select(
-            scored_d, len(scored_d), lambda_=mmr_lambda, text=lambda d: d.rationale,
-        )
+        selected_d_tuples = list(scored_d)
 
         # Truncate to token budget
         selected_d = []
@@ -757,7 +708,6 @@ def format_context_pack(
             selected_d.append(d)
             tokens_used_d += line_tokens
         shown_d = len(selected_d)
-        decisions_budget_truncated_count = len(scored_d) - shown_d
     else:
         # Fallback: recency + status ranking (no keywords available)
         if decisions:
@@ -775,11 +725,6 @@ def format_context_pack(
     if shown_d == 0:
         if total_d == 0:
             lines.append("_None_")
-        elif decisions_keywords_missed:
-            lines.append(
-                f"_No decisions matched your task keywords "
-                f"({total_d} active decisions total)._"
-            )
         else:
             lines.append(
                 f"_... and {total_d} decisions omitted (token budget)._"
@@ -789,26 +734,10 @@ def format_context_pack(
             lines.append(_compact_decision_line(d))  # type: ignore[arg-type]
         if shown_d < total_d:
             omitted = total_d - shown_d
-            if (
-                task_keywords
-                and decisions_keyword_filtered_count > 0
-                and decisions_budget_truncated_count > 0
-            ):
-                lines.append(
-                    f"... and {omitted} more decisions omitted "
-                    f"({decisions_keyword_filtered_count} keyword mismatch, "
-                    f"{decisions_budget_truncated_count} token budget)."
-                )
-            elif task_keywords and decisions_keyword_filtered_count > 0:
-                lines.append(
-                    f"... and {omitted} more decisions omitted "
-                    f"(keyword mismatch)."
-                )
-            else:
-                lines.append(
-                    f"... and {omitted} more decisions omitted "
-                    f"(token budget)."
-                )
+            lines.append(
+                f"... and {omitted} more decisions omitted "
+                f"(token budget)."
+            )
 
     return "\n".join(lines)
 

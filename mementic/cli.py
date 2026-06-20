@@ -24,7 +24,6 @@ from mementic.config import (
 from mementic.format import (
     CONTEXT_PACK_DEFAULT_MAX_CONSTRAINT_TOKENS,
     CONTEXT_PACK_DEFAULT_MAX_DECISION_TOKENS,
-    MMR_DEFAULT_LAMBDA,
     YAKE_DEFAULT_NGRAM,
     YAKE_DEFAULT_TOP,
     count_tokens,
@@ -865,7 +864,6 @@ def context(
         task, decisions, constraints,
         max_constraint_tokens=CONTEXT_PACK_DEFAULT_MAX_CONSTRAINT_TOKENS,
         max_decision_tokens=CONTEXT_PACK_DEFAULT_MAX_DECISION_TOKENS,
-        mmr_lambda=MMR_DEFAULT_LAMBDA,
         task_keywords=task_keywords,
     )
     typer.echo(output)

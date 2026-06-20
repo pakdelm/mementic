@@ -126,7 +126,6 @@ async def get_task_context(
         max_constraint_tokens=max_tokens,
         max_decision_tokens=max_tokens,
         task_keywords=task_keywords,
-        mmr_lambda=cfg.retrieval.mmr_lambda,
     )
     pack_tokens = count_tokens(pack_text)
     entry = MetricsEntry(
@@ -147,7 +146,7 @@ async def get_task_context(
     summary = (
         f"[mementic: get_task_context: "
         f"{len(constraints)} constraints, {len(decisions)} decisions "
-        f"for '{task_description[:60]}']"
+        f"for '{task_description}']"
     )
     return f"{summary}\n\n{pack_text}"
 
@@ -327,7 +326,7 @@ async def review_context(
     active_decisions = len(graph.get_all_active_decisions())
 
     parts: list[str] = [
-        f"[mementic: review_context: '{feature_description[:60]}'"
+        f"[mementic: review_context: '{feature_description}'"
     ]
     if deprecated:
         parts.append(f"deprecated {', '.join(deprecated)}")
