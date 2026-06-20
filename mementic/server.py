@@ -32,14 +32,15 @@ from mementic.models import (
 
 _INSTRUCTIONS = """\
 Mementic is an architectural memory layer. After EVERY user message (not just \
-"before a task"), you MUST call `mementic_get_task_context` with a clear task \
-description describing what you are about to do. Be specific about the domain, \
-action, and concerns (e.g., "fix authentication bug in login flow" not just \
-"fix bug"). Each user message is a new context window — do NOT assume previous \
-context is still valid. Context packs are free (SQLite reads, no LLM). "Task" \
-means ANY user request — questions, exploration, planning, and informational \
-queries are NOT exempt. Output the sufficiency gate before proceeding. Do NOT \
-read files or search code without calling this tool first.\
+"before a task"), you MUST call `mementic_get_task_context` with 15-25 \
+single-word keywords capturing the task's domain (e.g., \
+`mementic_get_task_context(keywords=["auth", "token", "login", "password", \
+"hashing", "argon2", "session", "security"])`). Each user message is a new \
+context window — do NOT assume previous context is still valid. Mementic \
+memory is free (SQLite reads, no LLM). "Task" means ANY user request — \
+questions, exploration, planning, and informational queries are NOT exempt. \
+Output the sufficiency gate before proceeding. Do NOT read files or search \
+code without calling this tool first.\
 """
 
 mcp = FastMCP("Mementic", instructions=_INSTRUCTIONS)
@@ -142,9 +143,7 @@ async def get_task_context(
         metrics_store = UsageStore(conn=graph._conn)
         metrics_store.append(entry)
 
-    kw_summary = ", ".join(keywords[:8])
-    if len(keywords) > 8:
-        kw_summary += f" (+{len(keywords) - 8} more)"
+    kw_summary = ", ".join(keywords)
     summary = (
         f"[mementic: get_task_context: "
         f"{len(constraints)} constraints, {len(decisions)} decisions "

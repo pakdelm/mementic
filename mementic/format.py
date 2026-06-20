@@ -404,9 +404,7 @@ def format_memory_context(
         Formatted markdown string.
     """
     if keywords:
-        kw_summary = ", ".join(keywords[:10])
-        if len(keywords) > 10:
-            kw_summary += f" (+{len(keywords) - 10} more)"
+        kw_summary = ", ".join(keywords)
         lines = [f"## Architectural Context for: [{kw_summary}]"]
     else:
         lines = ["## Architectural Context"]

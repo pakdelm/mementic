@@ -969,8 +969,8 @@ class TestFormatContextPackKeywordRanking:
         # Specific constraint should appear; generic might be omitted
         assert "c-specific" in output
 
-    def test_mmr_deduplicates_near_duplicates(self) -> None:
-        """Near-duplicate constraints are not all selected."""
+    def test_distinct_constraint_not_crowded_out(self) -> None:
+        """With keyword scoring, a distinct constraint still surfaces amid near-duplicates."""
         constraints = [
             Constraint(
                 id="c-hints-1",
@@ -1001,10 +1001,9 @@ class TestFormatContextPackKeywordRanking:
             max_constraint_tokens=500, max_decision_tokens=500,
 
         )
-        # With MMR, the two near-duplicate "type hints" constraints
-        # should not both crowd out the distinct one.
-        # Because all constraints match keywords, MMR diversity selection
-        # ensures the distinct one gets a slot.
+        # All three constraints have equal keyword overlap (3/6 = 0.5),
+        # and the 500-token budget is large enough to fit all three.
+        # The distinct constraint should surface alongside the near-duplicates.
         assert "c-distinct" in output
 
     def test_fallback_without_keywords_still_works(self) -> None:

@@ -278,9 +278,10 @@ class LLMConfig(BaseModel):
 
 
 class RetrievalConfig(BaseModel):
-    """Configuration for context retrieval and ranking.
+    """Placeholder for future retrieval configuration (e.g., ranking strategies).
 
-    Controls parameters used by ``format_memory_context``.
+    Currently empty after keyword gate, MMR, and YAKE removal. Retained so
+    existing ``config.json`` files with ``retrieval`` keys don't error on load.
     """
 
 
