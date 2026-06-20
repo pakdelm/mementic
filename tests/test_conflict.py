@@ -12,7 +12,6 @@ def make_decision(
     title: str = "Use async",
     rationale: str = "Better performance and scalability",
     status: DecisionStatus = DecisionStatus.ACCEPTED,
-    tags: list[str] | None = None,
 ) -> Decision:
     return Decision(
         id=id,
@@ -22,7 +21,6 @@ def make_decision(
         status=status,
         created_at="2024-01-01T00:00:00Z",
         modified_at="2024-01-01T00:00:00Z",
-        tags=tags or [],
     )
 
 

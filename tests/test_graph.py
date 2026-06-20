@@ -29,7 +29,6 @@ def populated_graph() -> GraphStore:
         status=DecisionStatus.ACCEPTED,
         created_at="2024-01-01T00:00:00Z",
         modified_at="2024-01-01T00:00:00Z",
-        tags=["performance"],
     )
     d2 = Decision(
         id="d2",
@@ -39,7 +38,6 @@ def populated_graph() -> GraphStore:
         status=DecisionStatus.ACCEPTED,
         created_at="2024-02-01T00:00:00Z",
         modified_at="2024-02-01T00:00:00Z",
-        tags=["validation"],
     )
     d3 = Decision(
         id="d3",
@@ -49,7 +47,6 @@ def populated_graph() -> GraphStore:
         status=DecisionStatus.ACCEPTED,
         created_at="2024-03-01T00:00:00Z",
         modified_at="2024-03-01T00:00:00Z",
-        tags=["storage"],
     )
 
     c1 = Constraint(
@@ -488,7 +485,6 @@ class TestSQLitePersistence:
             status=DecisionStatus.ACCEPTED,
             created_at="2024-01-01T00:00:00Z",
             modified_at="2024-01-01T00:00:00Z",
-            tags=["performance"],
         )
         d2 = Decision(
             id="d2",
@@ -498,7 +494,6 @@ class TestSQLitePersistence:
             status=DecisionStatus.ACCEPTED,
             created_at="2024-02-01T00:00:00Z",
             modified_at="2024-02-01T00:00:00Z",
-            tags=["validation"],
         )
         c1 = Constraint(
             id="c1",
@@ -718,19 +713,19 @@ class TestSQLitePersistence:
         conn.execute("PRAGMA user_version = 3")
         conn.execute(
             "INSERT INTO decisions (id, title, status, rationale, source, repo, "
-            "affected_entities, rejected_alternatives, author, tags, "
+            "affected_entities, rejected_alternatives, "
             "created_at, modified_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             ("d-prop", "Proposed", "proposed", "r", "t", "", "[]", "[]",
-             "unknown", "[]", "2024-01-01T00:00:00Z", "2024-01-01T00:00:00Z"),
+             "2024-01-01T00:00:00Z", "2024-01-01T00:00:00Z"),
         )
         conn.execute(
             "INSERT INTO decisions (id, title, status, rationale, source, repo, "
-            "affected_entities, rejected_alternatives, author, tags, "
+            "affected_entities, rejected_alternatives, "
             "created_at, modified_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             ("d-sup", "Superseded", "superseded", "r", "t", "", "[]", "[]",
-             "unknown", "[]", "2024-01-01T00:00:00Z", "2024-01-01T00:00:00Z"),
+             "2024-01-01T00:00:00Z", "2024-01-01T00:00:00Z"),
         )
         conn.commit()
         conn.close()
@@ -767,19 +762,19 @@ class TestSQLitePersistence:
         conn.execute("PRAGMA user_version = 3")
         conn.execute(
             "INSERT INTO decisions (id, title, status, rationale, source, repo, "
-            "affected_entities, rejected_alternatives, author, tags, "
+            "affected_entities, rejected_alternatives, "
             "created_at, modified_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             ("d-prop", "Proposed", "Proposed", "r", "t", "", "[]", "[]",
-             "unknown", "[]", "2024-01-01T00:00:00Z", "2024-01-01T00:00:00Z"),
+             "2024-01-01T00:00:00Z", "2024-01-01T00:00:00Z"),
         )
         conn.execute(
             "INSERT INTO decisions (id, title, status, rationale, source, repo, "
-            "affected_entities, rejected_alternatives, author, tags, "
+            "affected_entities, rejected_alternatives, "
             "created_at, modified_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             ("d-sup", "Superseded", "SUPERSEDED", "r", "t", "", "[]", "[]",
-             "unknown", "[]", "2024-01-01T00:00:00Z", "2024-01-01T00:00:00Z"),
+             "2024-01-01T00:00:00Z", "2024-01-01T00:00:00Z"),
         )
         conn.commit()
         conn.close()
@@ -885,7 +880,7 @@ class TestSQLiteAuditLog:
             ("src/test.py",),
         ).fetchall()
         assert len(rows) == 1
-        assert rows[0]["entity_type"] == "entity"
+        assert rows[0]["entity_type"] == "CodeEntity"
         assert rows[0]["action"] == "add"
         details = json.loads(rows[0]["details"])
         assert details["type"] == "file"

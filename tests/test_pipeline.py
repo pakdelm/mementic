@@ -217,7 +217,6 @@ def _mock_adr_result() -> ExtractionResult:
                 rejected_alternatives=[],
                 source="adr:0001-use-postgres.md",
                 status=DecisionStatus.ACCEPTED,
-                author="unknown",
                 created_at="2024-01-01T00:00:00Z",
                 modified_at="2024-01-01T00:00:00Z",
             )
@@ -581,8 +580,8 @@ class TestRunInitCombined:
         decisions = gs.get_all_decisions()
         assert len(decisions) == 2
         sources = {d.source for d in decisions}
-        assert any(s.startswith("adr:") for s in sources)
-        assert any(s.startswith("opencode:") for s in sources)
+        assert "adr" in sources
+        assert "opencode:instructions/python-style.md" in sources
 
     def test_all_three_source_types(
         self,
@@ -629,9 +628,9 @@ class TestRunInitCombined:
         decisions = gs.get_all_decisions()
         assert len(decisions) == 3
         sources = {d.source for d in decisions}
-        assert any(s.startswith("adr:") for s in sources)
-        assert any(s.startswith("opencode:") for s in sources)
-        assert any(s.startswith("claude:") for s in sources)
+        assert "adr" in sources
+        assert "opencode:instructions/python-style.md" in sources
+        assert "claude:instructions/style.md" in sources
 
 
 class TestSaveAndLoad:

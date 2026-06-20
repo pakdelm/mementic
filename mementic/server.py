@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
@@ -15,6 +16,7 @@ from mementic.format import (
     extract_task_keywords,
     format_context_pack,
     format_evolution,
+    resolve_repo_name,
     slugify,
     timestamp,
 )
@@ -129,7 +131,7 @@ async def get_task_context(
     pack_tokens = count_tokens(pack_text)
     entry = MetricsEntry(
         timestamp=timestamp(),
-        operation="mcp_context_pack",
+        operation="get_task_context",
         source_label=task_description[:80],
         input_tokens=0,
         output_tokens=0,
@@ -171,7 +173,7 @@ async def record_decision(
         Confirmation message with save status.
     """
     graph, cfg = _load_graph()
-    repo = detect_repo_path(check_global_config=True)
+    repo = resolve_repo_name(detect_repo_path(check_global_config=True))
     entity_list = affected_entities or []
 
     now = timestamp()
@@ -181,9 +183,8 @@ async def record_decision(
         rationale=rationale,
         rejected_alternatives=rejected_alternatives or [],
         affected_entities=entity_list,
-        source=f"agent-proposal:{now}",
+        source="mcp",
         status=DecisionStatus.ACCEPTED,
-        author="opencode",
         created_at=now,
         modified_at=now,
         repo=repo,
@@ -194,9 +195,12 @@ async def record_decision(
     for entity_path in entity_list:
         if entity_path == decision.id or not entity_path:
             continue
-        entity = CodeEntity(id=entity_path, type=EntityType.FILE, repo=repo)
+        # Strip trailing :function / ::function suffixes from entity paths
+        clean_path = re.sub(r"::[A-Za-z_]\w*$", "", entity_path)
+        clean_path = re.sub(r":[A-Za-z_]\w*$", "", clean_path)
+        entity = CodeEntity(id=clean_path, type=EntityType.FILE, repo=repo)
         graph.add_code_entity(entity)
-        graph.link(decision.id, entity_path, "affects")
+        graph.link(decision.id, clean_path, "affects")
 
     _save_graph(graph, cfg)
     return f"Decision '{title}' saved (status: accepted)."
@@ -224,7 +228,7 @@ async def record_constraint(
         Confirmation message with save status.
     """
     graph, cfg = _load_graph()
-    repo = detect_repo_path(check_global_config=True)
+    repo = resolve_repo_name(detect_repo_path(check_global_config=True))
 
     constraint_id = (
         slugify(id, max_length=CONSTRAINT_ID_MAX_LENGTH)
@@ -238,7 +242,7 @@ async def record_constraint(
         description=description,
         bound_entities=bound_entities,
         enforced_by=decision_id or "",
-        source=f"agent-proposal:{now}",
+        source="mcp",
         status="active",
         created_at=now,
         repo=repo,
@@ -247,9 +251,11 @@ async def record_constraint(
     graph.add_constraint(constraint)
 
     for entity_path in bound_entities:
-        entity = CodeEntity(id=entity_path, type=EntityType.FILE, repo=repo)
+        clean_path = re.sub(r"::[A-Za-z_]\w*$", "", entity_path)
+        clean_path = re.sub(r":[A-Za-z_]\w*$", "", clean_path)
+        entity = CodeEntity(id=clean_path, type=EntityType.FILE, repo=repo)
         graph.add_code_entity(entity)
-        graph.link(constraint.id, entity_path, "binds_to")
+        graph.link(constraint.id, clean_path, "binds_to")
 
     _save_graph(graph, cfg)
     return f"Constraint '{constraint.id}' saved."

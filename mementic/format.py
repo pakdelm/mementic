@@ -72,6 +72,36 @@ def timestamp() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def resolve_repo_name(repo_path: str) -> str:
+    """Resolve a human-readable repo name from a full filesystem path.
+
+    Checks the global config for a ``RepoEntry`` whose resolved ``path``
+    matches ``repo_path``.  Returns the entry's ``label`` when set,
+    otherwise the directory basename.
+
+    Args:
+        repo_path: Absolute path to the repository root.
+
+    Returns:
+        Short repo name (label or last path component).
+    """
+    resolved = Path(repo_path).resolve()
+    try:
+        from mementic.config import load_global_config
+
+        global_cfg = load_global_config()
+        for proj_entry in global_cfg.projects.values():
+            for repo_entry in proj_entry.repos.values():
+                try:
+                    if Path(repo_entry.path).resolve() == resolved:
+                        return repo_entry.label or resolved.name
+                except (OSError, ValueError):
+                    continue
+    except Exception:
+        pass
+    return resolved.name
+
+
 def detect_repo_path(*, check_global_config: bool = False) -> str:
     """Detect the repository root path.
 

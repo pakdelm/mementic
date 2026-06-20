@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -15,7 +16,7 @@ from mementic.extraction import (
     extract_from_session,
     extract_from_session_deterministic,
 )
-from mementic.format import find_file_paths, slugify
+from mementic.format import DECISION_ID_MAX_LENGTH, find_file_paths, resolve_repo_name, slugify
 from mementic.graph import GraphStore
 from mementic.models import (
     CodeEntity,
@@ -32,10 +33,15 @@ from mementic.sources.opencode import scan_opencode_instructions
 
 
 def _entity_id(repo_path: str | None, relative_path: str) -> str:
-    """Create a namespaced entity ID when repo is known."""
-    if repo_path:
-        return f"{repo_path}::{relative_path}"
-    return relative_path
+    """Normalize a file-path entity reference.
+
+    Strips trailing ``:function`` / ``::function`` suffixes (common when
+    LLMs or agents reference specific symbols instead of files). The repo
+    namespace is carried by the ``repo`` column, not embedded in the ID.
+    """
+    clean = re.sub(r"::[A-Za-z_]\w*$", "", relative_path)
+    clean = re.sub(r":[A-Za-z_]\w*$", "", clean)
+    return clean
 
 
 def _status_from_adr(status: str) -> DecisionStatus:
@@ -71,16 +77,16 @@ def _ingest_result(
 ) -> None:
     """Add extracted decisions, constraints, and entities to the graph."""
     for d in result.decisions:
-        d.repo = repo_path or ""
+        d.repo = resolve_repo_name(repo_path) if repo_path else ""
         _add_decision_dedup(graph, d)
         for entity_path in result.affected_entities:
             eid = _entity_id(repo_path, entity_path)
             graph.add_code_entity(
-                CodeEntity(id=eid, type=EntityType.FILE, repo=repo_path or "")
+                CodeEntity(id=eid, type=EntityType.FILE, repo=resolve_repo_name(repo_path) if repo_path else "")
             )
             graph.link(d.id, eid, "affects")
     for c in result.constraints:
-        c.repo = repo_path or ""
+        c.repo = resolve_repo_name(repo_path) if repo_path else ""
         if _add_constraint_dedup(graph, c):
             _ensure_code_entities(graph, c, source_path, result, repo_path=repo_path)
     for edge in result.edges_to_create:
@@ -100,13 +106,13 @@ def _ensure_code_entities(
     for entity_path in entities:
         eid = _entity_id(repo_path, entity_path)
         graph.add_code_entity(
-            CodeEntity(id=eid, type=EntityType.FILE, repo=repo_path or "")
+            CodeEntity(id=eid, type=EntityType.FILE, repo=resolve_repo_name(repo_path) if repo_path else "")
         )
         graph.link(constraint.id, eid, "binds_to")
     for entity_path in result.affected_entities:
         eid = _entity_id(repo_path, entity_path)
         graph.add_code_entity(
-            CodeEntity(id=eid, type=EntityType.FILE, repo=repo_path or "")
+            CodeEntity(id=eid, type=EntityType.FILE, repo=resolve_repo_name(repo_path) if repo_path else "")
         )
         graph.link(constraint.id, eid, "binds_to")
 
@@ -124,7 +130,7 @@ def _backfill_edges(graph: GraphStore, repo_path: str | None = None) -> int:
             graph, constraint,
             payload.get("source", "unknown"),
             ExtractionResult(),
-            repo_path=repo_path,
+            repo_path=resolve_repo_name(repo_path) if repo_path else "",
         )
         count += 1
     return count
@@ -153,7 +159,7 @@ def _backfill_decision_edges(
         for entity_path in paths:
             eid = _entity_id(repo_path, entity_path)
             graph.add_code_entity(
-                CodeEntity(id=eid, type=EntityType.FILE, repo=repo_path or "")
+                CodeEntity(id=eid, type=EntityType.FILE, repo=resolve_repo_name(repo_path) if repo_path else "")
             )
             graph.link(node_id, eid, "affects")
         count += 1
@@ -308,7 +314,7 @@ def _run_codebase_scan(
             f"Codebase scan: detected {len(result.decisions)} "
             f"potential decision(s) from structural patterns.\n"
         )
-    _ingest_result(graph, result, source_path=f"repo:{repo_path}", repo_path=repo_path)
+    _ingest_result(graph, result, source_path="init", repo_path=repo_path)
     return [usage]
 
 
@@ -338,18 +344,17 @@ def _ingest_adr_source(
 
     usage_list: list[UsageStats] = []
     for adr in scan_adr_dir(adr_dir_path):
-        decision_id = slugify(adr.title)
+        decision_id = slugify(adr.title, max_length=DECISION_ID_MAX_LENGTH)
         decision = Decision(
             id=decision_id,
             title=adr.title,
             rationale=f"Context: {adr.context}\n\nDecision: {adr.decision}",
             rejected_alternatives=[],
-            source=f"adr:{adr.path}",
+            source="adr",
             status=_status_from_adr(adr.status),
-            author="adr",
             created_at=adr.timestamp,
             modified_at=adr.timestamp,
-            repo=repo_path or "",
+            repo=resolve_repo_name(repo_path) if repo_path else "",
         )
         _add_decision_dedup(graph, decision)
 
@@ -359,7 +364,7 @@ def _ingest_adr_source(
             )
             usage_list.append(usage)
             for c in constraints:
-                c.repo = repo_path or ""
+                c.repo = resolve_repo_name(repo_path) if repo_path else ""
                 c.enforced_by = decision_id
                 if _add_constraint_dedup(graph, c):
                     _ensure_code_entities(
@@ -369,7 +374,7 @@ def _ingest_adr_source(
         for path_ in find_file_paths(adr.decision + " " + adr.consequences):
             eid = _entity_id(repo_path, path_)
             graph.add_code_entity(
-                CodeEntity(id=eid, type=EntityType.FILE, repo=repo_path or "")
+                CodeEntity(id=eid, type=EntityType.FILE, repo=resolve_repo_name(repo_path) if repo_path else "")
             )
             graph.link(decision.id, eid, "affects")
 
@@ -477,9 +482,9 @@ def run_init(
     # Track repo in project_sources for multi-repo awareness
     if db_path and repo_path and graph._conn is not None:
         graph._conn.execute(
-            "INSERT OR REPLACE INTO project_sources (repo_path, ingested_at) "
+            "INSERT OR REPLACE INTO project_sources (repo, ingested_at) "
             "VALUES (?, ?)",
-            (repo_path, datetime.now(timezone.utc).isoformat()),
+            (resolve_repo_name(repo_path), datetime.now(timezone.utc).isoformat()),
         )
         graph._conn.commit()
 
