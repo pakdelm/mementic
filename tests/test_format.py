@@ -14,6 +14,7 @@ from mementic.format import (
     _compact_constraint_line,
     _compact_decision_line,
     _compact_evolution_line,
+    _split_task_query,
     _truncate_entity_list,
     count_tokens,
     extract_task_keywords,
@@ -849,6 +850,164 @@ class TestExtractTaskKeywords:
         )
         for kw in keywords:
             assert " " not in kw, f"Expected single words only, got: {kw!r}"
+
+    # --- Compound / multi-topic query tests ---
+
+    def test_compound_query_yields_keywords_from_both_topics(self) -> None:
+        """Compound query with two distinct topics produces keywords from both."""
+        keywords = extract_task_keywords(
+            "Fix two issues: (1) add rate limiting to api gateway, "
+            "(2) implement database connection pooling",
+            top=YAKE_DEFAULT_TOP, n=YAKE_DEFAULT_NGRAM,
+        )
+        assert len(keywords) > 0
+        # Keywords from both topics should appear.  We check for substrings
+        # rather than exact keywords since YAKE output varies by version.
+        keyword_text = " ".join(keywords).lower()
+        # Topic 1 terms
+        t1_match = any(
+            t in keyword_text for t in ("rate", "limit", "gateway", "api")
+        )
+        # Topic 2 terms
+        t2_match = any(
+            t in keyword_text for t in ("database", "connection", "pool")
+        )
+        assert t1_match, f"Missing topic-1 terms in: {keywords}"
+        assert t2_match, f"Missing topic-2 terms in: {keywords}"
+
+    def test_compound_query_deduplicates_merged_keywords(self) -> None:
+        """Round-robin merge must not produce duplicate keywords."""
+        keywords = extract_task_keywords(
+            "Two tasks: (1) add type hints to python functions, "
+            "(2) add type hints to python classes",
+            top=YAKE_DEFAULT_TOP, n=YAKE_DEFAULT_NGRAM,
+        )
+        # No duplicate lowercased keywords
+        lower_kws = [kw.lower() for kw in keywords]
+        assert len(lower_kws) == len(set(lower_kws)), (
+            f"Duplicate keywords found: {keywords}"
+        )
+
+    def test_compound_query_respects_top_limit(self) -> None:
+        """Even with merged sub-queries, the final list respects the top limit."""
+        keywords = extract_task_keywords(
+            "Three tasks: (1) fix auth bug, (2) add rate limiting, "
+            "(3) implement caching layer",
+            top=5, n=YAKE_DEFAULT_NGRAM,
+        )
+        assert len(keywords) <= 5
+
+
+# ======================================================================
+# Spec 14 — _split_task_query
+# ======================================================================
+
+
+class TestSplitTaskQuery:
+    def test_single_task_returns_unchanged(self) -> None:
+        """Plain task description with no structural delimiters returns as-is."""
+        result = _split_task_query("fix auth bug")
+        assert result == ["fix auth bug"]
+
+    def test_numbered_list_splits_into_sub_queries(self) -> None:
+        """Numbered list (parenthesised) splits into items with preamble prepended."""
+        result = _split_task_query(
+            "Fix two bugs in PR #31: (1) server.py record_decision "
+            "uses uncleaned path, (2) graph.py capture uses "
+            "full filesystem paths"
+        )
+        assert len(result) == 2
+        # Each sub-query should contain the preamble domain terms and its item
+        assert "server.py" in result[0] and "record_decision" in result[0].lower()
+        assert "graph.py" in result[1] and "capture" in result[1].lower()
+
+    def test_numbered_list_strips_filler_from_preamble(self) -> None:
+        """Preamble filler words (fix, bug, in, PR, etc.) are stripped;
+        only domain terms (the actual subject matter) are prepended."""
+        result = _split_task_query(
+            "Fix two bugs in PR #42: (1) login redirect loop, "
+            "(2) session timeout"
+        )
+        assert len(result) == 2
+        # Filler words should NOT appear as prefixes;
+        # only the bare ``#`` is a filler — ``#42`` is a domain token.
+        for item in result:
+            prefix = item.split(":")[0].strip() if ":" in item else ""
+            for filler in ("fix", "bug", "bugs", "implement", "add", "in",
+                           "pr", "issue"):
+                assert filler not in prefix.lower(), (
+                    f"Filler '{filler}' leaked into preamble prefix: {item!r}"
+                )
+
+    def test_numbered_inline_no_newlines(self) -> None:
+        """Single-line numbered task splits correctly without requiring newlines."""
+        result = _split_task_query("Task: (1) item one, (2) item two")
+        assert len(result) == 2
+        assert "item one" in result[0]
+        assert "item two" in result[1]
+
+    def test_bullet_list_splits(self) -> None:
+        """Multi-line bullet list splits into individual items."""
+        result = _split_task_query(
+            "- add rate limiting to api gateway\n"
+            "- implement database connection pooling\n"
+            "- configure https on load balancer"
+        )
+        assert len(result) == 3
+        assert "rate limiting" in result[0]
+        assert "connection pooling" in result[1]
+        assert "https" in result[2].lower()
+
+    def test_bullet_list_asterisk_delimiter(self) -> None:
+        """Bullet list using * delimiter also splits correctly."""
+        result = _split_task_query(
+            "* first bullet item\n"
+            "* second bullet item\n"
+            "* third bullet item"
+        )
+        assert len(result) == 3
+        assert all("first" in r or "second" in r or "third" in r for r in result)
+
+    def test_no_split_on_simple_text(self) -> None:
+        """Text with no structural delimiters returns single-item list."""
+        result = _split_task_query(
+            "implement user authentication and authorization"
+        )
+        assert result == ["implement user authentication and authorization"]
+
+    def test_empty_preamble_returns_items_as_is(self) -> None:
+        """When preamble contains only filler words, items are returned
+        without a meaningful prefix (colon remains but domain prefix is empty)."""
+        result = _split_task_query(
+            "Fix bug: (1) item one, (2) item two"
+        )
+        assert len(result) == 2
+        # Current behaviour: empty preamble → ": item one" etc.
+        for item in result:
+            assert "item one" in item or "item two" in item
+
+    def test_dotted_numbered_list_splits(self) -> None:
+        """Dotted numbered list (1. / 2. / 3.) also splits correctly."""
+        result = _split_task_query(
+            "1. fix authentication bug\n"
+            "2. add rate limiting\n"
+            "3. implement caching"
+        )
+        assert len(result) >= 2  # preamble may be empty, but items exist
+        # At least two items should contain the task content
+        content_hits = sum(
+            1 for item in result
+            if any(
+                kw in item.lower()
+                for kw in ("authentication", "rate limiting", "caching")
+            )
+        )
+        assert content_hits >= 2
+
+    def test_two_items_do_not_trigger_split(self) -> None:
+        """A bare numbered item without preamble is not split (only 2 parts)."""
+        result = _split_task_query("(1) only item")
+        assert result == ["(1) only item"]  # no split — needs 3+ parts
 
 
 # ======================================================================

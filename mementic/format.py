@@ -252,6 +252,75 @@ CONTEXT_PACK_DEFAULT_MAX_CONSTRAINT_TOKENS: int = 2000
 CONTEXT_PACK_DEFAULT_MAX_DECISION_TOKENS: int = 2000
 
 
+_FILLER_WORDS: frozenset[str] = frozenset({
+    "fix", "bug", "bugs", "implement", "add", "issue", "issues",
+    "feature", "features", "in", "for", "pr", "#",
+})
+
+
+def _split_task_query(task: str) -> list[str]:
+    """Split a compound task description into sub-queries.
+
+    Detects numbered lists (``(1) … (2) …`` or ``1. … 2. …``) and
+    bullet lists (``- `` / ``* `` prefix).  For numbered lists the
+    preamble is cleaned of filler words and prepended to each item so
+    sub-queries retain domain context.
+
+    Args:
+        task: The full task description string, possibly multi-line.
+
+    Returns:
+        Sub-query strings.  Returns ``[task]`` when no splitting
+        pattern is detected.
+    """
+    # --- Numbered list: (1) ... (2) ... (parenthesised) ---
+    numbered = re.split(r"\s*\(\d+\)\s+", task)
+    if len(numbered) >= 3:
+        preamble = numbered[0].strip()
+        items = [s.strip() for s in numbered[1:] if s.strip()]
+        if items:
+            preamble_words = preamble.split()
+            domain_words = [
+                w for w in preamble_words
+                if w.rstrip(":,;.").lower() not in _FILLER_WORDS
+                and not w.rstrip(":,;.").isdigit()
+            ]
+            preamble_clean = " ".join(
+                w.rstrip(":,;.").lower() for w in domain_words
+            )
+            return [f"{preamble_clean}: {item}" for item in items]
+
+    # --- Numbered list: 1. ... 2. ... (dot-separated) ---
+    dotted = re.split(r"\s*\d+\.\s+", task)
+    if len(dotted) >= 3:
+        preamble = dotted[0].strip()
+        items = [s.strip() for s in dotted[1:] if s.strip()]
+        if items:
+            preamble_words = preamble.split()
+            domain_words = [
+                w for w in preamble_words
+                if w.rstrip(":,;.").lower() not in _FILLER_WORDS
+                and not w.rstrip(":,;.").isdigit()
+            ]
+            preamble_clean = " ".join(
+                w.rstrip(":,;.").lower() for w in domain_words
+            )
+            return [f"{preamble_clean}: {item}" for item in items]
+
+    # --- Bullet list: lines starting with  -  or  *  ---
+    lines = task.strip().splitlines()
+    bullets = [
+        re.sub(r"^[-*]\s+", "", line).strip()
+        for line in lines
+        if re.match(r"^[-*]\s+", line)
+    ]
+    if len(bullets) >= 3:
+        return bullets
+
+    # --- No recognised splitting pattern ---
+    return [task]
+
+
 def extract_task_keywords(
     task_description: str,
     *,
@@ -264,18 +333,27 @@ def extract_task_keywords(
     sentence context) to identify the most salient terms.  No LLM calls,
     no model downloads — pure unsupervised keyword extraction.
 
+    For compound / multi-topic task descriptions (numbered lists, bullet
+    lists) the description is split into sub-queries, keywords are
+    extracted independently from each, and results are merged via
+    round-robin interleaving with deduplication.
+
     Args:
         task_description: The agent's task description string.
         top: Maximum number of keywords to extract.
         n: Maximum n-gram size for keyword extraction.
 
     Returns:
-        List of keyword strings, ordered by relevance (most relevant first).
-        Empty list for empty input.
+        List of keyword strings, ordered by relevance (most relevant
+        first).  Empty list for empty input.
     """
     if not task_description.strip():
         return []
 
+    sub_queries = _split_task_query(task_description)
+
+    # Single YAKE extractor instance (avoid re-initialising the
+    # statistical model per sub-query).
     extractor = yake.KeywordExtractor(
         lan="en",
         n=n,  # max ngram size — captures "auth bug fix", "csrf token"
@@ -284,9 +362,35 @@ def extract_task_keywords(
         windowsSize=1,  # context window
         top=top,  # number of keywords
     )
-    keywords_with_scores = extractor.extract_keywords(task_description)
-    # yake returns (keyword, score) — lower score = more relevant
-    return [kw for kw, _score in keywords_with_scores]
+
+    if len(sub_queries) == 1:
+        # Single query — existing behaviour.
+        keywords_with_scores = extractor.extract_keywords(task_description)
+        # yake returns (keyword, score) — lower score = more relevant
+        return [kw for kw, _score in keywords_with_scores]
+
+    # Multi-query: extract keywords per sub-query …
+    all_keywords: list[list[str]] = []
+    for sq in sub_queries:
+        kws = extractor.extract_keywords(sq)
+        all_keywords.append([kw for kw, _score in kws])
+
+    # … then round-robin interleave with deduplication.
+    seen: set[str] = set()
+    merged: list[str] = []
+    max_len = max((len(kws) for kws in all_keywords), default=0)
+
+    for i in range(max_len):
+        for kws in all_keywords:
+            if i < len(kws):
+                kw = kws[i]
+                kw_lower = kw.lower()
+                if kw_lower not in seen:
+                    seen.add(kw_lower)
+                    merged.append(kw)
+
+    # Truncate to the caller-requested *top* count.
+    return merged[:top]
 
 
 def keyword_overlap_score(

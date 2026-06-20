@@ -22,6 +22,15 @@ context window):
    what you are about to do. Be specific about the domain, action, and
    concerns (e.g., "fix authentication bug in login flow" not just "fix bug").
    Echo the `[mementic: ...]` summary line to the user.
+
+   **Multi-topic tasks:** When the user request spans multiple distinct
+   sub-tasks (e.g., "fix bug X in server.py and fix bug Y in graph.py"),
+   call `mementic_get_task_context` for each sub-task with a focused,
+   single-topic description. Separate context packs for each sub-task
+   produce better keyword matches than one diluted pack for the whole.
+   The query splitting in `extract_task_keywords` handles structured
+   numbered/bulleted lists automatically, but for unstructured compound
+   tasks, multiple calls are the safest fallback.
 2. **Sufficiency gate — output these two lines before any further reads:**
    1. `Context pack says:` — 1-2 sentence summary (or "returned nothing relevant").
    2. `Files I still need to read and why:` — every code file you will open,
