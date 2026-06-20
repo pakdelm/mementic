@@ -13,7 +13,7 @@ from mementic.format import (
     CONSTRAINT_ID_MAX_LENGTH,
     count_tokens,
     detect_repo_path,
-    format_context_pack,
+    format_memory_context,
     format_evolution,
     resolve_repo_name,
     slugify,
@@ -120,7 +120,7 @@ async def get_task_context(
     graph.clean_dead_references()
     constraints = graph.get_all_active_constraints()
     decisions = graph.get_all_active_decisions()
-    pack_text = format_context_pack(
+    pack_text = format_memory_context(
         decisions, constraints,
         max_constraint_tokens=max_tokens,
         max_decision_tokens=max_tokens,
@@ -271,7 +271,7 @@ async def deprecate_rule(
 
     Use this to retire outdated architectural decisions or constraints
     that no longer apply.  The entity remains in the graph for history
-    but is flagged as deprecated and excluded from context packs.
+    but is flagged as deprecated and excluded from mementic memory.
 
     Args:
         id: The decision or constraint ID to deprecate.

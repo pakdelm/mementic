@@ -371,7 +371,7 @@ def rank_and_truncate(
 
 
 
-def format_context_pack(
+def format_memory_context(
     decisions: list[Decision],
     constraints: list[Constraint],
     max_constraint_tokens: int = CONTEXT_PACK_DEFAULT_MAX_CONSTRAINT_TOKENS,

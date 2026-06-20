@@ -280,7 +280,7 @@ class LLMConfig(BaseModel):
 class RetrievalConfig(BaseModel):
     """Configuration for context retrieval and ranking.
 
-    Controls parameters used by ``format_context_pack``.
+    Controls parameters used by ``format_memory_context``.
     """
 
 

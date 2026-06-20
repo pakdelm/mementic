@@ -13,7 +13,7 @@ from mementic.format import (
     _compact_evolution_line,
     _truncate_entity_list,
     count_tokens,
-    format_context_pack,
+    format_memory_context,
     format_evolution,
     keyword_overlap_score,
     rank_and_truncate,
@@ -198,7 +198,7 @@ class TestRankAndTruncate:
 
 
 # ======================================================================
-# format_context_pack
+# format_memory_context
 # ======================================================================
 
 
@@ -207,7 +207,7 @@ class TestFormatContextPack:
         decisions = [make_decision()]
         constraints = [make_constraint()]
 
-        output = format_context_pack(
+        output = format_memory_context(
             decisions, constraints,
             max_constraint_tokens=CONTEXT_PACK_DEFAULT_MAX_CONSTRAINT_TOKENS,
             max_decision_tokens=CONTEXT_PACK_DEFAULT_MAX_DECISION_TOKENS,
@@ -221,7 +221,7 @@ class TestFormatContextPack:
         assert "- Better performance (#d-001)" in output
 
     def test_with_empty_lists(self) -> None:
-        output: str = format_context_pack(
+        output: str = format_memory_context(
             [], [],
             max_constraint_tokens=CONTEXT_PACK_DEFAULT_MAX_CONSTRAINT_TOKENS,
             max_decision_tokens=CONTEXT_PACK_DEFAULT_MAX_DECISION_TOKENS,
@@ -236,7 +236,7 @@ class TestFormatContextPack:
 
     def test_with_only_decisions(self) -> None:
         decisions = [make_decision(title="Use pydantic")]
-        output = format_context_pack(
+        output = format_memory_context(
             decisions, [],
             max_constraint_tokens=CONTEXT_PACK_DEFAULT_MAX_CONSTRAINT_TOKENS,
             max_decision_tokens=CONTEXT_PACK_DEFAULT_MAX_DECISION_TOKENS,
@@ -250,7 +250,7 @@ class TestFormatContextPack:
 
     def test_with_only_constraints(self) -> None:
         constraints = [make_constraint(description="Must use type hints")]
-        output = format_context_pack(
+        output = format_memory_context(
             [], constraints,
             max_constraint_tokens=CONTEXT_PACK_DEFAULT_MAX_CONSTRAINT_TOKENS,
             max_decision_tokens=CONTEXT_PACK_DEFAULT_MAX_DECISION_TOKENS,
@@ -265,7 +265,7 @@ class TestFormatContextPack:
     def test_compact_format_no_c_prefix(self) -> None:
         """Compact format drops the [C] prefix."""
         constraints = [make_constraint(description="Must use double quotes")]
-        output = format_context_pack(
+        output = format_memory_context(
             [], constraints,
             max_constraint_tokens=CONTEXT_PACK_DEFAULT_MAX_CONSTRAINT_TOKENS,
             max_decision_tokens=CONTEXT_PACK_DEFAULT_MAX_DECISION_TOKENS,
@@ -278,7 +278,7 @@ class TestFormatContextPack:
     def test_compact_format_no_enforced_by(self) -> None:
         """Compact format drops (enforced by: X)."""
         constraints = [make_constraint(description="A test rule", enforced_by="dec-42")]
-        output = format_context_pack(
+        output = format_memory_context(
             [], constraints,
             max_constraint_tokens=CONTEXT_PACK_DEFAULT_MAX_CONSTRAINT_TOKENS,
             max_decision_tokens=CONTEXT_PACK_DEFAULT_MAX_DECISION_TOKENS,
@@ -291,7 +291,7 @@ class TestFormatContextPack:
     def test_compact_format_no_decision_title_date(self) -> None:
         """Compact decision format drops title and date."""
         decisions = [make_decision(title="Pick DB", rationale="Chose PostgreSQL")]
-        output = format_context_pack(
+        output = format_memory_context(
             decisions, [],
             max_constraint_tokens=CONTEXT_PACK_DEFAULT_MAX_CONSTRAINT_TOKENS,
             max_decision_tokens=CONTEXT_PACK_DEFAULT_MAX_DECISION_TOKENS,
@@ -311,7 +311,7 @@ class TestFormatContextPack:
                 rejected=["SQLite", "MongoDB"],
             )
         ]
-        output = format_context_pack(
+        output = format_memory_context(
             decisions, [],
             max_constraint_tokens=CONTEXT_PACK_DEFAULT_MAX_CONSTRAINT_TOKENS,
             max_decision_tokens=CONTEXT_PACK_DEFAULT_MAX_DECISION_TOKENS,
@@ -330,7 +330,7 @@ class TestFormatContextPack:
             make_constraint(id="c-1", description="Constraint 1"),
             make_constraint(id="c-2", description="Constraint 2"),
         ]
-        output = format_context_pack(
+        output = format_memory_context(
             decisions, constraints,
             max_constraint_tokens=CONTEXT_PACK_DEFAULT_MAX_CONSTRAINT_TOKENS,
             max_decision_tokens=CONTEXT_PACK_DEFAULT_MAX_DECISION_TOKENS,
@@ -348,7 +348,7 @@ class TestFormatContextPack:
             make_constraint(id=f"c-{i}", description=f"Constraint {i}")
             for i in range(1, 20)
         ]
-        output = format_context_pack(
+        output = format_memory_context(
             [], constraints, max_constraint_tokens=60,
             max_decision_tokens=9999,
 
@@ -361,7 +361,7 @@ class TestFormatContextPack:
             make_decision(id=f"d-{i}", rationale=f"Rationale {i}")
             for i in range(1, 20)
         ]
-        output = format_context_pack(
+        output = format_memory_context(
             decisions, [], max_constraint_tokens=9999,
             max_decision_tokens=60,
 
@@ -373,7 +373,7 @@ class TestFormatContextPack:
         constraints = [
             make_constraint(id="c-1", description="Only one")
         ]
-        output = format_context_pack(
+        output = format_memory_context(
             [], constraints, max_constraint_tokens=9999,
             max_decision_tokens=9999,
 
@@ -385,7 +385,7 @@ class TestFormatContextPack:
         constraints = [
             make_constraint(id="c-1", description="A somewhat long description")
         ]
-        output = format_context_pack(
+        output = format_memory_context(
             [], constraints, max_constraint_tokens=1,  # impossibly small
             max_decision_tokens=9999,
 
@@ -403,7 +403,7 @@ class TestFormatContextPack:
             make_decision(id=f"d-{i}", rationale=f"Rationale {i}")
             for i in range(1, 10)
         ]
-        output = format_context_pack(
+        output = format_memory_context(
             decisions, constraints, max_constraint_tokens=100,
             max_decision_tokens=100,
 
@@ -929,7 +929,7 @@ class TestFormatContextPackKeywordRanking:
             make_constraint(id="c-style", description="use snake_case for variables"),
         ]
         task_keywords = ["auth", "token"]
-        output = format_context_pack(
+        output = format_memory_context(
             [], constraints,
             max_constraint_tokens=CONTEXT_PACK_DEFAULT_MAX_CONSTRAINT_TOKENS,
             max_decision_tokens=CONTEXT_PACK_DEFAULT_MAX_DECISION_TOKENS,
@@ -961,7 +961,7 @@ class TestFormatContextPackKeywordRanking:
         ]
         # Keywords match both equally
         task_keywords = ["password", "hashing", "function", "names"]
-        output = format_context_pack(
+        output = format_memory_context(
             [], constraints, keywords=task_keywords,
             max_constraint_tokens=500, max_decision_tokens=500,
 
@@ -996,7 +996,7 @@ class TestFormatContextPackKeywordRanking:
         ]
         # Keywords match all three constraints
         task_keywords = ["type", "hints", "function", "csrf", "token", "middleware"]
-        output = format_context_pack(
+        output = format_memory_context(
             [], constraints, keywords=task_keywords,
             max_constraint_tokens=500, max_decision_tokens=500,
 
@@ -1019,7 +1019,7 @@ class TestFormatContextPackKeywordRanking:
             description="new rule", bound_entities=[],
             source="test", status="active", created_at="2025-01-01T00:00:00Z",
         )
-        output = format_context_pack(
+        output = format_memory_context(
             [], [old, new], max_constraint_tokens=9999,
             max_decision_tokens=9999,
 
@@ -1046,7 +1046,7 @@ class TestFormatContextPackKeywordRanking:
             ),
         ]
         task_keywords = ["hash", "passwords", "argon2"]
-        output = format_context_pack(
+        output = format_memory_context(
             [], constraints, keywords=task_keywords,
             max_constraint_tokens=500, max_decision_tokens=500,
 

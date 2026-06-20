@@ -26,7 +26,7 @@ from mementic.format import (
     CONTEXT_PACK_DEFAULT_MAX_DECISION_TOKENS,
     count_tokens,
     detect_repo_path,
-    format_context_pack,
+    format_memory_context,
     timestamp,
 )
 from mementic.graph import GraphStore
@@ -845,7 +845,7 @@ def context(
         help="Target project name",
     ),
 ) -> None:
-    """Load constraints and produce a context pack ranked by keyword overlap.
+    """Load constraints and produce mementic memory ranked by keyword overlap.
 
     Keyword overlap with constraint/decision descriptions determines
     relevance ranking.  All items pass through; zero-overlap items
@@ -857,7 +857,7 @@ def context(
     constraints = graph.get_all_active_constraints()
     decisions = graph.get_all_active_decisions()
 
-    output = format_context_pack(
+    output = format_memory_context(
         decisions, constraints,
         max_constraint_tokens=CONTEXT_PACK_DEFAULT_MAX_CONSTRAINT_TOKENS,
         max_decision_tokens=CONTEXT_PACK_DEFAULT_MAX_DECISION_TOKENS,
@@ -1295,9 +1295,9 @@ def metrics(
         init_tokens: int = summary["extraction_init_tokens"]
         capture_calls: int = summary["extraction_capture_calls"]
         capture_tokens: int = summary["extraction_capture_tokens"]
-        cp_queries: int = summary["context_pack_queries"]
-        cp_total: int = summary["context_pack_total_tokens"]
-        cp_avg: float = summary["context_pack_avg_tokens"]
+        cp_queries: int = summary["memory_context_queries"]
+        cp_total: int = summary["memory_context_total_tokens"]
+        cp_avg: float = summary["memory_context_avg_tokens"]
 
         extraction_total = init_tokens + capture_tokens
         capture_avg = capture_tokens / capture_calls if capture_calls > 0 else 0.0
@@ -1406,7 +1406,7 @@ def deprecate(
 
     Appends a deprecation note and writes an audit entry.
     The entity remains in the graph for history but is excluded
-    from context packs.
+    from mementic memory.
     """
     graph, cfg = _resolve_graph(project)
 

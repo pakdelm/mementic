@@ -26,9 +26,9 @@ def _empty_summary() -> dict:
         "extraction_capture_calls": 0,
         "extraction_capture_tokens": 0,
         "extraction_total_tokens": 0,
-        "context_pack_queries": 0,
-        "context_pack_total_tokens": 0,
-        "context_pack_avg_tokens": 0.0,
+        "memory_context_queries": 0,
+        "memory_context_total_tokens": 0,
+        "memory_context_avg_tokens": 0.0,
     }
 
 
@@ -139,8 +139,8 @@ class UsageStore:
             total_tokens, by_operation, model, status,
             extraction_init_calls, extraction_init_tokens,
             extraction_capture_calls, extraction_capture_tokens,
-            extraction_total_tokens, context_pack_queries,
-            context_pack_total_tokens, context_pack_avg_tokens.
+            extraction_total_tokens, memory_context_queries,
+            memory_context_total_tokens, memory_context_avg_tokens.
         """
         entries = self.read_all()
         if not entries:
@@ -162,8 +162,8 @@ class UsageStore:
         extraction_capture_calls = 0
         extraction_capture_tokens = 0
 
-        context_pack_queries = 0
-        context_pack_total_tokens = 0
+        memory_context_queries = 0
+        memory_context_total_tokens = 0
 
         for e in entries:
             by_operation[e.operation]["calls"] += 1  # type: ignore[index]
@@ -181,15 +181,15 @@ class UsageStore:
                 extraction_capture_tokens += e.total_tokens
 
             if e.operation == "get_task_context":
-                context_pack_queries += 1
-                context_pack_total_tokens += e.total_tokens
+                memory_context_queries += 1
+                memory_context_total_tokens += e.total_tokens
 
         model = model_counter.most_common(1)[0][0] if model_counter else ""
 
         extraction_total_tokens = extraction_init_tokens + extraction_capture_tokens
 
-        context_pack_avg_tokens = (
-            context_pack_total_tokens / context_pack_queries if context_pack_queries > 0 else 0.0
+        memory_context_avg_tokens = (
+            memory_context_total_tokens / memory_context_queries if memory_context_queries > 0 else 0.0
         )
 
         return {
@@ -205,9 +205,9 @@ class UsageStore:
             "extraction_capture_calls": extraction_capture_calls,
             "extraction_capture_tokens": extraction_capture_tokens,
             "extraction_total_tokens": extraction_total_tokens,
-            "context_pack_queries": context_pack_queries,
-            "context_pack_total_tokens": context_pack_total_tokens,
-            "context_pack_avg_tokens": context_pack_avg_tokens,
+            "memory_context_queries": memory_context_queries,
+            "memory_context_total_tokens": memory_context_total_tokens,
+            "memory_context_avg_tokens": memory_context_avg_tokens,
         }
 
     def reset(self) -> None:
