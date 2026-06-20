@@ -101,9 +101,9 @@ class TestSummary:
         assert result["extraction_capture_calls"] == 0
         assert result["extraction_capture_tokens"] == 0
         assert result["extraction_total_tokens"] == 0
-        assert result["context_pack_queries"] == 0
-        assert result["context_pack_total_tokens"] == 0
-        assert result["context_pack_avg_tokens"] == 0.0
+        assert result["memory_context_queries"] == 0
+        assert result["memory_context_total_tokens"] == 0
+        assert result["memory_context_avg_tokens"] == 0.0
 
     def test_summary_aggregates_tokens(self, tmp_path: Path) -> None:
         """summary() correctly aggregates token counts across entries."""
@@ -206,12 +206,12 @@ class TestSummary:
         assert "tasks_to_breakeven" not in result
         assert "benchmark_tasks" not in result
         assert "avg_baseline_tokens" not in result
-        assert "avg_context_pack_tokens" not in result
+        assert "avg_memory_context_tokens" not in result
         assert "breakeven_note" not in result
         assert "raw_source_tokens" not in result
         assert "size_ratio" not in result
 
-    def test_summary_context_pack_aggregation(self, tmp_path: Path) -> None:
+    def test_summary_memory_context_aggregation(self, tmp_path: Path) -> None:
         """summary() correctly aggregates context pack query metrics."""
         store = UsageStore(path=str(tmp_path / "metrics.jsonl"))
         store.append(_make_entry(operation="get_task_context", total_tokens=200))
@@ -220,9 +220,9 @@ class TestSummary:
 
         result = store.summary()
 
-        assert result["context_pack_queries"] == 3
-        assert result["context_pack_total_tokens"] == 600
-        assert result["context_pack_avg_tokens"] == 200.0  # 600 / 3
+        assert result["memory_context_queries"] == 3
+        assert result["memory_context_total_tokens"] == 600
+        assert result["memory_context_avg_tokens"] == 200.0  # 600 / 3
 
     def test_summary_mixed_operations(self, tmp_path: Path) -> None:
         """summary() handles mix of extraction, context pack, and other entries."""
@@ -237,7 +237,7 @@ class TestSummary:
         assert result["total_tokens"] == 350
         assert result["extraction_init_calls"] == 1
         assert result["extraction_capture_calls"] == 1
-        assert result["context_pack_queries"] == 1
+        assert result["memory_context_queries"] == 1
         assert result["by_operation"]["capture"]["calls"] == 1
         assert result["by_operation"]["get_task_context"]["calls"] == 1
 

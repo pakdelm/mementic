@@ -1554,14 +1554,14 @@ class TestMetricsCommand:
         assert "extraction_init_tokens" in data
         assert "extraction_capture_calls" in data
         assert "extraction_capture_tokens" in data
-        assert "context_pack_queries" in data
-        assert "context_pack_total_tokens" in data
-        assert "context_pack_avg_tokens" in data
+        assert "memory_context_queries" in data
+        assert "memory_context_total_tokens" in data
+        assert "memory_context_avg_tokens" in data
 
         # Dead fields must NOT be present
         assert "breakeven_ratio" not in data
         assert "extraction_per_query" not in data
-        assert "context_pack_per_query" not in data
+        assert "memory_context_per_query" not in data
 
         # Verify values
         assert data["extraction_init_calls"] == 1
@@ -1730,9 +1730,9 @@ class TestMetricsCommand:
         dead_fields = [
             "breakeven_ratio",
             "extraction_per_query",
-            "context_pack_per_query",
-            "context_pack_avg_constraints",
-            "context_pack_avg_decisions",
+            "memory_context_per_query",
+            "memory_context_avg_constraints",
+            "memory_context_avg_decisions",
         ]
         for field in dead_fields:
             assert field not in data, f"Dead field '{field}' leaked into JSON output"

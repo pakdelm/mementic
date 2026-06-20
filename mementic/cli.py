@@ -24,13 +24,9 @@ from mementic.config import (
 from mementic.format import (
     CONTEXT_PACK_DEFAULT_MAX_CONSTRAINT_TOKENS,
     CONTEXT_PACK_DEFAULT_MAX_DECISION_TOKENS,
-    MMR_DEFAULT_LAMBDA,
-    YAKE_DEFAULT_NGRAM,
-    YAKE_DEFAULT_TOP,
     count_tokens,
     detect_repo_path,
-    extract_task_keywords,
-    format_context_pack,
+    format_memory_context,
     timestamp,
 )
 from mementic.graph import GraphStore
@@ -840,33 +836,32 @@ def capture(
 
 @app.command()
 def context(
-    task: str,
+    keywords: list[str] = typer.Option(
+        ..., "--keyword",
+        help="Keywords for matching. Repeatable. Agent generates 15-25 single-word keywords.",
+    ),
     project: str | None = typer.Option(
         None, "--project",
         help="Target project name",
     ),
 ) -> None:
-    """Load constraints and produce a context pack for a given task.
+    """Load constraints and produce mementic memory ranked by keyword overlap.
 
-    Extracts keywords from the task description and ranks constraints by
-    relevance (keyword overlap * specificity).  No file arguments needed —
-    the task description is the sole retrieval signal.
+    Keyword overlap with constraint/decision descriptions determines
+    relevance ranking.  All items pass through; zero-overlap items
+    sink to the bottom and are omitted if token budget is exceeded.
     """
     graph, _cfg = _resolve_graph(project)
     graph.clean_dead_references()
 
     constraints = graph.get_all_active_constraints()
     decisions = graph.get_all_active_decisions()
-    task_keywords = extract_task_keywords(
-        task, top=YAKE_DEFAULT_TOP, n=YAKE_DEFAULT_NGRAM,
-    )
 
-    output = format_context_pack(
-        task, decisions, constraints,
+    output = format_memory_context(
+        decisions, constraints,
         max_constraint_tokens=CONTEXT_PACK_DEFAULT_MAX_CONSTRAINT_TOKENS,
         max_decision_tokens=CONTEXT_PACK_DEFAULT_MAX_DECISION_TOKENS,
-        mmr_lambda=MMR_DEFAULT_LAMBDA,
-        task_keywords=task_keywords,
+        keywords=keywords,
     )
     typer.echo(output)
 
@@ -1300,9 +1295,9 @@ def metrics(
         init_tokens: int = summary["extraction_init_tokens"]
         capture_calls: int = summary["extraction_capture_calls"]
         capture_tokens: int = summary["extraction_capture_tokens"]
-        cp_queries: int = summary["context_pack_queries"]
-        cp_total: int = summary["context_pack_total_tokens"]
-        cp_avg: float = summary["context_pack_avg_tokens"]
+        cp_queries: int = summary["memory_context_queries"]
+        cp_total: int = summary["memory_context_total_tokens"]
+        cp_avg: float = summary["memory_context_avg_tokens"]
 
         extraction_total = init_tokens + capture_tokens
         capture_avg = capture_tokens / capture_calls if capture_calls > 0 else 0.0
@@ -1411,7 +1406,7 @@ def deprecate(
 
     Appends a deprecation note and writes an audit entry.
     The entity remains in the graph for history but is excluded
-    from context packs.
+    from mementic memory.
     """
     graph, cfg = _resolve_graph(project)
 

@@ -276,7 +276,7 @@ class TestSummaryPrefixes:
     """Tests that MCP tool responses include ---SUMMARY prefixes."""
 
     def test_get_task_context_summary_format(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """get_task_context response starts with ---SUMMARY: get_task_context: N constraints, M decisions."""
+        """get_task_context response includes [mementic: get_task_context: ...] summary."""
         from mementic import server
 
         gs = GraphStore()
@@ -291,13 +291,13 @@ class TestSummaryPrefixes:
         monkeypatch.setattr(server, "_load_graph", lambda project=None: (gs, cfg))
 
         result = asyncio.run(
-            server.get_task_context("Fix auth bug in login flow")
+            server.get_task_context(["auth", "bug", "login", "flow"])
         )
 
         assert result.startswith("[mementic: get_task_context: ")
         assert "1 constraints" in result
         assert "2 decisions" in result
-        assert "Fix auth bug" in result
+        assert "auth" in result
 
     def test_get_entity_history_summary_format(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """get_entity_history response starts with ---SUMMARY: get_entity_history."""

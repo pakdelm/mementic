@@ -91,7 +91,7 @@ mementic query --entity src/auth/handler.py
 mementic context --task "Add rate limiting to auth" --files src/auth/handler.py
 ```
 
-Outputs a context pack with all relevant constraints and decisions.
+Outputs a mementic memory with all relevant constraints and decisions.
 
 ### 4. Capture decisions after tasks
 
@@ -185,11 +185,11 @@ This project uses Mementic as its architectural memory layer. These rules apply
 to every task, every session.
 
 **Token discipline — primary vs. secondary sources:**
-1. **Primary (always):** the context pack from `mementic_get_task_context`.
+1. **Primary (always):** the mementic memory from `mementic_get_task_context`.
    It is the compressed index — a fraction of the token cost of reading raw
    ADRs. Read it first, every time.
 2. **Secondary (only when needed):** raw ADR and instruction files on disk.
-   Read them to resolve ambiguity, not to check for things the context pack
+   Read them to resolve ambiguity, not to check for things the mementic memory
    didn't mention.
 3. **Never:** read all ADRs and instruction files as a batch before every task.
 
@@ -200,7 +200,7 @@ context window):
 2. Call `mementic_get_entity_history` for each file being modified.
 3. Validate your plan against every returned constraint. Do NOT write code
    that violates an active constraint.
-4. Only read raw ADR or instruction files if the context pack leaves ambiguity
+4. Only read raw ADR or instruction files if the mementic memory leaves ambiguity
    you must resolve to proceed safely.
 
 **Why every message, not just "before a task":** Context packs are free (no LLM
@@ -223,7 +223,7 @@ no manual review step.
 |---|---|
 | `mementic init [--repo PATH] [--no-scan] [--interactive] [--key] [--project NAME]` | Initialize graph from configured sources |
 | `mementic capture [--session PATH] [--notes TEXT] [--tail N] [-k KEYWORD]` | Extract decisions from session (auto-resolves: new/skip/update) |
-| `mementic context --task TEXT --files FILE... [--prefix]` | Generate context pack with relevant constraints and decisions |
+| `mementic context --task TEXT --files FILE... [--prefix]` | Generate mementic memory with relevant constraints and decisions |
 | `mementic query [--entity PATH] [--search TERM] [--depth N]` | Search graph |
 | `mementic list [decisions\|constraints\|entities] [--status S] [-n N] [--stale]` | Browse graph in scannable format |
 | `mementic deprecate <id> [--reason TEXT]` | Retire a decision or constraint (don't edit history) |

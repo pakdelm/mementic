@@ -10,7 +10,7 @@ are not optional. They apply to **every task, every session, no exceptions.**
 code review, and informational queries. There are no read-only exceptions.
 If you are about to read files or search code, you need context first.
 
-The context pack replaces reading **ADRs, specs, and instruction files** — it
+The mementic memory replaces reading **ADRs, specs, and instruction files** — it
 tells you WHAT rules exist. It does NOT replace reading the **code you are about
 to edit** — that tells you WHERE the change goes. Read code surgically: grep/glob
 to the exact function, then read that section. Never batch-read ADRs or specs;
@@ -18,20 +18,28 @@ that is the token waste the graph eliminates.
 
 **After EVERY user message** (not just "before a task" — each message is a new
 context window):
-1. Call `mementic_get_task_context` with a clear task description describing
-   what you are about to do. Be specific about the domain, action, and
-   concerns (e.g., "fix authentication bug in login flow" not just "fix bug").
+1. Think about the task: what domains, concepts, and concerns are relevant?
+   Generate 15-25 single-word keywords that capture the task's domain
+   (e.g., for "fix authentication bug" → ["auth", "token", "security",
+   "password", "hashing", "argon2", "login", "session"]).
+2. Call `mementic_get_task_context(keywords=[...])` with those keywords.
    Echo the `[mementic: ...]` summary line to the user.
-2. **Sufficiency gate — output these two lines before any further reads:**
-   1. `Context pack says:` — 1-2 sentence summary (or "returned nothing relevant").
+
+   **Multi-topic tasks:** When the user request spans multiple distinct
+   sub-tasks (e.g., "fix bug X in server.py and fix bug Y in graph.py"),
+   call `mementic_get_task_context` for each sub-task with focused,
+   single-topic keywords. Separate mementic memorys for each sub-topic
+   produce better keyword matches than one diluted pack for the whole.
+3. **Sufficiency gate — output these two lines before any further reads:**
+   1. `mementic:` — 1-2 sentence summary (or "returned nothing relevant").
    2. `Files I still need to read and why:` — every code file you will open,
       each with a one-clause justification. If a file is not on this list,
       do not read it.
-3. Call `mementic_get_entity_history` for each file being modified.
-4. Validate your plan against every returned constraint. Do NOT write code
+4. Call `mementic_get_entity_history` for each file being modified.
+5. Validate your plan against every returned constraint. Do NOT write code
    that violates an active constraint. Cite every entity you apply or
    reject with `[mementic: <id>]` so usage is auditable in the session log.
-5. Only read raw ADR or instruction files if the context pack leaves
+5. Only read raw ADR or instruction files if the mementic memory leaves
    ambiguity you must resolve to proceed safely.
 
 **Why every message, not just "before a task":** Context packs are free (no LLM
@@ -41,11 +49,11 @@ is still valid is how violations happen. The cost of re-fetching is near zero;
 the cost of stale context is a violated constraint.
 
 **You may NOT skip these steps by classifying a task as "read-only", "quick",
-or "informational". The context pack exists precisely so you don't waste tokens
+or "informational". The mementic memory exists precisely so you don't waste tokens
 reading raw files to understand what rules apply. Skipping it defeats the
 purpose.**
 
-**If the context pack fails:** State the error explicitly, fall back to
+**If the mementic memory fails:** State the error explicitly, fall back to
 targeted reads only (grep first, read specific sections), and report the
 failure to the user. Do not silently read entire files wholesale.
 
