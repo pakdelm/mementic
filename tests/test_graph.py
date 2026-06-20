@@ -880,7 +880,7 @@ class TestSQLiteAuditLog:
             ("src/test.py",),
         ).fetchall()
         assert len(rows) == 1
-        assert rows[0]["entity_type"] == "entity"
+        assert rows[0]["entity_type"] == "CodeEntity"
         assert rows[0]["action"] == "add"
         details = json.loads(rows[0]["details"])
         assert details["type"] == "file"

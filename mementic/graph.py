@@ -93,10 +93,11 @@ class GraphStore:
                 );
 
                 CREATE TABLE IF NOT EXISTS entities (
-                    id TEXT PRIMARY KEY,
+                    id TEXT NOT NULL,
                     type TEXT NOT NULL DEFAULT 'file',
                     repo TEXT DEFAULT '',
-                    created_at TEXT NOT NULL
+                    created_at TEXT NOT NULL,
+                    PRIMARY KEY (repo, id)
                 );
 
                 CREATE TABLE IF NOT EXISTS edges (
@@ -338,6 +339,7 @@ class GraphStore:
         self._log_audit(
             "decision", d.id, "add" if is_new else "modify",
             {"title": d.title, "status": d.status.value},
+            source=d.source,
         )
 
     def add_constraint(self, c: Constraint) -> None:
@@ -359,6 +361,7 @@ class GraphStore:
         self._log_audit(
             "constraint", c.id, "add" if is_new else "modify",
             {"description": c.description, "status": c.status},
+            source=c.source,
         )
 
     def add_code_entity(self, e: CodeEntity) -> None:
@@ -378,7 +381,7 @@ class GraphStore:
             )
         self._write_back()
         self._log_audit(
-            "entity", e.id, "add" if is_new else "modify",
+            "CodeEntity", e.id, "add" if is_new else "modify",
             {"type": e.type.value},
         )
 
@@ -879,7 +882,7 @@ class GraphStore:
     _ENTITY_TYPE_MAP: dict[str, str] = {
         "Decision": "decision",
         "Constraint": "constraint",
-        "CodeEntity": "entity",
+        "CodeEntity": "CodeEntity",
     }
 
     def set_node_payload(self, node_id: str, payload: dict[str, Any]) -> None:

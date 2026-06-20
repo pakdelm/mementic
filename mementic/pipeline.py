@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -32,10 +33,15 @@ from mementic.sources.opencode import scan_opencode_instructions
 
 
 def _entity_id(repo_path: str | None, relative_path: str) -> str:
-    """Create a namespaced entity ID when repo is known."""
-    if repo_path:
-        return f"{repo_path}::{relative_path}"
-    return relative_path
+    """Normalize a file-path entity reference.
+
+    Strips trailing ``:function`` / ``::function`` suffixes (common when
+    LLMs or agents reference specific symbols instead of files). The repo
+    namespace is carried by the ``repo`` column, not embedded in the ID.
+    """
+    clean = re.sub(r"::[A-Za-z_]\w*$", "", relative_path)
+    clean = re.sub(r":[A-Za-z_]\w*$", "", clean)
+    return clean
 
 
 def _status_from_adr(status: str) -> DecisionStatus:

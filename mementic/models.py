@@ -48,9 +48,9 @@ class Constraint(BaseModel):
 class CodeEntity(BaseModel):
     """A code entity within a repository.
 
-    The `id` field uses the namespaced format:
-        {normalized_repo_path}::{relative_file_path}
-    e.g., /home/me/dev/auth-service::src/config.py
+    The ``id`` is a relative file path (e.g., ``src/config.py``).  The ``repo``
+    column scopes it to a specific repository.  Together ``(repo, id)`` form
+    the primary key.
     """
 
     id: str

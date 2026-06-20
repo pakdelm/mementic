@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
@@ -194,7 +195,10 @@ async def record_decision(
     for entity_path in entity_list:
         if entity_path == decision.id or not entity_path:
             continue
-        entity = CodeEntity(id=entity_path, type=EntityType.FILE, repo=repo)
+        # Strip trailing :function / ::function suffixes from entity paths
+        clean_path = re.sub(r"::[A-Za-z_]\w*$", "", entity_path)
+        clean_path = re.sub(r":[A-Za-z_]\w*$", "", clean_path)
+        entity = CodeEntity(id=clean_path, type=EntityType.FILE, repo=repo)
         graph.add_code_entity(entity)
         graph.link(decision.id, entity_path, "affects")
 
@@ -247,9 +251,11 @@ async def record_constraint(
     graph.add_constraint(constraint)
 
     for entity_path in bound_entities:
-        entity = CodeEntity(id=entity_path, type=EntityType.FILE, repo=repo)
+        clean_path = re.sub(r"::[A-Za-z_]\w*$", "", entity_path)
+        clean_path = re.sub(r":[A-Za-z_]\w*$", "", clean_path)
+        entity = CodeEntity(id=clean_path, type=EntityType.FILE, repo=repo)
         graph.add_code_entity(entity)
-        graph.link(constraint.id, entity_path, "binds_to")
+        graph.link(constraint.id, clean_path, "binds_to")
 
     _save_graph(graph, cfg)
     return f"Constraint '{constraint.id}' saved."
