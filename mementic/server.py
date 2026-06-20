@@ -200,7 +200,7 @@ async def record_decision(
         clean_path = re.sub(r":[A-Za-z_]\w*$", "", clean_path)
         entity = CodeEntity(id=clean_path, type=EntityType.FILE, repo=repo)
         graph.add_code_entity(entity)
-        graph.link(decision.id, entity_path, "affects")
+        graph.link(decision.id, clean_path, "affects")
 
     _save_graph(graph, cfg)
     return f"Decision '{title}' saved (status: accepted)."

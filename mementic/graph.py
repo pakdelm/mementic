@@ -9,6 +9,7 @@ from typing import Any, Literal, overload
 
 import networkx as nx
 
+from mementic.format import resolve_repo_name
 from mementic.models import (
     CodeEntity,
     Constraint,
@@ -1080,9 +1081,10 @@ class GraphStore:
         """
         if self._conn is None:
             return ""
+        repo_name = resolve_repo_name(repo_path)
         row = self._conn.execute(
             "SELECT last_captured_commit FROM project_sources WHERE repo = ?",
-            (repo_path,),
+            (repo_name,),
         ).fetchone()
         return row[0] if row else ""
 
@@ -1099,6 +1101,7 @@ class GraphStore:
         """
         if self._conn is None:
             return
+        repo_name = resolve_repo_name(repo_path)
         now = datetime.now(timezone.utc).isoformat()
         self._conn.execute(
             """INSERT OR REPLACE INTO project_sources
@@ -1107,6 +1110,6 @@ class GraphStore:
                    (SELECT ingested_at FROM project_sources WHERE repo = ?),
                    ?
                ), ?)""",
-            (repo_path, "", repo_path, now, commit),
+            (repo_name, "", repo_name, now, commit),
         )
         self._conn.commit()
