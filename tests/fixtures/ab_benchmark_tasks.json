@@ -1,0 +1,38 @@
+[
+  {
+    "id": "add-stale-flag",
+    "description": "Add a --stale flag to `mementic list` that filters to items not modified in 30+ days. The flag should work with all existing list subtypes (decisions, constraints, entities). When --stale is passed, only show items where the last_modified timestamp (or equivalent) is older than 30 days from now.",
+    "starting_ref": "main",
+    "success_command": "uv run pytest -xvs tests/ -k list",
+    "architectural_context_needed": [
+      "graph schema: how timestamps are stored on nodes",
+      "CLI conventions: Typer command pattern for adding flags",
+      "list command internals: how filtering works currently",
+      "model classes: how items track modification time"
+    ]
+  },
+  {
+    "id": "conflict-detection-lint",
+    "description": "Add a new deterministic lint rule 'duplicate-constraint' that detects two active MUST constraints on the same entity with semantically similar descriptions. Two constraints conflict if they share a bound entity and their descriptions differ. Use the existing lint rule pattern in mementic/lint.py.",
+    "starting_ref": "main",
+    "success_command": "uv run pytest -xvs tests/ -k lint && uv run ruff check mementic/lint.py",
+    "architectural_context_needed": [
+      "lint rule pattern: how rules are structured in lint.py",
+      "constraint model: how constraints link to entities",
+      "severity system: how severity levels are assigned",
+      "graph API: how to traverse entity-constraint edges"
+    ]
+  },
+  {
+    "id": "add-export-command",
+    "description": "Add a `mementic export` CLI command that exports the current project's graph to a JSON file. The output should include all active decisions, constraints, and entities with their relationships (edges). Use --output (or -o) to specify the output file path. Follow existing CLI patterns in mementic/cli.py.",
+    "starting_ref": "main",
+    "success_command": "uv run pytest -xvs tests/ -k 'export or cli'",
+    "architectural_context_needed": [
+      "graph storage format: SQLite schema and how nodes/edges are stored",
+      "CLI conventions: Typer command pattern, --output flag naming",
+      "JSON serialization: how graph data is converted to JSON elsewhere",
+      "file I/O conventions: where output goes by default"
+    ]
+  }
+]

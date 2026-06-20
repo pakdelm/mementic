@@ -88,10 +88,11 @@ mementic query --entity src/auth/handler.py
 ### 3. Load context before tasks
 
 ```bash
-mementic context --task "Add rate limiting to auth" --files src/auth/handler.py
+mementic context --keyword auth --keyword rate --keyword limit --keyword security
 ```
 
-Outputs a mementic memory with all relevant constraints and decisions.
+Outputs a mementic memory with constraints and decisions ranked by keyword overlap.
+Agents generate 15-25 single-word keywords per task for best results.
 
 ### 4. Capture decisions after tasks
 
@@ -195,12 +196,15 @@ to every task, every session.
 
 **After EVERY user message** (not just "before a task" — each message is a new
 context window):
-1. Call `mementic_get_task_context` with the task description and ALL files
-   you intend to touch — even new files, even speculative changes.
-2. Call `mementic_get_entity_history` for each file being modified.
-3. Validate your plan against every returned constraint. Do NOT write code
+1. Think about the task: what domains, concepts, and concerns are relevant?
+   Generate 15-25 single-word keywords that capture the task's domain
+   (e.g., for "fix authentication bug" → ["auth", "token", "security",
+   "password", "hashing", "argon2", "login", "session"]).
+2. Call `mementic_get_task_context(keywords=[...])` with those keywords.
+3. Call `mementic_get_entity_history` for each file being modified.
+4. Validate your plan against every returned constraint. Do NOT write code
    that violates an active constraint.
-4. Only read raw ADR or instruction files if the mementic memory leaves ambiguity
+5. Only read raw ADR or instruction files if the mementic memory leaves ambiguity
    you must resolve to proceed safely.
 
 **Why every message, not just "before a task":** Context packs are free (no LLM
@@ -223,20 +227,54 @@ no manual review step.
 |---|---|
 | `mementic init [--repo PATH] [--no-scan] [--interactive] [--key] [--project NAME]` | Initialize graph from configured sources |
 | `mementic capture [--session PATH] [--notes TEXT] [--tail N] [-k KEYWORD]` | Extract decisions from session (auto-resolves: new/skip/update) |
-| `mementic context --task TEXT --files FILE... [--prefix]` | Generate mementic memory with relevant constraints and decisions |
+| `mementic context --keyword KEYWORD [...] [--project NAME]` | Generate mementic memory with constraints/decisions ranked by keyword overlap |
 | `mementic query [--entity PATH] [--search TERM] [--depth N]` | Search graph |
 | `mementic list [decisions\|constraints\|entities] [--status S] [-n N] [--stale]` | Browse graph in scannable format |
+| `mementic lint [--fix] [--json] [--project NAME]` | Check graph health with deterministic lint rules |
 | `mementic deprecate <id> [--reason TEXT]` | Retire a decision or constraint (don't edit history) |
 | `mementic graph [-o PATH] [-O] [--filter TYPE]` | Generate interactive HTML visualization |
 | `mementic metrics [--json] [--reset]` | Show token usage metrics |
 | `mementic status` | Show health checklist (config, API key, graph, session provider) |
 | `mementic log` | Show recent graph mutations |
 | `mementic server` | Start MCP server (stdio) |
+| `mementic session-cleanup <feature_description> [-d ID] [--reason TEXT] [--project NAME]` | Deprecate entities and clean references after a session |
+| `mementic inject [--agent NAME] [--dry-run]` | Inject enforcement instructions into AGENTS.md |
 | `mementic project create <name> [--description TEXT]` | Create a new project |
 | `mementic project list` | List all configured projects |
 | `mementic project set-default <name>` | Set the default project |
 | `mementic project info [name]` | Show project details (repos, DB path, description) |
 | `mementic project delete <name> [--force] [--keep-db]` | Delete a project and optionally its database |
+
+## Agent session efficiency
+
+Does mementic actually reduce what an agent does? We ran the same implementation
+tasks in real OpenCode sessions — once without mementic (agent reads raw ADRs
+and instruction files), once with (agent loads keyword-ranked context packs
+via MCP).
+
+The benchmark compares session cost side-by-side:
+- **Files read** — how many files the agent opened seeking architectural context
+- **Session log tokens** — total session size, a proxy for agent effort
+- **Tool calls** — total agent activity (reads, writes, edits, searches)
+
+### How to run
+
+```bash
+python scripts/benchmark_ab.py              # 2 runs per task per condition
+python scripts/benchmark_ab.py --runs 3     # more statistical robustness
+python scripts/benchmark_ab.py --tasks add-stale-flag   # single task only
+```
+
+The runner manages git state and config; you run OpenCode when prompted.
+After each session, it runs the success criteria (tests + ruff + mypy)
+and parses the session log for metrics. Outputs a side-by-side comparison.
+
+To parse a session log manually:
+```bash
+python scripts/benchmark_ab_measure.py ~/.local/share/opencode/log/session.log --json
+```
+
+Numbers are from mementic's own codebase. Your project's results will differ.
 
 ## Measuring token efficiency
 

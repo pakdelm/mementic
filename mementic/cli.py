@@ -44,6 +44,7 @@ from mementic.inject import (
     has_enforcement,
     inject_enforcement,
 )
+from mementic.lint import lint as lint_graph, lint_fix, LintFinding
 
 if TYPE_CHECKING:
     from mementic.config import MementicConfig  # noqa: F401
@@ -1735,6 +1736,112 @@ def info(
         for repo_path, repo_entry in proj.repos.items():
             label = f"  [{repo_entry.label}]" if repo_entry.label else ""
             typer.echo(f"  {repo_path}{label}")
+
+
+# ---------------------------------------------------------------------------
+# Lint helpers
+# ---------------------------------------------------------------------------
+
+_FIX_DESCRIPTIONS: dict[str, str] = {
+    "stale-entity": "remove stale entity node",
+    "status-inconsistency": "deprecate active constraint referencing deprecated decision",
+    "orphaned-entity": "remove orphaned entity node",
+    "orphaned-constraint": "clear invalid enforced_by reference",
+}
+
+
+def _fmt_fix_description(finding: LintFinding) -> str:
+    """Return a human-readable description of what --fix will do for a finding."""
+    base = _FIX_DESCRIPTIONS.get(finding.rule, "unknown action")
+    if finding.node_id:
+        base += f" ({finding.node_id})"
+    return base
+
+
+@app.command()
+def lint(
+    fix: bool = typer.Option(
+        False, "--fix", help="Auto-remediate fixable findings",
+    ),
+    json_output: bool = typer.Option(
+        False, "--json", help="Output findings as JSON (machine-readable)",
+    ),
+    project: str | None = typer.Option(
+        None, "--project", help="Target project name",
+    ),
+) -> None:
+    """Check graph health with deterministic lint rules.
+
+    Runs all 5 lint rules against the knowledge graph with zero API cost.
+    Use --fix to auto-remediate fixable findings in-place.
+    Use --json for machine-readable output.
+    """
+    graph, _cfg = _resolve_graph(project)
+    graph.clean_dead_references()
+
+    result = lint_graph(graph)
+
+    if fix:
+        counts = lint_fix(graph, result)
+        result = lint_graph(graph)  # re-lint to reflect fixes
+
+    if json_output:
+        findings_dicts: list[dict[str, Any]] = []
+        for f in result.findings:
+            findings_dicts.append({
+                "rule": f.rule,
+                "severity": f.severity,
+                "message": f.message,
+                "node_id": f.node_id,
+                "fixable": f.fixable,
+                "fix_description": _fmt_fix_description(f),
+                "related_id": f.related_id or None,
+            })
+        typer.echo(json.dumps(findings_dicts, indent=2))
+    else:
+        if not result.findings:
+            typer.echo("Graph is healthy - no issues found.")
+        else:
+            _SEVERITY_PREFIX: dict[str, str] = {
+                "error": "[ERROR]",
+                "warning": "[WARN] ",
+                "info": "[INFO] ",
+            }
+            for finding in result.findings:
+                prefix = _SEVERITY_PREFIX.get(finding.severity, "[?]    ")
+                line = (
+                    f"  {prefix} [{finding.rule}] {finding.message}"
+                )
+                if finding.fixable:
+                    line += f"\n       --fix would: {_fmt_fix_description(finding)}"
+                typer.echo(line)
+                typer.echo()
+
+            parts = [
+                f"{result.error_count} errors",
+                f"{result.warning_count} warnings",
+                f"{result.info_count} info",
+            ]
+            extras: list[str] = []
+            if result.fixable_count:
+                extras.append(f"{result.fixable_count} fixable")
+            if result.needs_review_count:
+                extras.append(f"{result.needs_review_count} need review")
+            summary = ", ".join(parts)
+            if extras:
+                summary += f" ({', '.join(extras)})"
+            typer.echo(summary)
+
+        if fix:
+            typer.echo(
+                f"\nFixed: {counts['total']} issues "
+                f"(removed: {counts['removed']}, "
+                f"deprecated: {counts['deprecated']}, "
+                f"cleared: {counts['cleared']})"
+            )
+
+    if result.error_count > 0:
+        raise typer.Exit(code=1)
 
 
 if __name__ == "__main__":
