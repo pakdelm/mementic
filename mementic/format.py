@@ -6,8 +6,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
-import yake
-
 from mementic.models import Constraint, Decision, DecisionStatus
 
 # ID length constants for slugify(). Both decision and constraint IDs
@@ -241,155 +239,8 @@ def _compact_evolution_line(d: Decision) -> str:
     return f"- [{d.created_at}] {d.title}: {d.rationale} (#{d.id})"
 
 
-# ---------------------------------------------------------------------------
-# Keyword extraction & scoring (Zero-LLM, Spec 14)
-# ---------------------------------------------------------------------------
-
-YAKE_DEFAULT_TOP: int = 30
-YAKE_DEFAULT_NGRAM: int = 3
 CONTEXT_PACK_DEFAULT_MAX_CONSTRAINT_TOKENS: int = 10000
-CONTEXT_PACK_DEFAULT_MAX_DECISION_TOKENS: int = 15000
-
-
-_FILLER_WORDS: frozenset[str] = frozenset({
-    "fix", "bug", "bugs", "implement", "add", "issue", "issues",
-    "feature", "features", "in", "for", "pr", "#",
-})
-
-
-def _split_task_query(task: str) -> list[str]:
-    """Split a compound task description into sub-queries.
-
-    Detects numbered lists (``(1) … (2) …`` or ``1. … 2. …``) and
-    bullet lists (``- `` / ``* `` prefix).  For numbered lists the
-    preamble is cleaned of filler words and prepended to each item so
-    sub-queries retain domain context.
-
-    Args:
-        task: The full task description string, possibly multi-line.
-
-    Returns:
-        Sub-query strings.  Returns ``[task]`` when no splitting
-        pattern is detected.
-    """
-    # --- Numbered list: (1) ... (2) ... (parenthesised) ---
-    numbered = re.split(r"\s*\(\d+\)\s+", task)
-    if len(numbered) >= 3:
-        preamble = numbered[0].strip()
-        items = [s.strip() for s in numbered[1:] if s.strip()]
-        if items:
-            preamble_words = preamble.split()
-            domain_words = [
-                w for w in preamble_words
-                if w.rstrip(":,;.").lower() not in _FILLER_WORDS
-                and not w.rstrip(":,;.").isdigit()
-            ]
-            preamble_clean = " ".join(
-                w.rstrip(":,;.").lower() for w in domain_words
-            )
-            return [f"{preamble_clean}: {item}" for item in items]
-
-    # --- Numbered list: 1. ... 2. ... (dot-separated) ---
-    dotted = re.split(r"\s*\d+\.\s+", task)
-    if len(dotted) >= 3:
-        preamble = dotted[0].strip()
-        items = [s.strip() for s in dotted[1:] if s.strip()]
-        if items:
-            preamble_words = preamble.split()
-            domain_words = [
-                w for w in preamble_words
-                if w.rstrip(":,;.").lower() not in _FILLER_WORDS
-                and not w.rstrip(":,;.").isdigit()
-            ]
-            preamble_clean = " ".join(
-                w.rstrip(":,;.").lower() for w in domain_words
-            )
-            return [f"{preamble_clean}: {item}" for item in items]
-
-    # --- Bullet list: lines starting with  -  or  *  ---
-    lines = task.strip().splitlines()
-    bullets = [
-        re.sub(r"^[-*]\s+", "", line).strip()
-        for line in lines
-        if re.match(r"^[-*]\s+", line)
-    ]
-    if len(bullets) >= 3:
-        return bullets
-
-    # --- No recognised splitting pattern ---
-    return [task]
-
-
-def extract_task_keywords(
-    task_description: str,
-    *,
-    top: int,
-    n: int,
-) -> list[str]:
-    """Extract scored keywords from a task description using yake.
-
-    Uses yake's statistical features (word position, frequency, casing,
-    sentence context) to identify the most salient terms.  No LLM calls,
-    no model downloads — pure unsupervised keyword extraction.
-
-    For compound / multi-topic task descriptions (numbered lists, bullet
-    lists) the description is split into sub-queries, keywords are
-    extracted independently from each, and results are merged via
-    round-robin interleaving with deduplication.
-
-    Args:
-        task_description: The agent's task description string.
-        top: Maximum number of keywords to extract.
-        n: Maximum n-gram size for keyword extraction.
-
-    Returns:
-        List of keyword strings, ordered by relevance (most relevant
-        first).  Empty list for empty input.
-    """
-    if not task_description.strip():
-        return []
-
-    sub_queries = _split_task_query(task_description)
-
-    # Single YAKE extractor instance (avoid re-initialising the
-    # statistical model per sub-query).
-    extractor = yake.KeywordExtractor(
-        lan="en",
-        n=n,  # max ngram size — captures "auth bug fix", "csrf token"
-        dedupLim=0.9,  # deduplication threshold for similar keywords
-        dedupFunc="seqm",  # sequence matcher deduplication
-        windowsSize=1,  # context window
-        top=top,  # number of keywords
-    )
-
-    if len(sub_queries) == 1:
-        # Single query — existing behaviour.
-        keywords_with_scores = extractor.extract_keywords(task_description)
-        # yake returns (keyword, score) — lower score = more relevant
-        return [kw for kw, _score in keywords_with_scores]
-
-    # Multi-query: extract keywords per sub-query …
-    all_keywords: list[list[str]] = []
-    for sq in sub_queries:
-        kws = extractor.extract_keywords(sq)
-        all_keywords.append([kw for kw, _score in kws])
-
-    # … then round-robin interleave with deduplication.
-    seen: set[str] = set()
-    merged: list[str] = []
-    max_len = max((len(kws) for kws in all_keywords), default=0)
-
-    for i in range(max_len):
-        for kws in all_keywords:
-            if i < len(kws):
-                kw = kws[i]
-                kw_lower = kw.lower()
-                if kw_lower not in seen:
-                    seen.add(kw_lower)
-                    merged.append(kw)
-
-    # Truncate to the caller-requested *top* count.
-    return merged[:top]
+CONTEXT_PACK_DEFAULT_MAX_DECISION_TOKENS: int = 10000
 
 
 def keyword_overlap_score(
@@ -405,7 +256,7 @@ def keyword_overlap_score(
 
     Args:
         constraint_description: The constraint's description text.
-        task_keywords: Keywords extracted from the task description.
+        task_keywords: Keywords for matching (agent-generated).
 
     Returns:
         Score in [0, 1].  0 = no overlap, 1 = all keywords match.
@@ -441,78 +292,8 @@ def specificity_factor(bound_entities: list[str]) -> float:
         return 0.1
     return 1.0 / len(bound_entities)
 
-
-def token_jaccard(a: str, b: str) -> float:
-    """Token-level Jaccard similarity between two strings.
-
-    Args:
-        a: First string.
-        b: Second string.
-
-    Returns:
-        ``|intersection| / |union|`` of their lowercased token sets.
-    """
-    tokens_a = set(a.lower().split())
-    tokens_b = set(b.lower().split())
-    if not tokens_a and not tokens_b:
-        return 1.0
-    if not tokens_a or not tokens_b:
-        return 0.0
-    return len(tokens_a & tokens_b) / len(tokens_a | tokens_b)
-
-
-def mmr_select(
-    scored: list[tuple[Any, float]],
-    max_items: int,
-    lambda_: float,
-    *,
-    text: Callable[[Any], str] = lambda c: c.description,
-) -> list[tuple[Any, float]]:
-    """Select diverse items using Maximum Marginal Relevance.
-
-    MMR = λ * relevance(c) - (1-λ) * max(similarity(c, already_selected))
-
-    Args:
-        scored: List of ``(entity, combined_score)`` sorted descending.
-        max_items: Maximum number of items to select.
-        lambda_: Trade-off between relevance (1.0) and diversity (0.0).
-        text: Callable that extracts a comparison string from an entity
-            (default: ``c.description`` for Constraint objects).
-
-    Returns:
-        Selected list of ``(entity, mmr_score)`` in selection order.
-    """
-    if not scored or max_items <= 0:
-        return []
-
-    selected: list[tuple[Any, float]] = []
-    remaining = list(scored)
-
-    while remaining and len(selected) < max_items:
-        best_idx = -1
-        best_mmr = -1.0
-
-        for i, (candidate, relevance) in enumerate(remaining):
-            # Similarity to already-selected items
-            if selected:
-                max_sim = max(
-                    token_jaccard(text(candidate), text(s))
-                    for s, _ in selected
-                )
-            else:
-                max_sim = 0.0
-
-            mmr_score = lambda_ * relevance - (1 - lambda_) * max_sim
-            if mmr_score > best_mmr:
-                best_mmr = mmr_score
-                best_idx = i
-
-        if best_idx >= 0:
-            selected.append(remaining.pop(best_idx))
-
-    return selected
-
-
+# ---------------------------------------------------------------------------
+# Ranking helpers
 # ---------------------------------------------------------------------------
 # Ranking helpers
 # ---------------------------------------------------------------------------
@@ -589,54 +370,59 @@ def rank_and_truncate(
 # ---------------------------------------------------------------------------
 
 
+
 def format_context_pack(
-    task: str,
     decisions: list[Decision],
     constraints: list[Constraint],
-    max_constraint_tokens: int,
-    max_decision_tokens: int,
+    max_constraint_tokens: int = CONTEXT_PACK_DEFAULT_MAX_CONSTRAINT_TOKENS,
+    max_decision_tokens: int = CONTEXT_PACK_DEFAULT_MAX_DECISION_TOKENS,
     *,
-    task_keywords: list[str] | None = None,
+    keywords: list[str] | None = None,
 ) -> str:
     """Produces structured, token-budgeted markdown for agent context injection.
 
-    When ``task_keywords`` is provided, constraints *and* decisions are
+    When ``keywords`` is provided, constraints *and* decisions are
     ranked by keyword overlap * specificity factor.  Both entity types
     use the same pipeline.  Items with zero keyword overlap sink to
     the bottom; token budget controls how many are shown.
 
-    When ``task_keywords`` is ``None``, falls back to recency + status
+    When ``keywords`` is ``None``, falls back to recency + status
     ranking for both (backward compatible).
 
     Constraints and decisions each get their own independent token budget.
     Both sections always appear (even when empty, with an omission note).
 
     Args:
-        task: Description of the task requesting context.
         decisions: List of Decision objects.
         constraints: List of Constraint objects.
         max_constraint_tokens: Maximum token budget for constraint lines.
         max_decision_tokens: Maximum token budget for decision lines.
-        task_keywords: Keywords extracted from the task description.
+        keywords: Keywords for matching (agent-generated).
             When ``None``, constraints are ranked by recency + status.
 
     Returns:
         Formatted markdown string.
     """
-    lines = [f"## Architectural Context for: {task}"]
+    if keywords:
+        kw_summary = ", ".join(keywords[:10])
+        if len(keywords) > 10:
+            kw_summary += f" (+{len(keywords) - 10} more)"
+        lines = [f"## Architectural Context for: [{kw_summary}]"]
+    else:
+        lines = ["## Architectural Context"]
 
     # --- Constraints section (always present) ---
     total_c = len(constraints)
     shown_c: int
     selected_c: list[Constraint]
 
-    if task_keywords:
+    if keywords:
         # Keyword-based ranking: score all items — no gate.
         # Items with zero overlap sink to the bottom; token budget
         # determines how many are shown.
         scored: list[tuple[Constraint, float]] = []
         for c in constraints:
-            score = keyword_overlap_score(c.description, task_keywords)
+            score = keyword_overlap_score(c.description, keywords)
             score *= specificity_factor(c.bound_entities)
             scored.append((c, score))
         scored.sort(key=lambda x: x[1], reverse=True)
@@ -688,11 +474,11 @@ def format_context_pack(
     shown_d: int
     selected_d: list[Decision]
 
-    if task_keywords:
+    if keywords:
         # Keyword-based ranking: score all items — no gate.
         scored_d: list[tuple[Decision, float]] = []
         for d in decisions:
-            score = keyword_overlap_score(d.rationale, task_keywords)
+            score = keyword_overlap_score(d.rationale, keywords)
             score *= specificity_factor(d.affected_entities)
             scored_d.append((d, score))
         scored_d.sort(key=lambda x: x[1], reverse=True)

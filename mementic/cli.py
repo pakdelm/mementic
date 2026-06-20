@@ -24,11 +24,8 @@ from mementic.config import (
 from mementic.format import (
     CONTEXT_PACK_DEFAULT_MAX_CONSTRAINT_TOKENS,
     CONTEXT_PACK_DEFAULT_MAX_DECISION_TOKENS,
-    YAKE_DEFAULT_NGRAM,
-    YAKE_DEFAULT_TOP,
     count_tokens,
     detect_repo_path,
-    extract_task_keywords,
     format_context_pack,
     timestamp,
 )
@@ -839,32 +836,32 @@ def capture(
 
 @app.command()
 def context(
-    task: str,
+    keywords: list[str] = typer.Option(
+        ..., "--keyword",
+        help="Keywords for matching. Repeatable. Agent generates 15-25 single-word keywords.",
+    ),
     project: str | None = typer.Option(
         None, "--project",
         help="Target project name",
     ),
 ) -> None:
-    """Load constraints and produce a context pack for a given task.
+    """Load constraints and produce a context pack ranked by keyword overlap.
 
-    Extracts keywords from the task description and ranks constraints by
-    relevance (keyword overlap * specificity).  No file arguments needed —
-    the task description is the sole retrieval signal.
+    Keyword overlap with constraint/decision descriptions determines
+    relevance ranking.  All items pass through; zero-overlap items
+    sink to the bottom and are omitted if token budget is exceeded.
     """
     graph, _cfg = _resolve_graph(project)
     graph.clean_dead_references()
 
     constraints = graph.get_all_active_constraints()
     decisions = graph.get_all_active_decisions()
-    task_keywords = extract_task_keywords(
-        task, top=YAKE_DEFAULT_TOP, n=YAKE_DEFAULT_NGRAM,
-    )
 
     output = format_context_pack(
-        task, decisions, constraints,
+        decisions, constraints,
         max_constraint_tokens=CONTEXT_PACK_DEFAULT_MAX_CONSTRAINT_TOKENS,
         max_decision_tokens=CONTEXT_PACK_DEFAULT_MAX_DECISION_TOKENS,
-        task_keywords=task_keywords,
+        keywords=keywords,
     )
     typer.echo(output)
 

@@ -18,26 +18,25 @@ that is the token waste the graph eliminates.
 
 **After EVERY user message** (not just "before a task" — each message is a new
 context window):
-1. Call `mementic_get_task_context` with a clear task description describing
-   what you are about to do. Be specific about the domain, action, and
-   concerns (e.g., "fix authentication bug in login flow" not just "fix bug").
+1. Think about the task: what domains, concepts, and concerns are relevant?
+   Generate 15-25 single-word keywords that capture the task's domain
+   (e.g., for "fix authentication bug" → ["auth", "token", "security",
+   "password", "hashing", "argon2", "login", "session"]).
+2. Call `mementic_get_task_context(keywords=[...])` with those keywords.
    Echo the `[mementic: ...]` summary line to the user.
 
    **Multi-topic tasks:** When the user request spans multiple distinct
    sub-tasks (e.g., "fix bug X in server.py and fix bug Y in graph.py"),
-   call `mementic_get_task_context` for each sub-task with a focused,
-   single-topic description. Separate context packs for each sub-task
+   call `mementic_get_task_context` for each sub-task with focused,
+   single-topic keywords. Separate context packs for each sub-topic
    produce better keyword matches than one diluted pack for the whole.
-   The query splitting in `extract_task_keywords` handles structured
-   numbered/bulleted lists automatically, but for unstructured compound
-   tasks, multiple calls are the safest fallback.
-2. **Sufficiency gate — output these two lines before any further reads:**
+3. **Sufficiency gate — output these two lines before any further reads:**
    1. `Context pack says:` — 1-2 sentence summary (or "returned nothing relevant").
    2. `Files I still need to read and why:` — every code file you will open,
       each with a one-clause justification. If a file is not on this list,
       do not read it.
-3. Call `mementic_get_entity_history` for each file being modified.
-4. Validate your plan against every returned constraint. Do NOT write code
+4. Call `mementic_get_entity_history` for each file being modified.
+5. Validate your plan against every returned constraint. Do NOT write code
    that violates an active constraint. Cite every entity you apply or
    reject with `[mementic: <id>]` so usage is auditable in the session log.
 5. Only read raw ADR or instruction files if the context pack leaves

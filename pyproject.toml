@@ -10,7 +10,6 @@ dependencies = [
     "pyvis>=0.3",
     "tiktoken>=0.5",
     "typer>=0.9",
-    "yake>=0.7.3",
     "keyring>=25.7.0",
 ]
 
@@ -45,6 +44,3 @@ line-length = 100
 quote-style = "double"
 
 [tool.mypy]
-[[tool.mypy.overrides]]
-module = "yake"
-ignore_missing_imports = true

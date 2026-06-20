@@ -278,15 +278,10 @@ class LLMConfig(BaseModel):
 
 
 class RetrievalConfig(BaseModel):
-    """Configuration for context retrieval and ranking (Spec 14).
+    """Configuration for context retrieval and ranking.
 
-    Controls the keyword extraction and MMR diversity parameters
-    used by ``format_context_pack``.
+    Controls parameters used by ``format_context_pack``.
     """
-
-    mmr_lambda: float = Field(default=0.7, ge=0.0, le=1.0)
-    yake_top_k: int = Field(default=10, ge=1, le=50)
-    yake_ngram: int = Field(default=3, ge=1, le=5)
 
 
 class MementicConfig(BaseModel):

@@ -8,24 +8,18 @@ import pytest
 from mementic.format import (
     CONTEXT_PACK_DEFAULT_MAX_CONSTRAINT_TOKENS,
     CONTEXT_PACK_DEFAULT_MAX_DECISION_TOKENS,
-    YAKE_DEFAULT_NGRAM,
-    YAKE_DEFAULT_TOP,
     _compact_constraint_line,
     _compact_decision_line,
     _compact_evolution_line,
-    _split_task_query,
     _truncate_entity_list,
     count_tokens,
-    extract_task_keywords,
     format_context_pack,
     format_evolution,
     keyword_overlap_score,
-    mmr_select,
     rank_and_truncate,
     slugify,
     specificity_factor,
     timestamp,
-    token_jaccard,
 )
 from mementic.models import Constraint, Decision, DecisionStatus
 
@@ -214,13 +208,13 @@ class TestFormatContextPack:
         constraints = [make_constraint()]
 
         output = format_context_pack(
-            "Add async support", decisions, constraints,
+            decisions, constraints,
             max_constraint_tokens=CONTEXT_PACK_DEFAULT_MAX_CONSTRAINT_TOKENS,
             max_decision_tokens=CONTEXT_PACK_DEFAULT_MAX_DECISION_TOKENS,
 
         )
 
-        assert output.startswith("## Architectural Context for: Add async support")
+        assert output.startswith("## Architectural Context")
         assert "### Constraints (MUST follow)" in output
         assert "- All I/O must be async (#c-001)" in output
         assert "### Relevant Decisions" in output
@@ -228,13 +222,13 @@ class TestFormatContextPack:
 
     def test_with_empty_lists(self) -> None:
         output: str = format_context_pack(
-            "Empty task", [], [],
+            [], [],
             max_constraint_tokens=CONTEXT_PACK_DEFAULT_MAX_CONSTRAINT_TOKENS,
             max_decision_tokens=CONTEXT_PACK_DEFAULT_MAX_DECISION_TOKENS,
 
         )
 
-        assert output.startswith("## Architectural Context for: Empty task")
+        assert output.startswith("## Architectural Context")
         assert "### Constraints (MUST follow)" in output
         assert "_None_" in output
         assert "### Relevant Decisions" in output
@@ -243,7 +237,7 @@ class TestFormatContextPack:
     def test_with_only_decisions(self) -> None:
         decisions = [make_decision(title="Use pydantic")]
         output = format_context_pack(
-            "Task", decisions, [],
+            decisions, [],
             max_constraint_tokens=CONTEXT_PACK_DEFAULT_MAX_CONSTRAINT_TOKENS,
             max_decision_tokens=CONTEXT_PACK_DEFAULT_MAX_DECISION_TOKENS,
 
@@ -257,7 +251,7 @@ class TestFormatContextPack:
     def test_with_only_constraints(self) -> None:
         constraints = [make_constraint(description="Must use type hints")]
         output = format_context_pack(
-            "Task", [], constraints,
+            [], constraints,
             max_constraint_tokens=CONTEXT_PACK_DEFAULT_MAX_CONSTRAINT_TOKENS,
             max_decision_tokens=CONTEXT_PACK_DEFAULT_MAX_DECISION_TOKENS,
 
@@ -272,7 +266,7 @@ class TestFormatContextPack:
         """Compact format drops the [C] prefix."""
         constraints = [make_constraint(description="Must use double quotes")]
         output = format_context_pack(
-            "Task", [], constraints,
+            [], constraints,
             max_constraint_tokens=CONTEXT_PACK_DEFAULT_MAX_CONSTRAINT_TOKENS,
             max_decision_tokens=CONTEXT_PACK_DEFAULT_MAX_DECISION_TOKENS,
 
@@ -285,7 +279,7 @@ class TestFormatContextPack:
         """Compact format drops (enforced by: X)."""
         constraints = [make_constraint(description="A test rule", enforced_by="dec-42")]
         output = format_context_pack(
-            "Task", [], constraints,
+            [], constraints,
             max_constraint_tokens=CONTEXT_PACK_DEFAULT_MAX_CONSTRAINT_TOKENS,
             max_decision_tokens=CONTEXT_PACK_DEFAULT_MAX_DECISION_TOKENS,
 
@@ -298,7 +292,7 @@ class TestFormatContextPack:
         """Compact decision format drops title and date."""
         decisions = [make_decision(title="Pick DB", rationale="Chose PostgreSQL")]
         output = format_context_pack(
-            "Task", decisions, [],
+            decisions, [],
             max_constraint_tokens=CONTEXT_PACK_DEFAULT_MAX_CONSTRAINT_TOKENS,
             max_decision_tokens=CONTEXT_PACK_DEFAULT_MAX_DECISION_TOKENS,
 
@@ -318,7 +312,7 @@ class TestFormatContextPack:
             )
         ]
         output = format_context_pack(
-            "Task", decisions, [],
+            decisions, [],
             max_constraint_tokens=CONTEXT_PACK_DEFAULT_MAX_CONSTRAINT_TOKENS,
             max_decision_tokens=CONTEXT_PACK_DEFAULT_MAX_DECISION_TOKENS,
 
@@ -337,7 +331,7 @@ class TestFormatContextPack:
             make_constraint(id="c-2", description="Constraint 2"),
         ]
         output = format_context_pack(
-            "Multi", decisions, constraints,
+            decisions, constraints,
             max_constraint_tokens=CONTEXT_PACK_DEFAULT_MAX_CONSTRAINT_TOKENS,
             max_decision_tokens=CONTEXT_PACK_DEFAULT_MAX_DECISION_TOKENS,
 
@@ -355,7 +349,7 @@ class TestFormatContextPack:
             for i in range(1, 20)
         ]
         output = format_context_pack(
-            "Task", [], constraints, max_constraint_tokens=60,
+            [], constraints, max_constraint_tokens=60,
             max_decision_tokens=9999,
 
         )
@@ -368,7 +362,7 @@ class TestFormatContextPack:
             for i in range(1, 20)
         ]
         output = format_context_pack(
-            "Task", decisions, [], max_constraint_tokens=9999,
+            decisions, [], max_constraint_tokens=9999,
             max_decision_tokens=60,
 
         )
@@ -380,7 +374,7 @@ class TestFormatContextPack:
             make_constraint(id="c-1", description="Only one")
         ]
         output = format_context_pack(
-            "Task", [], constraints, max_constraint_tokens=9999,
+            [], constraints, max_constraint_tokens=9999,
             max_decision_tokens=9999,
 
         )
@@ -392,7 +386,7 @@ class TestFormatContextPack:
             make_constraint(id="c-1", description="A somewhat long description")
         ]
         output = format_context_pack(
-            "Task", [], constraints, max_constraint_tokens=1,  # impossibly small
+            [], constraints, max_constraint_tokens=1,  # impossibly small
             max_decision_tokens=9999,
 
         )
@@ -410,7 +404,7 @@ class TestFormatContextPack:
             for i in range(1, 10)
         ]
         output = format_context_pack(
-            "Task", decisions, constraints, max_constraint_tokens=100,
+            decisions, constraints, max_constraint_tokens=100,
             max_decision_tokens=100,
 
         )
@@ -782,231 +776,10 @@ class TestCompactEntityEnrichment:
         assert result == "a" * 50 + "..."
 
 
-# ======================================================================
-# Spec 14 — extract_task_keywords
-# ======================================================================
 
 
-class TestExtractTaskKeywords:
-    def test_extracts_keywords_from_typical_task(self) -> None:
-        """Extracts relevant keywords from a realistic task description."""
-        keywords = extract_task_keywords(
-            "fix authentication bug in login flow",
-            top=YAKE_DEFAULT_TOP, n=YAKE_DEFAULT_NGRAM,
-        )
-        assert len(keywords) > 0
-        # At minimum, "authentication" or "login" should appear
-        keyword_set = set(keywords)
-        assert any(
-            kw in keyword_set
-            for kw in ("authentication", "auth", "login", "bug", "fix")
-        )
-
-    def test_returns_empty_for_blank_input(self) -> None:
-        assert extract_task_keywords(
-            "", top=YAKE_DEFAULT_TOP, n=YAKE_DEFAULT_NGRAM,
-        ) == []
-        assert extract_task_keywords(
-            "   ", top=YAKE_DEFAULT_TOP, n=YAKE_DEFAULT_NGRAM,
-        ) == []
-
-    def test_returns_empty_for_very_short_input(self) -> None:
-        keywords = extract_task_keywords(
-            "a", top=YAKE_DEFAULT_TOP, n=YAKE_DEFAULT_NGRAM,
-        )
-        # yake may or may not return keywords for single letters
-        assert isinstance(keywords, list)
-
-    def test_multi_word_task_yields_ngrams(self) -> None:
-        """Multi-word concepts like 'csrf token validation' should produce n-grams."""
-        keywords = extract_task_keywords(
-            "add csrf token validation to api middleware",
-            top=YAKE_DEFAULT_TOP, n=YAKE_DEFAULT_NGRAM,
-        )
-        assert isinstance(keywords, list)
-        # Should be ordered by relevance
-        assert keywords == sorted(set(keywords), key=keywords.index)
-
-    def test_reproducible_output(self) -> None:
-        """Same input should produce same keywords (yake is deterministic)."""
-        task = "optimize database query performance"
-        kw1 = extract_task_keywords(task, top=YAKE_DEFAULT_TOP, n=YAKE_DEFAULT_NGRAM)
-        kw2 = extract_task_keywords(task, top=YAKE_DEFAULT_TOP, n=YAKE_DEFAULT_NGRAM)
-        assert kw1 == kw2
-
-    def test_respects_top_parameter(self) -> None:
-        """When top=3, returns at most 3 keywords."""
-        keywords = extract_task_keywords(
-            "add rate limiting to the api gateway for all endpoints",
-            top=3, n=YAKE_DEFAULT_NGRAM,
-        )
-        assert len(keywords) <= 3
-
-    def test_respects_ngram_parameter(self) -> None:
-        """n=1 should prevent multi-word n-grams."""
-        keywords = extract_task_keywords(
-            "csrf token validation", top=10, n=1
-        )
-        for kw in keywords:
-            assert " " not in kw, f"Expected single words only, got: {kw!r}"
-
-    # --- Compound / multi-topic query tests ---
-
-    def test_compound_query_yields_keywords_from_both_topics(self) -> None:
-        """Compound query with two distinct topics produces keywords from both."""
-        keywords = extract_task_keywords(
-            "Fix two issues: (1) add rate limiting to api gateway, "
-            "(2) implement database connection pooling",
-            top=YAKE_DEFAULT_TOP, n=YAKE_DEFAULT_NGRAM,
-        )
-        assert len(keywords) > 0
-        # Keywords from both topics should appear.  We check for substrings
-        # rather than exact keywords since YAKE output varies by version.
-        keyword_text = " ".join(keywords).lower()
-        # Topic 1 terms
-        t1_match = any(
-            t in keyword_text for t in ("rate", "limit", "gateway", "api")
-        )
-        # Topic 2 terms
-        t2_match = any(
-            t in keyword_text for t in ("database", "connection", "pool")
-        )
-        assert t1_match, f"Missing topic-1 terms in: {keywords}"
-        assert t2_match, f"Missing topic-2 terms in: {keywords}"
-
-    def test_compound_query_deduplicates_merged_keywords(self) -> None:
-        """Round-robin merge must not produce duplicate keywords."""
-        keywords = extract_task_keywords(
-            "Two tasks: (1) add type hints to python functions, "
-            "(2) add type hints to python classes",
-            top=YAKE_DEFAULT_TOP, n=YAKE_DEFAULT_NGRAM,
-        )
-        # No duplicate lowercased keywords
-        lower_kws = [kw.lower() for kw in keywords]
-        assert len(lower_kws) == len(set(lower_kws)), (
-            f"Duplicate keywords found: {keywords}"
-        )
-
-    def test_compound_query_respects_top_limit(self) -> None:
-        """Even with merged sub-queries, the final list respects the top limit."""
-        keywords = extract_task_keywords(
-            "Three tasks: (1) fix auth bug, (2) add rate limiting, "
-            "(3) implement caching layer",
-            top=5, n=YAKE_DEFAULT_NGRAM,
-        )
-        assert len(keywords) <= 5
 
 
-# ======================================================================
-# Spec 14 — _split_task_query
-# ======================================================================
-
-
-class TestSplitTaskQuery:
-    def test_single_task_returns_unchanged(self) -> None:
-        """Plain task description with no structural delimiters returns as-is."""
-        result = _split_task_query("fix auth bug")
-        assert result == ["fix auth bug"]
-
-    def test_numbered_list_splits_into_sub_queries(self) -> None:
-        """Numbered list (parenthesised) splits into items with preamble prepended."""
-        result = _split_task_query(
-            "Fix two bugs in PR #31: (1) server.py record_decision "
-            "uses uncleaned path, (2) graph.py capture uses "
-            "full filesystem paths"
-        )
-        assert len(result) == 2
-        # Each sub-query should contain the preamble domain terms and its item
-        assert "server.py" in result[0] and "record_decision" in result[0].lower()
-        assert "graph.py" in result[1] and "capture" in result[1].lower()
-
-    def test_numbered_list_strips_filler_from_preamble(self) -> None:
-        """Preamble filler words (fix, bug, in, PR, etc.) are stripped;
-        only domain terms (the actual subject matter) are prepended."""
-        result = _split_task_query(
-            "Fix two bugs in PR #42: (1) login redirect loop, "
-            "(2) session timeout"
-        )
-        assert len(result) == 2
-        # Filler words should NOT appear as prefixes;
-        # only the bare ``#`` is a filler — ``#42`` is a domain token.
-        for item in result:
-            prefix = item.split(":")[0].strip() if ":" in item else ""
-            for filler in ("fix", "bug", "bugs", "implement", "add", "in",
-                           "pr", "issue"):
-                assert filler not in prefix.lower(), (
-                    f"Filler '{filler}' leaked into preamble prefix: {item!r}"
-                )
-
-    def test_numbered_inline_no_newlines(self) -> None:
-        """Single-line numbered task splits correctly without requiring newlines."""
-        result = _split_task_query("Task: (1) item one, (2) item two")
-        assert len(result) == 2
-        assert "item one" in result[0]
-        assert "item two" in result[1]
-
-    def test_bullet_list_splits(self) -> None:
-        """Multi-line bullet list splits into individual items."""
-        result = _split_task_query(
-            "- add rate limiting to api gateway\n"
-            "- implement database connection pooling\n"
-            "- configure https on load balancer"
-        )
-        assert len(result) == 3
-        assert "rate limiting" in result[0]
-        assert "connection pooling" in result[1]
-        assert "https" in result[2].lower()
-
-    def test_bullet_list_asterisk_delimiter(self) -> None:
-        """Bullet list using * delimiter also splits correctly."""
-        result = _split_task_query(
-            "* first bullet item\n"
-            "* second bullet item\n"
-            "* third bullet item"
-        )
-        assert len(result) == 3
-        assert all("first" in r or "second" in r or "third" in r for r in result)
-
-    def test_no_split_on_simple_text(self) -> None:
-        """Text with no structural delimiters returns single-item list."""
-        result = _split_task_query(
-            "implement user authentication and authorization"
-        )
-        assert result == ["implement user authentication and authorization"]
-
-    def test_empty_preamble_returns_items_as_is(self) -> None:
-        """When preamble contains only filler words, items are returned
-        without a meaningful prefix (colon remains but domain prefix is empty)."""
-        result = _split_task_query(
-            "Fix bug: (1) item one, (2) item two"
-        )
-        assert len(result) == 2
-        # Current behaviour: empty preamble → ": item one" etc.
-        for item in result:
-            assert "item one" in item or "item two" in item
-
-    def test_dotted_numbered_list_splits(self) -> None:
-        """Dotted numbered list (1. / 2. / 3.) also splits correctly."""
-        result = _split_task_query(
-            "1. fix authentication bug\n"
-            "2. add rate limiting\n"
-            "3. implement caching"
-        )
-        assert len(result) >= 2  # preamble may be empty, but items exist
-        # At least two items should contain the task content
-        content_hits = sum(
-            1 for item in result
-            if any(
-                kw in item.lower()
-                for kw in ("authentication", "rate limiting", "caching")
-            )
-        )
-        assert content_hits >= 2
-
-    def test_two_items_do_not_trigger_split(self) -> None:
-        """A bare numbered item without preamble is not split (only 2 parts)."""
-        result = _split_task_query("(1) only item")
-        assert result == ["(1) only item"]  # no split — needs 3+ parts
 
 
 # ======================================================================
@@ -1134,133 +907,10 @@ class TestSpecificityFactor:
         assert score > 0.0
 
 
-# ======================================================================
-# Spec 14 — token_jaccard
-# ======================================================================
 
 
-class TestTokenJaccard:
-    def test_identical_strings(self) -> None:
-        assert token_jaccard("hello world", "hello world") == 1.0
-
-    def test_completely_disjoint(self) -> None:
-        assert token_jaccard("hello world", "foo bar") == 0.0
-
-    def test_partial_overlap(self) -> None:
-        # Intersection: {"hello", "world"} ∩ {"hello", "foo"} = {"hello"} → 1
-        # Union: {"hello", "world", "foo"} → 3
-        assert token_jaccard("hello world", "hello foo") == pytest.approx(1 / 3)
-
-    def test_both_empty(self) -> None:
-        assert token_jaccard("", "") == 1.0
-
-    def test_one_empty(self) -> None:
-        assert token_jaccard("hello world", "") == 0.0
-        assert token_jaccard("", "hello world") == 0.0
-
-    def test_case_insensitive(self) -> None:
-        assert token_jaccard("Hello World", "hello world") == 1.0
-
-    def test_whitespace_only(self) -> None:
-        assert token_jaccard("   ", "") == 1.0  # both tokenize to empty sets
 
 
-# ======================================================================
-# Spec 14 — mmr_select
-# ======================================================================
-
-
-class TestMmrSelect:
-    @staticmethod
-    def _c(description: str, score: float) -> tuple[Constraint, float]:
-        return (
-            Constraint(
-                id=f"c-{abs(hash(description)) % 1000:03d}",
-                description=description,
-                bound_entities=[],
-                source="test",
-                status="active",
-                created_at="2024-01-01T00:00:00Z",
-            ),
-            score,
-        )
-
-    def test_returns_all_when_budget_plenty(self) -> None:
-        items = [
-            self._c("use async for i/o", 0.9),
-            self._c("validate csrf tokens", 0.8),
-            self._c("use snake_case names", 0.3),
-        ]
-        selected = mmr_select(items, max_items=10, lambda_=0.7)
-        assert len(selected) == 3
-
-    def test_respects_max_items(self) -> None:
-        items = [
-            self._c(f"rule {i}", 1.0 - i * 0.1) for i in range(10)
-        ]
-        selected = mmr_select(items, max_items=3, lambda_=0.7)
-        assert len(selected) == 3
-
-    def test_deduplicates_near_duplicates(self) -> None:
-        """Three near-identical constraints → MMR selects one."""
-        items = [
-            self._c("add type hints to all python functions", 0.9),
-            self._c("add type hints to all python functions please", 0.9),  # near-dupe
-            self._c("add type hints to all python functions needed", 0.9),  # near-dupe
-            self._c("validate user input on forms", 0.5),
-        ]
-        selected = mmr_select(items, max_items=3, lambda_=0.5)
-        descriptions = [s.description for s, _ in selected]
-        # The near-duplicates should not all be selected
-        type_hint_count = sum(
-            1 for d in descriptions if "type hints" in d
-        )
-        assert type_hint_count <= 2  # At most 2 of 3 near-dupes
-
-    def test_selects_most_relevant_first_when_no_conflict(self) -> None:
-        """When items are distinct, highest relevance is picked first."""
-        items = [
-            self._c("rule a", 0.9),
-            self._c("rule b totally different", 0.5),
-            self._c("rule c nothing alike", 0.3),
-        ]
-        selected = mmr_select(items, max_items=3, lambda_=1.0)  # pure relevance
-        # First item should be highest scoring
-        assert selected[0][1] == pytest.approx(0.9)
-
-    def test_empty_input(self) -> None:
-        assert mmr_select([], max_items=5, lambda_=0.7) == []
-
-    def test_zero_max_items(self) -> None:
-        items = [self._c("rule", 1.0)]
-        assert mmr_select(items, max_items=0, lambda_=0.7) == []
-
-    def test_lambda_zero_pure_diversity(self) -> None:
-        """λ=0 means pure diversity — relevance ignored entirely."""
-        items = [
-            self._c("add type hints everywhere", 0.9),
-            self._c("add type hints everywhere please", 0.5),  # near-dupe
-            self._c("validate csrf in middleware", 0.3),  # distinct
-        ]
-        selected = mmr_select(items, max_items=2, lambda_=0.0)
-        descriptions = [s.description for s, _ in selected]
-        # With λ=0, diversity dominates — the near-dupe should be skipped
-        assert len(selected) == 2
-        # The two selected should be the most diverse pair
-        assert "type hints" in descriptions[0]  # first item (highest relevance... wait, λ=0 ignores relevance)
-        # Actually with λ=0, MMR = -max_sim. First iteration: max_sim=0 for all,
-        # so MMR=0 for all, picks the first in the list (index 0).
-        # Second iteration: sim(type hints everywhere, type hints everywhere please) = high,
-        # sim(type hints everywhere, validate csrf) = low. So the diverse one wins.
-
-    def test_same_score_different_content_picks_both(self) -> None:
-        """Two distinct items with same score should both be selected."""
-        items = [
-            self._c("completely different topic a", 0.8),
-            self._c("completely different topic b", 0.8),
-        ]
-        selected = mmr_select(items, max_items=2, lambda_=0.7)
-        assert len(selected) == 2
 
 
 # ======================================================================
@@ -1280,11 +930,11 @@ class TestFormatContextPackKeywordRanking:
         ]
         task_keywords = ["auth", "token"]
         output = format_context_pack(
-            "fix auth token bug", [], constraints,
+            [], constraints,
             max_constraint_tokens=CONTEXT_PACK_DEFAULT_MAX_CONSTRAINT_TOKENS,
             max_decision_tokens=CONTEXT_PACK_DEFAULT_MAX_DECISION_TOKENS,
 
-            task_keywords=task_keywords,
+            keywords=task_keywords,
         )
         # Auth-related constraints should appear before style ones
         assert "c-auth" in output
@@ -1312,7 +962,7 @@ class TestFormatContextPackKeywordRanking:
         # Keywords match both equally
         task_keywords = ["password", "hashing", "function", "names"]
         output = format_context_pack(
-            "fix", [], constraints, task_keywords=task_keywords,
+            [], constraints, keywords=task_keywords,
             max_constraint_tokens=500, max_decision_tokens=500,
 
         )
@@ -1347,7 +997,7 @@ class TestFormatContextPackKeywordRanking:
         # Keywords match all three constraints
         task_keywords = ["type", "hints", "function", "csrf", "token", "middleware"]
         output = format_context_pack(
-            "add type hints", [], constraints, task_keywords=task_keywords,
+            [], constraints, keywords=task_keywords,
             max_constraint_tokens=500, max_decision_tokens=500,
 
         )
@@ -1370,7 +1020,7 @@ class TestFormatContextPackKeywordRanking:
             source="test", status="active", created_at="2025-01-01T00:00:00Z",
         )
         output = format_context_pack(
-            "task", [], [old, new], max_constraint_tokens=9999,
+            [], [old, new], max_constraint_tokens=9999,
             max_decision_tokens=9999,
 
         )
@@ -1397,7 +1047,7 @@ class TestFormatContextPackKeywordRanking:
         ]
         task_keywords = ["hash", "passwords", "argon2"]
         output = format_context_pack(
-            "hash passwords", [], constraints, task_keywords=task_keywords,
+            [], constraints, keywords=task_keywords,
             max_constraint_tokens=500, max_decision_tokens=500,
 
         )
