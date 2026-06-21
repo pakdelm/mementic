@@ -40,7 +40,7 @@ OP_LOG_DIR = _OP_LOG
 
 # -- Helpers -----------------------------------------------------------------
 
-_CONTEXT_LINE_RE = re.compile(r"([\d,]+)\s+(\d+)%?\s+.*?\$?([\d.]+)")
+_CONTEXT_LINE_RE = re.compile(r"(\d[\d,]*).*?(\d+)%?.*?\$?([\d.]+)")
 
 
 def _parse_context_line(raw: str) -> tuple[int | None, int | None, float | None]:
