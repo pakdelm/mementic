@@ -165,12 +165,8 @@ def measure_session(log_path: str | Path, from_line: int = 0) -> dict:
     except ImportError:
         tokens = len(clean) // 4
 
-    # Estimate normalized tokens by subtracting verification overhead.
-    # Uses call-count proportion as a rough proxy for token distribution.
-    verify_count = category_counts.get("verify", 0)
     total_calls = len(permissions)
-    verify_ratio = verify_count / total_calls if total_calls > 0 else 0
-    normalized_tokens = int(tokens * (1 - verify_ratio * 0.7))  # 70% of verify is overhead
+    verify_count = category_counts.get("verify", 0)
 
     return {
         "log_path": str(path),
@@ -182,7 +178,6 @@ def measure_session(log_path: str | Path, from_line: int = 0) -> dict:
         "unique_files_read": unique_files,
         "total_file_reads": len(files_read),
         "session_log_tokens": tokens,
-        "normalized_tokens": normalized_tokens,
         "tool_calls": tool_counts,
         "total_tool_calls": total_calls,
         "category_breakdown": category_counts,
@@ -224,20 +219,12 @@ def main() -> None:
         if result.get("scoped"):
             print(f"  Scope: from line {result['from_line']}")
         print()
-        print(f"  Session log tokens:  {result['session_log_tokens']:>8,}")
-        print(f"  Normalized tokens:   {result['normalized_tokens']:>8,}  (minus ~70% verify overhead)")
-        print()
-        print(f"  Context discovery:   {result['context_cost']:>3} calls  (read, glob, grep)")
-        print(f"  MCP overhead:        {result['mcp_cost']:>3} calls  (mementic_*)")
-        print(f"  Implementation:      {result['impl_cost']:>3} calls  (edit, write, task)")
-        print(f"  Verification:        {result['verify_cost']:>3} calls  (bash: pytest, ruff, mypy, git, pwsh)")
-        print(f"  {'—'*50}")
-        print(f"  Total tool calls:    {result['total_tool_calls']:>3}")
         print(f"  Files read:          {result['total_file_reads']} ({result['unique_files_read_count']} unique)")
-        print()
-        print("  Tool breakdown:")
-        for tool, count in sorted(result["tool_calls"].items(), key=lambda x: -x[1]):
-            print(f"    {tool}: {count}")
+        print(f"  Context calls:       {result['context_cost']:>3}  (read, glob, grep, mcp)")
+        print(f"  Implementation:      {result['impl_cost']:>3}  (edit, write, task)")
+        print(f"  Verification:        {result['verify_cost']:>3}  (bash)")
+        print(f"  {'—'*40}")
+        print(f"  Total tool calls:    {result['total_tool_calls']}")
 
 
 if __name__ == "__main__":

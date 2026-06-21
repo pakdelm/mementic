@@ -253,12 +253,7 @@ def run_benchmark(tasks: list[dict], runs: int) -> list[dict]:
 
                     if "error" not in metrics:
                         print(f"[result] Files read: {metrics.get('total_file_reads', '?')}")
-                        print(f"[result] Unique files: {metrics.get('unique_files_read_count', '?')}")
-                        print(f"[result] Session tokens: {metrics['session_log_tokens']:,}")
-                        print(f"[result] Normalized: {metrics.get('normalized_tokens', '?'):,}")
                         print(f"[result] LLM context tokens: {llm_ctx_tokens or '?'}")
-                        print(f"[result] Tool calls: {metrics.get('total_tool_calls', '?')}")
-                        print(f"[result]   context={metrics.get('context_cost','?')}  mcp={metrics.get('mcp_cost','?')}  impl={metrics.get('impl_cost','?')}  verify={metrics.get('verify_cost','?')}")
                     print()
 
         # Print summary
@@ -288,20 +283,13 @@ def run_benchmark(tasks: list[dict], runs: int) -> list[dict]:
             b = [r for r in tr if r["condition"] == "B"]
 
             print(f"\n  Task: {tid}")
-            print(f"  {'Metric':<25} {'Without mementic':>18} {'With mementic':>18} {'Delta':>10}")
-            print(f"  {'-'*25} {'-'*18} {'-'*18} {'-'*10}")
+            print(f"  {'Metric':<25} {'Without mementic':>18} {'With mementic':>18}")
+            print(f"  {'-'*25} {'-'*18} {'-'*18}")
             print(f"  {'Files read':<25} {_avg(a, 'total_file_reads'):>18} {_avg(b, 'total_file_reads'):>18}")
-            print(f"  {'--- Cost breakdown ---':<25}")
-            print(f"  {'Context (read/glob)':<25} {_avg(a, 'context_cost'):>18} {_avg(b, 'context_cost'):>18}")
-            print(f"  {'MCP overhead':<25} {'-':>18} {_avg(b, 'mcp_cost'):>18}")
-            print(f"  {'Implementation':<25} {_avg(a, 'impl_cost'):>18} {_avg(b, 'impl_cost'):>18}")
-            print(f"  {'Verification':<25} {_avg(a, 'verify_cost'):>18} {_avg(b, 'verify_cost'):>18}")
-            print(f"  {'--- Token comparison ---':<25}")
-            print(f"  {'Session log tokens':<25} {_avg(a, 'session_log_tokens'):>18} {_avg(b, 'session_log_tokens'):>18}")
-            print(f"  {'Normalized tokens':<25} {_avg(a, 'normalized_tokens'):>18} {_avg(b, 'normalized_tokens'):>18}")
+            print(f"  {'Context calls':<25} {_avg(a, 'context_cost'):>18} {_avg(b, 'context_cost'):>18}")
+            print(f"  {'MCP calls':<25} {'-':>18} {_avg(b, 'mcp_cost'):>18}")
+            print(f"  {'--- What matters ---':<25}")
             print(f"  {'LLM context tokens':<25} {_avg_result(a, 'llm_context_tokens'):>18} {_avg_result(b, 'llm_context_tokens'):>18}")
-            print(f"  {'LLM cost':<25} {'-':>18} {'-':>18}")
-            print(f"  {'--- Outcome ---':<25}")
             print(f"  {'Success rate':<25} {_rate(a):>18} {_rate(b):>18}")
 
         results_path = PROJECT_ROOT / "ab_benchmark_results.json"

@@ -34,5 +34,23 @@
       "JSON serialization: how graph data is converted to JSON elsewhere",
       "file I/O conventions: where output goes by default"
     ]
+  },
+  {
+    "id": "add-stats-command",
+    "description": "Add a `mementic stats` command that prints per-project statistics as a formatted table: total counts for decisions, constraints, entities, and edges; status distribution for decisions (accepted/deprecated/superseded); most-referenced entities (entities with the most inbound edges, top 5); staleness breakdown (items older than 30/90/365 days); and total audit log entries. Support --json for machine-readable output. Follow existing CLI table patterns (use the same ASCII-safe formatting as `mementic metrics` and `mementic list`). Do NOT modify the SQLite schema — everything is read-only queries on the existing tables via GraphStore. Wire up a `mementic_get_stats` MCP tool in server.py so agents can query stats during sessions.",
+    "starting_ref": "main",
+    "success_command": "uv run pytest -xvs tests/ -k stats",
+    "architectural_context_needed": [
+      "graph.py: GraphStore query methods (get_all_decisions, get_all_constraints, get_all_entities, get_all_edges)",
+      "graph.py: SQLite schema — table names, column names, how edges link nodes",
+      "graph.py: audit_log table schema and query pattern",
+      "models.py: Decision status enum values (accepted, deprecated, superseded), timestamp fields",
+      "models.py: how created_at/modified_at timestamps are stored and queried",
+      "cli.py: Typer command registration pattern, table output formatting (_print_table or equivalent)",
+      "cli.py: --json flag convention and json.dumps usage pattern",
+      "format.py or cli.py: ASCII-safe table drawing (horizontal rules, column alignment)",
+      "metrics.py or metrics CLI: existing stats/metrics display pattern to follow",
+      "server.py: MCP tool registration pattern (@mcp.tool decorator, function signature conventions)"
+    ]
   }
 ]
