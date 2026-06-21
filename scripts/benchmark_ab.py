@@ -228,25 +228,26 @@ def run_benchmark(tasks: list[dict], runs: int) -> list[dict]:
                     if llm_ctx_tokens:
                         print(f"[input]   parent -> {llm_ctx_tokens:,} tokens")
 
-                    llm_subagent_tokens = None
+                    llm_subagent_tokens = 0
                     subagent_count = 0
-                    # Count subagent sessions in the log delta
                     subagent_re = re.compile(r"message=created\s+.*?\bparentID=ses_")
                     session_lines = "".join(
                         Path(str(latest)).read_text(encoding="utf-8", errors="replace").splitlines(keepends=True)[log_lines_before:]
                     )
                     subagent_count = len(subagent_re.findall(session_lines))
-                    if subagent_count > 0:
+                    for i in range(1, subagent_count + 1):
                         raw_sub = input(
-                            f"  [input] SUBAGENTS ({subagent_count} detected): paste their COMBINED context tokens\n"
-                            "          (sum of each subagent's 'Context X tokens' line, or Enter to skip)\n"
-                            "  > "
+                            f"  [input] Subagent {i}/{subagent_count} context tokens "
+                            f"(Enter to skip, 0 if unknown):\n  > "
                         ).strip()
                         try:
-                            llm_subagent_tokens = int(raw_sub.replace(",", ""))
-                            print(f"[input]   subagents -> {llm_subagent_tokens:,} tokens")
+                            tokens = int(raw_sub.replace(",", ""))
+                            llm_subagent_tokens += tokens
+                            print(f"[input]   subagent {i} -> {tokens:,} tokens")
                         except ValueError:
-                            pass
+                            print(f"[input]   subagent {i} -> skipped")
+                    if subagent_count > 0:
+                        print(f"[input]   subagent total: {llm_subagent_tokens:,} tokens")
 
                     print(f"\n[test] Running: {success_cmd}")
                     sr = _run(success_cmd, check=False)
@@ -266,7 +267,7 @@ def run_benchmark(tasks: list[dict], runs: int) -> list[dict]:
                         "metrics": metrics,
                         "llm_context_tokens": llm_ctx_tokens,
                         "llm_subagent_tokens": llm_subagent_tokens,
-                        "llm_total_tokens": (llm_ctx_tokens or 0) + (llm_subagent_tokens or 0) if llm_ctx_tokens else None,
+                        "llm_total_tokens": llm_ctx_tokens + llm_subagent_tokens if llm_ctx_tokens else None,
                         "llm_context_percent": llm_ctx_pct,
                         "llm_cost_spent": llm_ctx_cost,
                         "subagent_count": subagent_count,
@@ -276,12 +277,13 @@ def run_benchmark(tasks: list[dict], runs: int) -> list[dict]:
 
                     if "error" not in metrics:
                         print(f"[result] Files read: {metrics.get('total_file_reads', '?')}")
-                        total_tokens = llm_ctx_tokens or 0
-                        if llm_subagent_tokens:
-                            total_tokens += llm_subagent_tokens
-                            print(f"[result] LLM context: {llm_ctx_tokens:,} + {llm_subagent_tokens:,} sub = {total_tokens:,} total")
+                        if llm_ctx_tokens:
+                            if llm_subagent_tokens:
+                                print(f"[result] LLM context: {llm_ctx_tokens:,} + {llm_subagent_tokens:,} sub = {llm_ctx_tokens + llm_subagent_tokens:,} total")
+                            else:
+                                print(f"[result] LLM context: {llm_ctx_tokens:,}")
                         else:
-                            print(f"[result] LLM context: {llm_ctx_tokens or '?'}")
+                            print("[result] LLM context: ?")
                     print()
 
         # Print summary
