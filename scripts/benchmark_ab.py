@@ -40,15 +40,31 @@ OP_LOG_DIR = _OP_LOG
 
 # -- Helpers -----------------------------------------------------------------
 
-_CONTEXT_LINE_RE = re.compile(r"(\d[\d,]*).*?(\d+)%?.*?\$?([\d.]+)")
+_CONTEXT_LINE_RE = re.compile(r"([\d,.]+)(K)?\b.*?(\d+)%?.*?\$?([\d.]+)")
 
 
 def _parse_context_line(raw: str) -> tuple[int | None, int | None, float | None]:
-    """Parse OpenCode's terminal 'Context X tokens Y% used $Z.ZZ spent' line."""
+    """Parse 'Context 67,901 tokens  7% used  $0.03 spent' or '70.4K (7%) * $0.03'."""
     m = _CONTEXT_LINE_RE.search(raw)
     if not m:
         return None, None, None
-    return int(m.group(1).replace(",", "")), int(m.group(2)), float(m.group(3))
+    tokens = float(m.group(1).replace(",", ""))
+    if m.group(2) == "K":
+        tokens *= 1000
+    return int(tokens), int(m.group(3)), float(m.group(4))
+
+
+def _parse_token_number(raw: str) -> int | None:
+    """Parse a plain token count like '67901', '70.4K', or '70,400'."""
+    raw = raw.strip().replace(",", "")
+    if not raw:
+        return None
+    try:
+        if raw.upper().endswith("K"):
+            return int(float(raw[:-1]) * 1000)
+        return int(float(raw))
+    except ValueError:
+        return None
 
 
 def _run(cmd: str | list[str], check: bool = True) -> subprocess.CompletedProcess:
@@ -238,13 +254,13 @@ def run_benchmark(tasks: list[dict], runs: int) -> list[dict]:
                     for i in range(1, subagent_count + 1):
                         raw_sub = input(
                             f"  [input] Subagent {i}/{subagent_count} context tokens "
-                            f"(Enter to skip, 0 if unknown):\n  > "
+                            f"(e.g. 70.4K or 70400, Enter to skip):\n  > "
                         ).strip()
-                        try:
-                            tokens = int(raw_sub.replace(",", ""))
+                        tokens = _parse_token_number(raw_sub)
+                        if tokens:
                             llm_subagent_tokens += tokens
                             print(f"[input]   subagent {i} -> {tokens:,} tokens")
-                        except ValueError:
+                        else:
                             print(f"[input]   subagent {i} -> skipped")
                     if subagent_count > 0:
                         print(f"[input]   subagent total: {llm_subagent_tokens:,} tokens")
