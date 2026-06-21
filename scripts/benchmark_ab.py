@@ -219,14 +219,34 @@ def run_benchmark(tasks: list[dict], runs: int) -> list[dict]:
                     input("  [ACTION] Run OpenCode with the task above, then press Enter...")
 
                     raw_ctx = input(
-                        "  [input] Paste the 'Context' line from OpenCode terminal:\n"
+                        "  [input] PARENT agent: paste the 'Context' line from OpenCode terminal:\n"
                         "          e.g. Context 67,901 tokens  7% used  $0.03 spent\n"
                         "          Enter 3 numbers: <tokens> <%used> <cost> (or Enter to skip)\n"
                         "  > "
                     ).strip()
                     llm_ctx_tokens, llm_ctx_pct, llm_ctx_cost = _parse_context_line(raw_ctx)
                     if llm_ctx_tokens:
-                        print(f"[input]   -> {llm_ctx_tokens:,} tokens, {llm_ctx_pct}% used, ${llm_ctx_cost:.2f} spent")
+                        print(f"[input]   parent -> {llm_ctx_tokens:,} tokens")
+
+                    llm_subagent_tokens = None
+                    subagent_count = 0
+                    # Count subagent sessions in the log delta
+                    subagent_re = re.compile(r"message=created\s+.*?\bparentID=ses_")
+                    session_lines = "".join(
+                        Path(str(latest)).read_text(encoding="utf-8", errors="replace").splitlines(keepends=True)[log_lines_before:]
+                    )
+                    subagent_count = len(subagent_re.findall(session_lines))
+                    if subagent_count > 0:
+                        raw_sub = input(
+                            f"  [input] SUBAGENTS ({subagent_count} detected): paste their COMBINED context tokens\n"
+                            "          (sum of each subagent's 'Context X tokens' line, or Enter to skip)\n"
+                            "  > "
+                        ).strip()
+                        try:
+                            llm_subagent_tokens = int(raw_sub.replace(",", ""))
+                            print(f"[input]   subagents -> {llm_subagent_tokens:,} tokens")
+                        except ValueError:
+                            pass
 
                     print(f"\n[test] Running: {success_cmd}")
                     sr = _run(success_cmd, check=False)
@@ -245,15 +265,23 @@ def run_benchmark(tasks: list[dict], runs: int) -> list[dict]:
                         "session_log": str(latest),
                         "metrics": metrics,
                         "llm_context_tokens": llm_ctx_tokens,
+                        "llm_subagent_tokens": llm_subagent_tokens,
+                        "llm_total_tokens": (llm_ctx_tokens or 0) + (llm_subagent_tokens or 0) if llm_ctx_tokens else None,
                         "llm_context_percent": llm_ctx_pct,
                         "llm_cost_spent": llm_ctx_cost,
+                        "subagent_count": subagent_count,
                         "timestamp": datetime.now(timezone.utc).isoformat(),
                     }
                     results.append(run_result)
 
                     if "error" not in metrics:
                         print(f"[result] Files read: {metrics.get('total_file_reads', '?')}")
-                        print(f"[result] LLM context tokens: {llm_ctx_tokens or '?'}")
+                        total_tokens = llm_ctx_tokens or 0
+                        if llm_subagent_tokens:
+                            total_tokens += llm_subagent_tokens
+                            print(f"[result] LLM context: {llm_ctx_tokens:,} + {llm_subagent_tokens:,} sub = {total_tokens:,} total")
+                        else:
+                            print(f"[result] LLM context: {llm_ctx_tokens or '?'}")
                     print()
 
         # Print summary
@@ -270,7 +298,7 @@ def run_benchmark(tasks: list[dict], runs: int) -> list[dict]:
                 return f"{sum(vals)/len(vals):,.0f}" if vals else "-"
 
             def _avg_result(rs, key):
-                """Average a top-level result field (not inside metrics dict)."""
+                """Average a top-level result field."""
                 vals = [r.get(key) for r in rs if r.get(key) is not None]
                 return f"{sum(vals)/len(vals):,.0f}" if vals else "-"
 
@@ -289,7 +317,7 @@ def run_benchmark(tasks: list[dict], runs: int) -> list[dict]:
             print(f"  {'Context calls':<25} {_avg(a, 'context_cost'):>18} {_avg(b, 'context_cost'):>18}")
             print(f"  {'MCP calls':<25} {'-':>18} {_avg(b, 'mcp_cost'):>18}")
             print(f"  {'--- What matters ---':<25}")
-            print(f"  {'LLM context tokens':<25} {_avg_result(a, 'llm_context_tokens'):>18} {_avg_result(b, 'llm_context_tokens'):>18}")
+            print(f"  {'LLM context tokens':<25} {_avg_result(a, 'llm_total_tokens'):>18} {_avg_result(b, 'llm_total_tokens'):>18}")
             print(f"  {'Success rate':<25} {_rate(a):>18} {_rate(b):>18}")
 
         results_path = PROJECT_ROOT / "ab_benchmark_results.json"
