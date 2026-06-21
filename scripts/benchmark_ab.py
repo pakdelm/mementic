@@ -7,7 +7,7 @@ Usage:
     python scripts/benchmark_ab.py --runs 3
 
 Process:
-    1. Loads task definitions from tests/fixtures/ab_benchmark_tasks.json
+    1. Loads task definitions from scripts/ab_benchmark_tasks.json
     2. For each task, runs 2 conditions (A=without mementic, B=with mementic)
     3. Outputs side-by-side comparison table
 """
@@ -26,7 +26,7 @@ from pathlib import Path
 # -- Paths -------------------------------------------------------------------
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-TASKS_FILE = PROJECT_ROOT / "tests" / "fixtures" / "ab_benchmark_tasks.json"
+TASKS_FILE = PROJECT_ROOT / "scripts" / "ab_benchmark_tasks.json"
 MEASURE_SCRIPT = PROJECT_ROOT / "scripts" / "benchmark_ab_measure.py"
 OPENCODE_JSON = PROJECT_ROOT / "opencode.json"
 AGENTS_MD = PROJECT_ROOT / "AGENTS.md"
