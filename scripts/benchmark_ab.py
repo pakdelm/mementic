@@ -106,9 +106,12 @@ def _git_reset(ref: str) -> None:
     # NOTE: do NOT use git clean -fd — it destroys untracked benchmark files
 
 
-def _measure_session(session_log: Path) -> dict:
+def _measure_session(session_log: Path, from_line: int = 0) -> dict:
+    cmd = [sys.executable, str(MEASURE_SCRIPT), str(session_log), "--json"]
+    if from_line > 0:
+        cmd.extend(["--from-line", str(from_line)])
     result = subprocess.run(
-        [sys.executable, str(MEASURE_SCRIPT), str(session_log), "--json"],
+        cmd,
         cwd=str(PROJECT_ROOT),
         capture_output=True,
         text=True,
@@ -119,6 +122,21 @@ def _measure_session(session_log: Path) -> dict:
         return json.loads(result.stdout)
     except json.JSONDecodeError:
         return {"error": "Failed to parse measurement output", "raw": result.stdout[:500]}
+
+
+def _count_log_lines(log_path: Path) -> int:
+    """Count lines in a file efficiently."""
+    count = 0
+    try:
+        with open(log_path, "rb") as f:
+            bufsize = 1024 * 1024
+            buf = f.read(bufsize)
+            while buf:
+                count += buf.count(b"\n")
+                buf = f.read(bufsize)
+        return count
+    except OSError:
+        return 0
 
 
 # -- Main -------------------------------------------------------------------
@@ -169,21 +187,24 @@ def run_benchmark(tasks: list[dict], runs: int) -> list[dict]:
                     print()
                     print(f"  TASK: {desc}")
                     print()
-                    input("  [ACTION] Run OpenCode with the task above, then press Enter...")
-
                     latest = _latest_session_log()
                     if not latest:
                         print("[warn] No session log found. Skipping.")
                         results.append({"task": tid, "run": run_num, "condition": condition, "success": False, "error": "no session log"})
                         continue
 
+                    log_lines_before = _count_log_lines(latest)
+                    print(f"[log] {latest.name} has {log_lines_before:,} lines before session")
+
+                    input("  [ACTION] Run OpenCode with the task above, then press Enter...")
+
                     print(f"\n[test] Running: {success_cmd}")
                     sr = _run(success_cmd, check=False)
                     success = sr.returncode == 0
                     print(f"[test] {'PASS' if success else 'FAIL'} (exit {sr.returncode})")
 
-                    print(f"[measure] Parsing: {latest.name}...")
-                    metrics = _measure_session(latest)
+                    print(f"[measure] Parsing: {latest.name} (from line {log_lines_before + 1})...")
+                    metrics = _measure_session(latest, from_line=log_lines_before + 1)
 
                     run_result = {
                         "task": tid,
