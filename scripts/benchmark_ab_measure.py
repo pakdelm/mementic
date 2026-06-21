@@ -71,6 +71,53 @@ def _find_last_session_start(log_text: str) -> int:
     return last_start
 
 
+# -- Tool classification ------------------------------------------------------
+
+_VERIFY_PATTERNS = {
+    "pytest", "coverage", "ruff", "mypy",
+    "git commit", "git diff", "git log", "git show", "git add",
+    "git checkout", "git branch", "git status",
+    "new-item", "remove-item", "join-path", "test-path",
+    "get-content", "set-content", "convertfrom-json", "convertto-json",
+    "write-host", "select-object", "pop-location", "get-location",
+    "out-null", "echo",
+}
+
+
+def _classify_tool(tool: str, pattern: str) -> str:
+    """Classify a tool call into a category for cost breakdown.
+
+    Categories:
+        context  — discovering what code exists and how it works
+        mcp      — mementic-specific context queries
+        impl     — writing or changing code
+        verify   — running tests, linting, checking correctness
+        other    — everything else
+    """
+    if tool.startswith("mementic_"):
+        return "mcp"
+
+    if tool in ("read", "glob", "grep"):
+        return "context"
+
+    if tool in ("edit", "write", "todowrite", "task"):
+        return "impl"
+
+    if tool == "bash":
+        p_lower = pattern.lower()
+        for keyword in _VERIFY_PATTERNS:
+            if keyword in p_lower:
+                return "verify"
+        if any(cmd in p_lower for cmd in ("uv run", "git ", "python ")):
+            return "verify"
+        return "verify"  # unclassified bash defaults to verify
+
+    if tool == "external_directory":
+        return "context"
+
+    return "other"
+
+
 # -- Main measurement ---------------------------------------------------------
 
 
@@ -106,11 +153,24 @@ def measure_session(log_path: str | Path, from_line: int = 0) -> dict:
     for tool, _pattern in permissions:
         tool_counts[tool] = tool_counts.get(tool, 0) + 1
 
+    # Categorize each call
+    category_counts: dict[str, int] = {}
+    for tool, pattern in permissions:
+        cat = _classify_tool(tool, pattern)
+        category_counts[cat] = category_counts.get(cat, 0) + 1
+
     try:
         from mementic.format import count_tokens
         tokens = count_tokens(clean)
     except ImportError:
         tokens = len(clean) // 4
+
+    # Estimate normalized tokens by subtracting verification overhead.
+    # Uses call-count proportion as a rough proxy for token distribution.
+    verify_count = category_counts.get("verify", 0)
+    total_calls = len(permissions)
+    verify_ratio = verify_count / total_calls if total_calls > 0 else 0
+    normalized_tokens = int(tokens * (1 - verify_ratio * 0.7))  # 70% of verify is overhead
 
     return {
         "log_path": str(path),
@@ -122,8 +182,14 @@ def measure_session(log_path: str | Path, from_line: int = 0) -> dict:
         "unique_files_read": unique_files,
         "total_file_reads": len(files_read),
         "session_log_tokens": tokens,
+        "normalized_tokens": normalized_tokens,
         "tool_calls": tool_counts,
-        "total_tool_calls": len(permissions),
+        "total_tool_calls": total_calls,
+        "category_breakdown": category_counts,
+        "context_cost": category_counts.get("context", 0) + category_counts.get("mcp", 0),
+        "mcp_cost": category_counts.get("mcp", 0),
+        "verify_cost": verify_count,
+        "impl_cost": category_counts.get("impl", 0),
     }
 
 
@@ -157,9 +223,18 @@ def main() -> None:
         print(f"  Log size: {result['log_size_bytes']:,} bytes")
         if result.get("scoped"):
             print(f"  Scope: from line {result['from_line']}")
-        print(f"  Session log tokens: {result['session_log_tokens']:,}")
-        print(f"  Files read: {result['total_file_reads']} ({result['unique_files_read_count']} unique)")
-        print(f"  Total tool calls: {result['total_tool_calls']}")
+        print()
+        print(f"  Session log tokens:  {result['session_log_tokens']:>8,}")
+        print(f"  Normalized tokens:   {result['normalized_tokens']:>8,}  (minus ~70% verify overhead)")
+        print()
+        print(f"  Context discovery:   {result['context_cost']:>3} calls  (read, glob, grep)")
+        print(f"  MCP overhead:        {result['mcp_cost']:>3} calls  (mementic_*)")
+        print(f"  Implementation:      {result['impl_cost']:>3} calls  (edit, write, task)")
+        print(f"  Verification:        {result['verify_cost']:>3} calls  (bash: pytest, ruff, mypy, git, pwsh)")
+        print(f"  {'—'*50}")
+        print(f"  Total tool calls:    {result['total_tool_calls']:>3}")
+        print(f"  Files read:          {result['total_file_reads']} ({result['unique_files_read_count']} unique)")
+        print()
         print("  Tool breakdown:")
         for tool, count in sorted(result["tool_calls"].items(), key=lambda x: -x[1]):
             print(f"    {tool}: {count}")

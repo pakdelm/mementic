@@ -27,7 +27,7 @@
     "id": "add-export-command",
     "description": "Add a `mementic export` CLI command that exports the current project's graph to a JSON file. The output should include all active decisions, constraints, and entities with their relationships (edges). Use --output (or -o) to specify the output file path. Follow existing CLI patterns in mementic/cli.py.",
     "starting_ref": "main",
-    "success_command": "uv run pytest -xvs tests/ -k 'export or cli'",
+    "success_command": "uv run pytest -xvs tests/ -q",
     "architectural_context_needed": [
       "graph storage format: SQLite schema and how nodes/edges are stored",
       "CLI conventions: Typer command pattern, --output flag naming",

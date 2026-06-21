@@ -40,10 +40,20 @@ OP_LOG_DIR = _OP_LOG
 
 # -- Helpers -----------------------------------------------------------------
 
+_CONTEXT_LINE_RE = re.compile(r"([\d,]+)\s+(\d+)%?\s+.*?\$?([\d.]+)")
+
+
+def _parse_context_line(raw: str) -> tuple[int | None, int | None, float | None]:
+    """Parse OpenCode's terminal 'Context X tokens Y% used $Z.ZZ spent' line."""
+    m = _CONTEXT_LINE_RE.search(raw)
+    if not m:
+        return None, None, None
+    return int(m.group(1).replace(",", "")), int(m.group(2)), float(m.group(3))
+
 
 def _run(cmd: str | list[str], check: bool = True) -> subprocess.CompletedProcess:
     if isinstance(cmd, str):
-        cmd = cmd.split()
+        return subprocess.run(cmd, cwd=str(PROJECT_ROOT), capture_output=True, text=True, check=check, shell=True)
     return subprocess.run(cmd, cwd=str(PROJECT_ROOT), capture_output=True, text=True, check=check)
 
 
@@ -96,6 +106,16 @@ def _configure_condition(condition: str) -> None:
                 "enabled": True,
             }
         _run("git checkout -- AGENTS.md")
+        agents = AGENTS_MD.read_text(encoding="utf-8")
+        agents = re.sub(
+            r"\*\*Proposing decisions/constraints.*",
+            "**BENCHMARK MODE** -- do NOT call mementic_record_decision,\n"
+            "mementic_record_constraint, or mementic_review_context.\n"
+            "These are disabled for benchmark measurement.\n",
+            agents,
+            flags=re.DOTALL,
+        )
+        AGENTS_MD.write_text(agents, encoding="utf-8")
 
     OPENCODE_JSON.write_text(json.dumps(oc, indent=2) + "\n", encoding="utf-8")
 
@@ -198,6 +218,16 @@ def run_benchmark(tasks: list[dict], runs: int) -> list[dict]:
 
                     input("  [ACTION] Run OpenCode with the task above, then press Enter...")
 
+                    raw_ctx = input(
+                        "  [input] Paste the 'Context' line from OpenCode terminal:\n"
+                        "          e.g. Context 67,901 tokens  7% used  $0.03 spent\n"
+                        "          Enter 3 numbers: <tokens> <%used> <cost> (or Enter to skip)\n"
+                        "  > "
+                    ).strip()
+                    llm_ctx_tokens, llm_ctx_pct, llm_ctx_cost = _parse_context_line(raw_ctx)
+                    if llm_ctx_tokens:
+                        print(f"[input]   -> {llm_ctx_tokens:,} tokens, {llm_ctx_pct}% used, ${llm_ctx_cost:.2f} spent")
+
                     print(f"\n[test] Running: {success_cmd}")
                     sr = _run(success_cmd, check=False)
                     success = sr.returncode == 0
@@ -214,6 +244,9 @@ def run_benchmark(tasks: list[dict], runs: int) -> list[dict]:
                         "success": success,
                         "session_log": str(latest),
                         "metrics": metrics,
+                        "llm_context_tokens": llm_ctx_tokens,
+                        "llm_context_percent": llm_ctx_pct,
+                        "llm_cost_spent": llm_ctx_cost,
                         "timestamp": datetime.now(timezone.utc).isoformat(),
                     }
                     results.append(run_result)
@@ -222,7 +255,10 @@ def run_benchmark(tasks: list[dict], runs: int) -> list[dict]:
                         print(f"[result] Files read: {metrics.get('total_file_reads', '?')}")
                         print(f"[result] Unique files: {metrics.get('unique_files_read_count', '?')}")
                         print(f"[result] Session tokens: {metrics['session_log_tokens']:,}")
+                        print(f"[result] Normalized: {metrics.get('normalized_tokens', '?'):,}")
+                        print(f"[result] LLM context tokens: {llm_ctx_tokens or '?'}")
                         print(f"[result] Tool calls: {metrics.get('total_tool_calls', '?')}")
+                        print(f"[result]   context={metrics.get('context_cost','?')}  mcp={metrics.get('mcp_cost','?')}  impl={metrics.get('impl_cost','?')}  verify={metrics.get('verify_cost','?')}")
                     print()
 
         # Print summary
@@ -238,6 +274,11 @@ def run_benchmark(tasks: list[dict], runs: int) -> list[dict]:
                 vals = [r["metrics"].get(key, 0) for r in rs if "metrics" in r and "error" not in r.get("metrics", {})]
                 return f"{sum(vals)/len(vals):,.0f}" if vals else "-"
 
+            def _avg_result(rs, key):
+                """Average a top-level result field (not inside metrics dict)."""
+                vals = [r.get(key) for r in rs if r.get(key) is not None]
+                return f"{sum(vals)/len(vals):,.0f}" if vals else "-"
+
             def _rate(rs):
                 if not rs:
                     return "-"
@@ -247,12 +288,20 @@ def run_benchmark(tasks: list[dict], runs: int) -> list[dict]:
             b = [r for r in tr if r["condition"] == "B"]
 
             print(f"\n  Task: {tid}")
-            print(f"  {'Metric':<25} {'Without mementic':>18} {'With mementic':>18}")
-            print(f"  {'-'*25} {'-'*18} {'-'*18}")
+            print(f"  {'Metric':<25} {'Without mementic':>18} {'With mementic':>18} {'Delta':>10}")
+            print(f"  {'-'*25} {'-'*18} {'-'*18} {'-'*10}")
             print(f"  {'Files read':<25} {_avg(a, 'total_file_reads'):>18} {_avg(b, 'total_file_reads'):>18}")
-            print(f"  {'Unique files':<25} {_avg(a, 'unique_files_read_count'):>18} {_avg(b, 'unique_files_read_count'):>18}")
-            print(f"  {'Session tokens':<25} {_avg(a, 'session_log_tokens'):>18} {_avg(b, 'session_log_tokens'):>18}")
-            print(f"  {'Tool calls':<25} {_avg(a, 'total_tool_calls'):>18} {_avg(b, 'total_tool_calls'):>18}")
+            print(f"  {'--- Cost breakdown ---':<25}")
+            print(f"  {'Context (read/glob)':<25} {_avg(a, 'context_cost'):>18} {_avg(b, 'context_cost'):>18}")
+            print(f"  {'MCP overhead':<25} {'-':>18} {_avg(b, 'mcp_cost'):>18}")
+            print(f"  {'Implementation':<25} {_avg(a, 'impl_cost'):>18} {_avg(b, 'impl_cost'):>18}")
+            print(f"  {'Verification':<25} {_avg(a, 'verify_cost'):>18} {_avg(b, 'verify_cost'):>18}")
+            print(f"  {'--- Token comparison ---':<25}")
+            print(f"  {'Session log tokens':<25} {_avg(a, 'session_log_tokens'):>18} {_avg(b, 'session_log_tokens'):>18}")
+            print(f"  {'Normalized tokens':<25} {_avg(a, 'normalized_tokens'):>18} {_avg(b, 'normalized_tokens'):>18}")
+            print(f"  {'LLM context tokens':<25} {_avg_result(a, 'llm_context_tokens'):>18} {_avg_result(b, 'llm_context_tokens'):>18}")
+            print(f"  {'LLM cost':<25} {'-':>18} {'-':>18}")
+            print(f"  {'--- Outcome ---':<25}")
             print(f"  {'Success rate':<25} {_rate(a):>18} {_rate(b):>18}")
 
         results_path = PROJECT_ROOT / "ab_benchmark_results.json"
