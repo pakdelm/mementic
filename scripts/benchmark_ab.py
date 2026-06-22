@@ -67,6 +67,17 @@ def _parse_token_number(raw: str) -> int | None:
         return None
 
 
+_TIME_RE = re.compile(r"(\d+)\s*m\s*(\d+)\s*s", re.IGNORECASE)
+
+
+def _parse_time_spent(raw: str) -> int | None:
+    """Parse '13m 57s' or '11m 57s' into total seconds. Returns None on failure."""
+    m = _TIME_RE.search(raw)
+    if not m:
+        return None
+    return int(m.group(1)) * 60 + int(m.group(2))
+
+
 def _run(cmd: str | list[str], check: bool = True) -> subprocess.CompletedProcess:
     if isinstance(cmd, str):
         return subprocess.run(cmd, cwd=str(PROJECT_ROOT), capture_output=True, text=True, check=check, shell=True)
@@ -265,6 +276,13 @@ def run_benchmark(tasks: list[dict], runs: int) -> list[dict]:
                     if subagent_count > 0:
                         print(f"[input]   subagent total: {llm_subagent_tokens:,} tokens")
 
+                    raw_time = input(
+                        "  [input] Time spent (from OpenCode terminal, e.g. '13m 57s', Enter to skip):\n  > "
+                    ).strip()
+                    time_spent = _parse_time_spent(raw_time) if raw_time else None
+                    if time_spent:
+                        print(f"[input]   time -> {time_spent // 60}m {time_spent % 60}s ({time_spent}s)")
+
                     print(f"\n[test] Running: {success_cmd}")
                     sr = _run(success_cmd, check=False)
                     success = sr.returncode == 0
@@ -287,6 +305,7 @@ def run_benchmark(tasks: list[dict], runs: int) -> list[dict]:
                         "llm_context_percent": llm_ctx_pct,
                         "llm_cost_spent": llm_ctx_cost,
                         "subagent_count": subagent_count,
+                        "time_spent_seconds": time_spent,
                         "timestamp": datetime.now(timezone.utc).isoformat(),
                     }
                     results.append(run_result)
@@ -300,6 +319,8 @@ def run_benchmark(tasks: list[dict], runs: int) -> list[dict]:
                                 print(f"[result] LLM context: {llm_ctx_tokens:,}")
                         else:
                             print("[result] LLM context: ?")
+                        if time_spent:
+                            print(f"[result] Time: {time_spent // 60}m {time_spent % 60}s")
                     print()
 
         # Print summary
@@ -320,6 +341,13 @@ def run_benchmark(tasks: list[dict], runs: int) -> list[dict]:
                 vals = [r.get(key) for r in rs if r.get(key) is not None]
                 return f"{sum(vals)/len(vals):,.0f}" if vals else "-"
 
+            def _avg_time(rs):
+                vals = [r.get("time_spent_seconds") for r in rs if r.get("time_spent_seconds") is not None]
+                if not vals:
+                    return "-"
+                avg = sum(vals) / len(vals)
+                return f"{int(avg // 60)}m {int(avg % 60)}s"
+
             def _rate(rs):
                 if not rs:
                     return "-"
@@ -336,6 +364,7 @@ def run_benchmark(tasks: list[dict], runs: int) -> list[dict]:
             print(f"  {'MCP calls':<25} {'-':>18} {_avg(b, 'mcp_cost'):>18}")
             print(f"  {'--- What matters ---':<25}")
             print(f"  {'LLM context tokens':<25} {_avg_result(a, 'llm_total_tokens'):>18} {_avg_result(b, 'llm_total_tokens'):>18}")
+            print(f"  {'Time spent':<25} {_avg_time(a):>18} {_avg_time(b):>18}")
             print(f"  {'Success rate':<25} {_rate(a):>18} {_rate(b):>18}")
 
         results_path = PROJECT_ROOT / "ab_benchmark_results.json"
