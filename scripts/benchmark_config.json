@@ -1,0 +1,14 @@
+[
+  {
+    "id": "add-stale-flag",
+    "description": "Add a --stale flag to `mementic list` that filters to items not modified in 30+ days. The flag should work with all existing list subtypes (decisions, constraints, entities). When --stale is passed, only show items where the last_modified timestamp (or equivalent) is older than 30 days from now.",
+    "starting_ref": "main",
+    "success_command": "uv run pytest -xvs tests/ -k list"
+  },
+  {
+    "id": "add-stats-command",
+    "description": "Add a `mementic stats` command that prints per-project statistics as a formatted table: total counts for decisions, constraints, entities, and edges; status distribution for decisions (accepted/deprecated/superseded); most-referenced entities (entities with the most inbound edges, top 5); staleness breakdown (items older than 30/90/365 days); and total audit log entries. Support --json for machine-readable output. Follow existing CLI table patterns (use the same ASCII-safe formatting as `mementic metrics` and `mementic list`). Do NOT modify the SQLite schema — everything is read-only queries on the existing tables via GraphStore. Wire up a `mementic_get_stats` MCP tool in server.py so agents can query stats during sessions.",
+    "starting_ref": "main",
+    "success_command": "uv run pytest -xvs tests/ -k stats"
+  }
+]

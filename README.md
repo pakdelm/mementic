@@ -287,6 +287,16 @@ architectural rules apply to this change?"
 
 Numbers are from mementic's own codebase.
 
+### Reproduce
+
+```bash
+python scripts/opencode_benchmark.py              # 2 runs per task per condition
+python scripts/opencode_benchmark.py --runs 3     # more statistical robustness
+python scripts/opencode_benchmark.py --tasks add-stale-flag   # single task
+```
+
+The runner manages git state and OpenCode config; you run OpenCode when prompted.
+
 ## Measuring token efficiency
 
 Mementic tracks its own costs so you can answer: *does the LLM spend on mementic pay for itself through agent context savings?*
