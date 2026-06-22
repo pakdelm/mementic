@@ -19,9 +19,14 @@ that is the token waste the graph eliminates.
 **After EVERY user message** (not just "before a task" — each message is a new
 context window):
 1. Think about the task: what domains, concepts, and concerns are relevant?
-   Generate 15-25 single-word keywords that capture the task's domain
-   (e.g., for "fix authentication bug" → ["auth", "token", "security",
-   "password", "hashing", "argon2", "login", "session"]).
+   Generate 5-12 narrow, single-word technical keywords. Favor specific
+   terms (e.g., ``argon2``, ``pydantic``, ``SessionMiddleware``) over
+   generic ones (e.g., ``security``, ``validation``, ``middleware``).
+   Generic keywords match too many items and bloat context packs.
+   If fewer than 5 keywords apply, 3-4 precise ones are better than
+   padding with broad terms. Example for "fix authentication bug":
+   ["argon2", "token", "login", "session"] — skip "security", "password",
+   "hashing" because they match dozens of unrelated items.
 2. Call `mementic_get_task_context(keywords=[...])` with those keywords.
    Echo the `[mementic: ...]` summary line to the user.
 

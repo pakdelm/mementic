@@ -415,15 +415,16 @@ def format_memory_context(
     selected_c: list[Constraint]
 
     if keywords:
-        # Keyword-based ranking: score all items — no gate.
-        # Items with zero overlap sink to the bottom; token budget
-        # determines how many are shown.
+        # Keyword-based ranking: score all items, then gate out
+        # items with zero keyword overlap (no match = not relevant).
         scored: list[tuple[Constraint, float]] = []
         for c in constraints:
             score = keyword_overlap_score(c.description, keywords)
             score *= specificity_factor(c.bound_entities)
             scored.append((c, score))
         scored.sort(key=lambda x: x[1], reverse=True)
+        # Relevance gate: exclude items with zero keyword overlap
+        scored = [(c, s) for c, s in scored if s > 0.0]
         selected_tuples = list(scored)
 
         # Truncate to token budget
@@ -473,13 +474,16 @@ def format_memory_context(
     selected_d: list[Decision]
 
     if keywords:
-        # Keyword-based ranking: score all items — no gate.
+        # Keyword-based ranking: score all items, then gate out
+        # items with zero keyword overlap (no match = not relevant).
         scored_d: list[tuple[Decision, float]] = []
         for d in decisions:
             score = keyword_overlap_score(d.rationale, keywords)
             score *= specificity_factor(d.affected_entities)
             scored_d.append((d, score))
         scored_d.sort(key=lambda x: x[1], reverse=True)
+        # Relevance gate: exclude items with zero keyword overlap
+        scored_d = [(d, s) for d, s in scored_d if s > 0.0]
         selected_d_tuples = list(scored_d)
 
         # Truncate to token budget
