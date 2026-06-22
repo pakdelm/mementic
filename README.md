@@ -245,36 +245,57 @@ no manual review step.
 | `mementic project info [name]` | Show project details (repos, DB path, description) |
 | `mementic project delete <name> [--force] [--keep-db]` | Delete a project and optionally its database |
 
-## Agent session efficiency
+## Why Mementic
 
-Does mementic actually reduce what an agent does? We ran the same implementation
-tasks in real OpenCode sessions — once without mementic (agent reads raw ADRs
-and instruction files), once with (agent loads keyword-ranked context packs
-via MCP).
+We ran two real implementation tasks in OpenCode sessions — without mementic
+vs. with keyword-ranked context packs via MCP. Both conditions passed the same
+tests + lint + typecheck. The graph held 330 decisions, 215 constraints, and
+113 code entities at measurement time.
 
-The benchmark compares session cost side-by-side:
-- **Files read** — how many files the agent opened seeking architectural context
-- **Session log tokens** — total session size, a proxy for agent effort
-- **Tool calls** — total agent activity (reads, writes, edits, searches)
+- **51% fewer LLM tokens** (430K → 209K). Context arrives in a ranked pack
+  instead of the agent hunting through files for architectural rules.
+- **75% fewer subagents** (8 → 2). Without mementic, each subagent re-reads
+  ADRs and instruction files independently. Mementic delivers context once,
+  eliminating redundant discovery.
+- **47% fewer file reads** (139 → 73). Known constraints mean navigating
+  straight to implementation files — no scanning the repo for conventions.
+- **Small tasks win too.** A single-module edit eliminated its subagent
+  entirely (1 → 0). The context pack answered "what rules apply here?"
+  in the prompt — no subagent was needed.
 
-### How to run
+**Localized feature** (single module):
+
+| | Without | With |
+|---|---|---|
+| Unique files read | 9 | 4 |
+| Total file reads | 19 | 14 |
+| LLM tokens | 106K | 59K |
+| Subagents | 1 | 0 |
+
+**Cross-cutting feature** (multiple modules, new subcommand):
+
+| | Without | With |
+|---|---|---|
+| Unique files read | 20 | 14 |
+| Total file reads | 120 | 59 |
+| LLM tokens | 324K | 149K |
+| Subagents | 7 | 2 |
+
+Mementic eliminates the *context discovery loop* — the most token-expensive
+phase of agent coding, where agents repeatedly read files to answer "what
+architectural rules apply to this change?"
+
+Numbers are from mementic's own codebase.
+
+### Reproduce
 
 ```bash
-python scripts/benchmark_ab.py              # 2 runs per task per condition
-python scripts/benchmark_ab.py --runs 3     # more statistical robustness
-python scripts/benchmark_ab.py --tasks add-stale-flag   # single task only
+python scripts/opencode_benchmark.py              # 2 runs per task per condition
+python scripts/opencode_benchmark.py --runs 3     # more statistical robustness
+python scripts/opencode_benchmark.py --tasks add-stale-flag   # single task
 ```
 
-The runner manages git state and config; you run OpenCode when prompted.
-After each session, it runs the success criteria (tests + ruff + mypy)
-and parses the session log for metrics. Outputs a side-by-side comparison.
-
-To parse a session log manually:
-```bash
-python scripts/benchmark_ab_measure.py ~/.local/share/opencode/log/session.log --json
-```
-
-Numbers are from mementic's own codebase. Your project's results will differ.
+The runner manages git state and OpenCode config; you run OpenCode when prompted.
 
 ## Measuring token efficiency
 
