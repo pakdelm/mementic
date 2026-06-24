@@ -14,6 +14,14 @@ from rich.table import Table
 from rich.panel import Panel
 from rich.text import Text
 from rich.markdown import Markdown
+from rich.progress import (
+    BarColumn,
+    Progress,
+    SpinnerColumn,
+    TaskProgressColumn,
+    TextColumn,
+    TimeElapsedColumn,
+)
 from rich import box
 
 from mementic.config import (
@@ -479,20 +487,65 @@ def init(
     # has empty log_dirs (preserves user overrides on subsequent runs).
     _populate_session_defaults(global_cfg)
 
+    # Compute total phases for progress bar.
+    # Must load config early to count sources.
+    phase_cfg = load_config(repo_path=str(cwd), project=project)
+    phase_total = 0
+    if effective_repo:
+        phase_total += 2  # codebase scan + markdown scan
+    phase_total += len(phase_cfg.sources.adr_dirs)
+    phase_total += len(phase_cfg.sources.opencode_instructions)
+    phase_total += len(phase_cfg.sources.claude_instructions)
+    phase_total += len(phase_cfg.sources.cursor_instructions)
+    phase_total += len(phase_cfg.sources.windsurf_instructions)
+    has_src = bool(
+        phase_cfg.sources.adr_dirs
+        or phase_cfg.sources.opencode_instructions
+        or phase_cfg.sources.claude_instructions
+        or phase_cfg.sources.cursor_instructions
+        or phase_cfg.sources.windsurf_instructions
+    )
+    if has_src or (effective_repo and not no_scan):
+        phase_total += 1  # backfill edges
+    if project_db_path and effective_repo:
+        phase_total += 1  # track repo in project_sources
+    phase_total = max(phase_total, 1)  # avoid indeterminate bar
+
     # Run init — pipeline reads global config (no config_path)
     try:
-        graph, all_usage = run_init(
-            repo_path=effective_repo,
-            no_scan=no_scan,
-            db_path=project_db_path,
-            project=project,
-        )
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            TaskProgressColumn(),
+            TimeElapsedColumn(),
+            console=console,
+        ) as progress:
+            task_id = progress.add_task(
+                "[bold]Initializing knowledge graph...",
+                total=phase_total,
+            )
+
+            def _step(description: str) -> None:
+                progress.update(
+                    task_id,
+                    advance=1,
+                    description=f"[bold]{description}[/]",
+                )
+
+            graph, all_usage = run_init(
+                repo_path=effective_repo,
+                no_scan=no_scan,
+                db_path=project_db_path,
+                project=project,
+                advance=_step,
+            )
     except RuntimeError as e:
         typer.echo(str(e), err=True)
         raise typer.Exit(code=1)
 
     # Load config for source counts in post-bootstrap output
-    cfg = load_config(repo_path=str(cwd), project=project)
+    cfg = phase_cfg
     stats = graph.stats()
 
     # Post-bootstrap summary
@@ -1211,146 +1264,151 @@ def _status_icon(status: str) -> str:
     return icons.get(status, " ")
 
 
-@app.command(name="list")
-def list_cmd(
-    entity_type: str = typer.Argument(
-        "decisions",
-        help="Type to list: decisions, constraints, or entities",
-    ),
+list_app = typer.Typer(help="Browse decisions, constraints, and entities")
+app.add_typer(list_app, name="list")
+
+_VALID_STATUSES = {"accepted", "deprecated", "rejected", "active"}
+
+
+def _validate_status(status: str | None) -> None:
+    """Validate --status flag, exit on invalid value."""
+    if status and status not in _VALID_STATUSES:
+        typer.echo(
+            f"Invalid status '{status}'. "
+            f"Valid: {', '.join(sorted(_VALID_STATUSES))}",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+
+@list_app.command()
+def decisions(
+    n: int = typer.Option(20, "-n", help="Show only the last N entries"),
     status: str | None = typer.Option(
         None, "--status",
         help="Filter by status: accepted, deprecated, rejected, active",
     ),
-    n: int = typer.Option(
-        0, "-n",
-        help="Show only the last N entries",
+    project: str | None = typer.Option(
+        None, "--project", help="Target project name",
     ),
+) -> None:
+    """List architectural decisions in a scannable table."""
+    graph, _cfg = _resolve_graph(project)
+    _validate_status(status)
+
+    all_d = graph.get_all_decisions()
+    if status:
+        all_d = [d for d in all_d if d.status == status]
+    if n > 0:
+        all_d = all_d[-n:]
+
+    if not all_d:
+        typer.echo("No decisions found.")
+        raise typer.Exit()
+
+    table = Table(box=box.ASCII2)
+    table.add_column("", width=3)  # status icon
+    table.add_column("ID", style="cyan")
+    table.add_column("Date", style="dim")
+    table.add_column("Title", overflow="fold")
+    for d in all_d:
+        icon = _status_icon(d.status)
+        color = {"+": "green", "-": "yellow", "x": "red"}.get(icon, "")
+        date = d.created_at[:10] if d.created_at else ""
+        table.add_row(f"[{color}]{icon}[/]", d.id, date, d.title)
+    console.print(Panel(
+        table,
+        title=f"[bold white]Decisions ({len(all_d)})[/]",
+        safe_box=True,
+    ))
+
+
+@list_app.command()
+def constraints(
+    n: int = typer.Option(20, "-n", help="Show only the last N entries"),
+    status: str | None = typer.Option(
+        None, "--status",
+        help="Filter by status: accepted, deprecated, rejected, active",
+    ),
+    project: str | None = typer.Option(
+        None, "--project", help="Target project name",
+    ),
+) -> None:
+    """List constraints in a scannable table."""
+    graph, _cfg = _resolve_graph(project)
+    _validate_status(status)
+
+    all_c = graph.get_all_constraints()
+    if status:
+        all_c = [c for c in all_c if c.status == status]
+    if n > 0:
+        all_c = all_c[-n:]
+
+    if not all_c:
+        typer.echo("No constraints found.")
+        raise typer.Exit()
+
+    table = Table(box=box.ASCII2)
+    table.add_column("", width=3)  # status icon
+    table.add_column("ID", style="cyan")
+    table.add_column("Enforced By", style="dim")
+    table.add_column("Description", overflow="fold")
+    for c in all_c:
+        icon = _status_icon(c.status)
+        color = {"+": "green", "-": "yellow", "x": "red"}.get(icon, "")
+        enforced = f"via {c.enforced_by}" if c.enforced_by else ""
+        table.add_row(f"[{color}]{icon}[/]", c.id, enforced, c.description)
+    console.print(Panel(
+        table,
+        title=f"[bold white]Constraints ({len(all_c)})[/]",
+        safe_box=True,
+    ))
+
+
+@list_app.command()
+def entities(
+    n: int = typer.Option(20, "-n", help="Show only the last N entries"),
     stale: bool = typer.Option(
         False, "--stale",
         help="Show only entities referencing files that no longer exist",
     ),
     project: str | None = typer.Option(
-        None, "--project",
-        help="Target project name",
+        None, "--project", help="Target project name",
     ),
 ) -> None:
-    """Browse decisions, constraints, and entities in a scannable table.
-
-    Examples:
-        mementic list decisions
-        mementic list decisions --status accepted
-        mementic list decisions -n 10
-        mementic list constraints
-        mementic list entities --stale
-    """
+    """List code entities in a scannable table."""
     graph, _cfg = _resolve_graph(project)
 
-    entity_type = entity_type.lower()
-    if entity_type not in ("decisions", "constraints", "entities"):
-        typer.echo(
-            f"Invalid type '{entity_type}'. Use: decisions, constraints, entities.",
-            err=True,
-        )
-        raise typer.Exit(code=1)
+    all_e: list[tuple[str, dict[str, Any]]] = []
+    for nid, ntype, payload in graph.iter_nodes():
+        if ntype == "CodeEntity":
+            all_e.append((nid, payload))
 
-    valid_statuses = {"accepted", "deprecated", "rejected", "active"}
-    if status and status not in valid_statuses:
-        typer.echo(
-            f"Invalid status '{status}'. Valid: {', '.join(sorted(valid_statuses))}",
-            err=True,
-        )
-        raise typer.Exit(code=1)
+    if stale:
+        all_e = [
+            (nid, p) for nid, p in all_e
+            if p.get("type") == "file" and not Path(nid).exists()
+        ]
+    if n > 0:
+        all_e = all_e[-n:]
 
-    if entity_type == "decisions":
-        decisions = graph.get_all_decisions()
-        if status:
-            decisions = [d for d in decisions if d.status == status]
-        if n > 0:
-            decisions = decisions[-n:]
+    if not all_e:
+        typer.echo("No entities found.")
+        raise typer.Exit()
 
-        if not decisions:
-            typer.echo("No decisions found.")
-            raise typer.Exit()
-
-        table = Table(box=box.ASCII2)
-        table.add_column("", width=3)  # status icon
-        table.add_column("ID", style="cyan")
-        table.add_column("Date", style="dim")
-        table.add_column("Title", overflow="fold")
-        for d in decisions:
-            icon = _status_icon(d.status)
-            color = {"+": "green", "-": "yellow", "x": "red"}.get(icon, "")
-            date = d.created_at[:10] if d.created_at else ""
-            table.add_row(f"[{color}]{icon}[/]", d.id, date, d.title)
-        console.print(Panel(
-            table,
-            title=f"[bold white]Decisions ({len(decisions)})[/]",
-            safe_box=True,
-        ))
-
-    elif entity_type == "constraints":
-        constraints = graph.get_all_constraints()
-        if status:
-            constraints = [c for c in constraints if c.status == status]
-        if n > 0:
-            constraints = constraints[-n:]
-
-        if not constraints:
-            typer.echo("No constraints found.")
-            raise typer.Exit()
-
-        table = Table(box=box.ASCII2)
-        table.add_column("", width=3)  # status icon
-        table.add_column("ID", style="cyan")
-        table.add_column("Enforced By", style="dim")
-        table.add_column("Description", overflow="fold")
-        for c in constraints:
-            icon = _status_icon(c.status)
-            color = {"+": "green", "-": "yellow", "x": "red"}.get(icon, "")
-            enforced = f"via {c.enforced_by}" if c.enforced_by else ""
-            table.add_row(
-                f"[{color}]{icon}[/]", c.id, enforced, c.description
-            )
-        console.print(Panel(
-            table,
-            title=f"[bold white]Constraints ({len(constraints)})[/]",
-            safe_box=True,
-        ))
-
-    elif entity_type == "entities":
-        entities: list[tuple[str, dict[str, Any]]] = []
-        for nid, ntype, payload in graph.iter_nodes():
-            if ntype == "CodeEntity":
-                entities.append((nid, payload))
-
-        if stale:
-            entities = [
-                (nid, p) for nid, p in entities
-                if p.get("type") == "file" and not Path(nid).exists()
-            ]
-        elif status:
-            typer.echo("Note: entities don't have statuses. Ignoring --status filter.")
-
-        if n > 0:
-            entities = entities[-n:]
-
-        if not entities:
-            typer.echo("No entities found.")
-            raise typer.Exit()
-
-        table = Table(box=box.ASCII2)
-        table.add_column("Path", style="cyan", overflow="fold")
-        table.add_column("Type")
-        table.add_column("Repo", style="dim")
-        for eid, p in entities:
-            etype = p.get("type", "file")
-            repo = p.get("repo", "-")
-            table.add_row(eid, etype, repo)
-        console.print(Panel(
-            table,
-            title=f"[bold white]Entities ({len(entities)})[/]",
-            safe_box=True,
-        ))
+    table = Table(box=box.ASCII2)
+    table.add_column("Path", style="cyan", overflow="fold")
+    table.add_column("Type")
+    table.add_column("Repo", style="dim")
+    for eid, p in all_e:
+        etype = p.get("type", "file")
+        repo = p.get("repo", "-")
+        table.add_row(eid, etype, repo)
+    console.print(Panel(
+        table,
+        title=f"[bold white]Entities ({len(all_e)})[/]",
+        safe_box=True,
+    ))
 
 
 @app.command()

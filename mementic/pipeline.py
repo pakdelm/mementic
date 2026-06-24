@@ -4,7 +4,7 @@ import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from mementic.config import MementicConfig, load_config, load_global_config
 from mementic.extraction import (
@@ -405,6 +405,7 @@ def run_init(
     no_scan: bool = False,
     db_path: str | None = None,
     project: str | None = None,
+    advance: Callable[[str], None] | None = None,
 ) -> tuple[GraphStore, list[UsageStats]]:
     """Initialize the knowledge graph from all configured sources.
 
@@ -443,24 +444,38 @@ def run_init(
 
     # Phase 1: Codebase structural scan (Spec 12a) — cold-start killer.
     if repo_path:
+        if advance:
+            advance("Scanning codebase structure...")
         all_usage.extend(_run_codebase_scan(graph, repo_path, cfg, no_scan))
 
     # Phase 0: Repo-wide markdown scan (Spec 15) — deterministic-friendly.
     if repo_path:
+        if advance:
+            advance("Scanning markdown files...")
         all_usage.extend(_run_markdown_scan(graph, repo_path, cfg))
 
     # ADR sources
     for adr_source in cfg.sources.adr_dirs:
+        if advance:
+            advance("Ingesting ADR sources...")
         all_usage.extend(_ingest_adr_source(graph, adr_source.path, cfg, repo_path))
 
     # Instruction sources
     for oc_src in cfg.sources.opencode_instructions:
+        if advance:
+            advance("Ingesting OpenCode instructions...")
         all_usage.extend(_ingest_instruction_source(graph, oc_src.path, cfg, repo_path))
     for cl_src in cfg.sources.claude_instructions:
+        if advance:
+            advance("Ingesting Claude instructions...")
         all_usage.extend(_ingest_instruction_source(graph, cl_src.path, cfg, repo_path))
     for cu_src in cfg.sources.cursor_instructions:
+        if advance:
+            advance("Ingesting Cursor instructions...")
         all_usage.extend(_ingest_instruction_source(graph, cu_src.path, cfg, repo_path))
     for ws_src in cfg.sources.windsurf_instructions:
+        if advance:
+            advance("Ingesting Windsurf instructions...")
         all_usage.extend(_ingest_instruction_source(graph, ws_src.path, cfg, repo_path))
 
     # Backfill edges + persist
@@ -472,6 +487,8 @@ def run_init(
         or cfg.sources.windsurf_instructions
     )
     if has_sources or (repo_path and not no_scan):
+        if advance:
+            advance("Backfilling entity edges...")
         _backfill_edges(graph, repo_path=repo_path)
         _backfill_decision_edges(graph, repo_path=repo_path)
         if db_path is None:
@@ -481,6 +498,8 @@ def run_init(
 
     # Track repo in project_sources for multi-repo awareness
     if db_path and repo_path and graph._conn is not None:
+        if advance:
+            advance("Tracking repo...")
         graph._conn.execute(
             "INSERT OR REPLACE INTO project_sources (repo, ingested_at) "
             "VALUES (?, ?)",

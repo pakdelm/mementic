@@ -233,12 +233,14 @@ no manual review step.
 | `mementic query stats` | Show graph statistics (entity/decision/constraint counts) |
 | `mementic add decision TITLE -r RATIONALE [-e PATH] [--rejected ALT]` | Record a new architectural decision |
 | `mementic add constraint DESCRIPTION -e PATH [-d DECISION_ID]` | Record a new constraint |
-| `mementic list [decisions\|constraints\|entities] [--status S] [-n N] [--stale]` | Browse graph in scannable format |
+| `mementic list decisions [-n N] [--status S] [--project NAME]` | List recent architectural decisions |
+| `mementic list constraints [-n N] [--status S] [--project NAME]` | List recent constraints |
+| `mementic list entities [-n N] [--stale] [--project NAME]` | List code entities |
 | `mementic deprecate <id> [--reason TEXT]` | Retire a decision or constraint (don't edit history) |
 | `mementic visualize [-o PATH] [-O] [--filter TYPE]` | Generate interactive HTML visualization |
 | `mementic metrics [--json] [--reset]` | Show token usage metrics |
 | `mementic status` | Show health checklist (config, API key, graph, session provider) |
-| `mementic log` | Show recent graph mutations |
+| `mementic log [-n N]` | Show recent graph mutations |
 | `mementic project create <name> [--description TEXT]` | Create a new project |
 | `mementic project list` | List all configured projects |
 | `mementic project set-default <name>` | Set the default project |
