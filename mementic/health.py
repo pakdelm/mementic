@@ -163,7 +163,7 @@ def check_health(
                 HealthItem(
                     label="Instructions",
                     status="fail",
-                    hint="No enforcement section in AGENTS.md. Run 'mementic inject'.",
+                    hint="No enforcement section in AGENTS.md. Run 'mementic init'.",
                 )
             )
     else:
@@ -171,7 +171,7 @@ def check_health(
             HealthItem(
                 label="Instructions",
                 status="fail",
-                hint="No enforcement section in AGENTS.md. Run 'mementic inject'.",
+                hint="No enforcement section in AGENTS.md. Run 'mementic init'.",
             )
         )
 

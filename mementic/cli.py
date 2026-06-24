@@ -1586,7 +1586,7 @@ def deprecate(
     graph, cfg = _resolve_graph(project)
 
     result = graph.deprecate_entity(id, reason)
-    graph.save(cfg.output.graph_path)
+    _save_graph_cli(graph, cfg)
 
     if result["status"] == "deprecated":
         console.print(f"[green]Deprecated[/] {id}  [dim]{reason}[/]")
