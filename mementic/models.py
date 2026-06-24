@@ -90,7 +90,7 @@ class MetricsEntry(BaseModel):
     """One row in the metrics log, representing a single mementic operation."""
 
     timestamp: str
-    operation: str  # init_freeform / init_adr / capture / get_task_context
+    operation: str  # init_freeform / init_adr / capture / get_rules
     source_label: str = ""
     input_tokens: int = 0
     output_tokens: int = 0

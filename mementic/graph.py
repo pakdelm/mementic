@@ -780,7 +780,7 @@ class GraphStore:
         """Return all constraints with ``status == "active"``.
 
         Filters out deprecated/superseded constraints.  Used by
-        ``get_task_context`` to provide the full active set for
+        ``get_rules`` to provide the full active set for
         keyword-based ranking (Spec 14).
 
         Returns:
@@ -793,7 +793,7 @@ class GraphStore:
         """Return all decisions with ``status == "accepted"``.
 
         Filters out deprecated/rejected decisions.  Used by
-        ``get_task_context`` to provide the full accepted set for
+        ``get_rules`` to provide the full accepted set for
         relevance ranking (Spec 14).
 
         Returns:
@@ -968,7 +968,7 @@ class GraphStore:
     def clean_dead_references(self) -> dict[str, int]:
         """Clean dead references from the graph. Deterministic, zero network cost.
 
-        Called transparently before every get_task_context and get_entity_history
+        Called transparently before every get_rules and get_file_history
         query. The agent never knows it ran.
 
         Returns:

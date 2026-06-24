@@ -163,11 +163,11 @@ Register the MCP server in `opencode.json`:
 ```
 
 The agent automatically discovers these MCP tools:
-- `get_task_context` — load constraints and decisions for a task (call after every user message)
+- `get_rules` — load constraints and decisions for a task (call after every user message)
 - `record_decision` — record architectural decisions
 - `record_constraint` — record new constraints
-- `deprecate_rule` — retire outdated decisions or constraints
-- `get_entity_history` — trace decision history of a code entity
+- `deprecate` — retire outdated decisions or constraints
+- `get_file_history` — trace decision/constraint history of a code file
 
 OpenCode custom commands are also available in the TUI:
 - `/mementic-context <task>` — load constraints before working
@@ -186,7 +186,7 @@ This project uses Mementic as its architectural memory layer. These rules apply
 to every task, every session.
 
 **Token discipline — primary vs. secondary sources:**
-1. **Primary (always):** the mementic memory from `mementic_get_task_context`.
+1. **Primary (always):** the mementic memory from `mementic_get_rules`.
    It is the compressed index — a fraction of the token cost of reading raw
    ADRs. Read it first, every time.
 2. **Secondary (only when needed):** raw ADR and instruction files on disk.
@@ -200,8 +200,8 @@ context window):
    Generate 15-25 single-word keywords that capture the task's domain
    (e.g., for "fix authentication bug" → ["auth", "token", "security",
    "password", "hashing", "argon2", "login", "session"]).
-2. Call `mementic_get_task_context(keywords=[...])` with those keywords.
-3. Call `mementic_get_entity_history` for each file being modified.
+2. Call `mementic_get_rules(keywords=[...])` with those keywords.
+3. Call `mementic_get_file_history` for each file being modified.
 4. Validate your plan against every returned constraint. Do NOT write code
    that violates an active constraint.
 5. Only read raw ADR or instruction files if the mementic memory leaves ambiguity

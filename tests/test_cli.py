@@ -1342,14 +1342,18 @@ class TestLogCommand:
 
         result = runner.invoke(app, ["log"])
         assert result.exit_code == 0
-        output = result.stdout
+        output = _strip_ansi(result.stdout)
 
-        # Each entry should be formatted as [timestamp] entity_type/action entity_id — summary
-        assert "decision/add d1" in output
+        # Each entry is rendered in a Rich table with columns:
+        # Timestamp | Action | Rule ID | Summary
+        assert "decision/add" in output
+        assert "d1" in output
         assert "Use async" in output
-        assert "constraint/add c1" in output
+        assert "constraint/add" in output
+        assert "c1" in output
         assert "Must be async" in output
-        assert "edge/link d1→e1" in output
+        assert "edge/link" in output
+        assert "d1→e1" in output
 
     def test_log_fallback_to_jsonl(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -1607,8 +1611,8 @@ class TestMetricsCommand:
             },
             {
                 "timestamp": "2024-01-01T00:00:03Z",
-                "operation": "get_task_context",
-                "source_label": "get_task_context",
+                "operation": "get_rules",
+                "source_label": "get_rules",
                 "input_tokens": 500,
                 "output_tokens": 180,
                 "total_tokens": 680,
@@ -1625,8 +1629,8 @@ class TestMetricsCommand:
         assert result.exit_code == 0
         output = _strip_ansi(result.stdout)
 
-        # Header
-        assert "MEMENTIC TOKEN USAGE" in output
+        # Header — Panel title
+        assert "Token usage" in output
 
         # Section 1: Setup (one-time)
         assert "Setup (one-time)" in output
@@ -1676,8 +1680,8 @@ class TestMetricsCommand:
         assert result.exit_code == 0
         output = _strip_ansi(result.stdout)
 
-        # Header still present
-        assert "MEMENTIC TOKEN USAGE" in output
+        # Header still present — Panel title
+        assert "Token usage" in output
         assert "Setup (one-time)" in output
         assert "Capture (recurring)" in output
         assert "Context Packs" in output

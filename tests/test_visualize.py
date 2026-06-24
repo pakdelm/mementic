@@ -240,7 +240,7 @@ class TestGraphCommandCli:
 
             result = runner.invoke(
                 app,
-                ["graph", "--output", str(output_file)],
+                ["visualize", "--output", str(output_file)],
             )
 
             assert result.exit_code == 0, f"CLI failed: {result.output}"
@@ -269,7 +269,7 @@ class TestGraphCommandCli:
 
             result = runner.invoke(
                 app,
-                ["graph", "--filter", "invalid_type"],
+                ["visualize", "--filter", "invalid_type"],
             )
 
             assert result.exit_code == 1

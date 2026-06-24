@@ -1,4 +1,4 @@
-"""Tests for mementic server helpers — _deprecate_entity, review_context, and summary prefixes."""
+"""Tests for mementic server helpers — _deprecate_entity, review_session, and summary prefixes."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ import pytest
 from mementic.config import MementicConfig
 from mementic.graph import GraphStore
 from mementic.models import Constraint, Decision, DecisionStatus, EntityType, CodeEntity
-from mementic.server import review_context
+from mementic.server import review_session
 
 # ── Helpers ──────────────────────────────────────────────────────────
 
@@ -122,7 +122,7 @@ class TestDeprecateEntity:
         assert "CodeEntity" in result["message"]
 
 
-# ── review_context ──────────────────────────────────────────────────
+# ── review_session ──────────────────────────────────────────────────
 
 
 def _make_review_graph() -> GraphStore:
@@ -156,7 +156,7 @@ def _mock_config() -> MementicConfig:
 
 
 class TestReviewContext:
-    """Tests for the review_context MCP tool."""
+    """Tests for the review_session MCP tool."""
 
     def test_no_deprecated_ids_reports_summary(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """When no deprecated_ids provided, returns clean summary with active counts."""
@@ -167,9 +167,9 @@ class TestReviewContext:
         monkeypatch.setattr(server, "_load_graph", lambda project=None: (gs, cfg))
         monkeypatch.setattr(server, "_save_graph", lambda g, c: None)
 
-        result = asyncio.run(review_context("Test feature"))
+        result = asyncio.run(review_session("Test feature"))
 
-        assert result.startswith("[mementic: review_context: 'Test feature'")
+        assert result.startswith("[mementic: review_session: 'Test feature'")
         assert "4 active" in result
         assert "2 decisions" in result
         assert "2 constraints" in result
@@ -184,7 +184,7 @@ class TestReviewContext:
         monkeypatch.setattr(server, "_save_graph", lambda g, c: None)
 
         result = asyncio.run(
-            review_context("Refactor auth", deprecated_ids=["d_active", "c_active"])
+            review_session("Refactor auth", deprecated_ids=["d_active", "c_active"])
         )
 
         assert "deprecated d_active, c_active" in result
@@ -207,7 +207,7 @@ class TestReviewContext:
         monkeypatch.setattr(server, "_save_graph", lambda g, c: None)
 
         result = asyncio.run(
-            review_context(
+            review_session(
                 "Mixed test",
                 deprecated_ids=["d_active", "c_active", "ghost-id"],
             )
@@ -223,7 +223,7 @@ class TestReviewContext:
         assert "1 constraints" in result
 
     def test_clean_dead_references_called(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Verify clean_dead_references() is called during review_context.
+        """Verify clean_dead_references() is called during review_session.
 
         Adds an orphaned constraint (bound_entities pointing to nonexistent
         nodes) and verifies it gets auto-deprecated by clean_dead_references.
@@ -246,7 +246,7 @@ class TestReviewContext:
         monkeypatch.setattr(server, "_load_graph", lambda project=None: (gs, cfg))
         monkeypatch.setattr(server, "_save_graph", lambda g, c: None)
 
-        result = asyncio.run(review_context("Orphan test"))
+        result = asyncio.run(review_session("Orphan test"))
 
         # After clean_dead_references, the orphaned constraint's bound_entities
         # get filtered to [] and the constraint is auto-deprecated
@@ -255,7 +255,7 @@ class TestReviewContext:
         assert "4 active" in result
 
     def test_empty_graph(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """review_context on an empty graph reports 0 active."""
+        """review_session on an empty graph reports 0 active."""
         gs = GraphStore()
         cfg = _mock_config()
 
@@ -263,7 +263,7 @@ class TestReviewContext:
         monkeypatch.setattr(server, "_load_graph", lambda project=None: (gs, cfg))
         monkeypatch.setattr(server, "_save_graph", lambda g, c: None)
 
-        result = asyncio.run(review_context("Empty graph"))
+        result = asyncio.run(review_session("Empty graph"))
         assert "0 active" in result
         assert "0 decisions" in result
         assert "0 constraints" in result
@@ -275,8 +275,8 @@ class TestReviewContext:
 class TestSummaryPrefixes:
     """Tests that MCP tool responses include ---SUMMARY prefixes."""
 
-    def test_get_task_context_summary_format(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """get_task_context response includes [mementic: get_task_context: ...] summary."""
+    def test_get_rules_summary_format(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """get_rules response includes [mementic: get_rules: ...] summary."""
         from mementic import server
 
         gs = GraphStore()
@@ -291,16 +291,16 @@ class TestSummaryPrefixes:
         monkeypatch.setattr(server, "_load_graph", lambda project=None: (gs, cfg))
 
         result = asyncio.run(
-            server.get_task_context(["auth", "bug", "login", "flow"])
+            server.get_rules(["auth", "bug", "login", "flow"])
         )
 
-        assert result.startswith("[mementic: get_task_context: ")
+        assert result.startswith("[mementic: get_rules: ")
         assert "1 constraints" in result
         assert "2 decisions" in result
         assert "auth" in result
 
-    def test_get_entity_history_summary_format(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """get_entity_history response starts with ---SUMMARY: get_entity_history."""
+    def test_get_file_history_summary_format(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """get_file_history response starts with ---SUMMARY: get_file_history."""
         from mementic import server
 
         gs = GraphStore()
@@ -343,9 +343,12 @@ class TestSummaryPrefixes:
         monkeypatch.setattr(server, "_load_graph", lambda project=None: (gs, cfg))
 
         result = asyncio.run(
-            server.get_entity_history("src/auth.py")
+            server.get_file_history("src/auth.py")
         )
 
-        assert result.startswith("[mementic: get_entity_history: ")
-        assert "decisions touching 'src/auth.py'" in result
+        assert result.startswith("[mementic: get_file_history: ")
+        assert "decisions," in result
+        assert "constraints touching 'src/auth.py'" in result
         assert "1 decisions" in result
+        assert "1 constraints" in result
+        assert "### Constraints" in result

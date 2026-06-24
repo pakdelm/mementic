@@ -32,12 +32,12 @@ from mementic.models import (
 
 _INSTRUCTIONS = """\
 Mementic is an architectural memory layer. After EVERY user message (not just \
-"before a task"), you MUST call `mementic_get_task_context` with 5-12 narrow, \
+"before a task"), you MUST call `mementic_get_rules` with 5-12 narrow, \
 single-word technical keywords that capture the task's domain. Prefer specific \
 terms (`argon2`, `pydantic`, `SessionMiddleware`) over generic ones \
 (`security`, `validation`, `middleware`) — generic keywords match too many \
 items and bloat context packs. (e.g., \
-`mementic_get_task_context(keywords=["argon2", "token", "login", "session"])`). \
+`mementic_get_rules(keywords=["argon2", "token", "login", "session"])`). \
 Each user message is a new context window — do NOT assume previous context is \
 still valid. Mementic memory is free (SQLite reads, no LLM). "Task" means ANY \
 user request — questions, exploration, planning, and informational queries are \
@@ -91,14 +91,13 @@ def _save_graph(graph: GraphStore, cfg: MementicConfig) -> None:
     graph.save(cfg.output.graph_path)
 
 
-
 @mcp.tool()
-async def get_task_context(
+async def get_rules(
     keywords: list[str],
     project: str | None = None,
     max_tokens: int = 10000,
 ) -> str:
-    """Return all relevant Decisions and Constraints for a given task.
+    """Return all relevant Rules (Decisions and Constraints) for a given task.
 
     Call this AFTER EVERY USER MESSAGE — not just before starting work.
     Each message is a new context window. Context packs are free (SQLite reads,
@@ -134,8 +133,8 @@ async def get_task_context(
     pack_tokens = count_tokens(pack_text)
     entry = MetricsEntry(
         timestamp=timestamp(),
-        operation="get_task_context",
-        source_label=", ".join(keywords[:10]),
+        operation="get_rules",
+        source_label="get_rules",
         input_tokens=0,
         output_tokens=0,
         total_tokens=pack_tokens,
@@ -149,7 +148,7 @@ async def get_task_context(
 
     kw_summary = ", ".join(keywords)
     summary = (
-        f"[mementic: get_task_context: "
+        f"[mementic: get_rules: "
         f"{len(constraints)} constraints, {len(decisions)} decisions "
         f"for [{kw_summary}]]"
     )
@@ -162,6 +161,7 @@ async def record_decision(
     rationale: str,
     rejected_alternatives: list[str] | None = None,
     affected_entities: list[str] | None = None,
+    project: str | None = None,
 ) -> str:
     """Record a new architectural decision.
 
@@ -172,11 +172,13 @@ async def record_decision(
         rationale: Justification for the decision.
         rejected_alternatives: Alternatives that were considered and rejected.
         affected_entities: Code entity paths affected by this decision.
+        project: Optional project name to target.  When ``None``,
+            auto-resolution is attempted.
 
     Returns:
         Confirmation message with save status.
     """
-    graph, cfg = _load_graph()
+    graph, cfg = _load_graph(project)
     repo = resolve_repo_name(detect_repo_path(check_global_config=True))
     entity_list = affected_entities or []
 
@@ -207,15 +209,17 @@ async def record_decision(
         graph.link(decision.id, clean_path, "affects")
 
     _save_graph(graph, cfg)
-    return f"Decision '{title}' saved (status: accepted)."
+    summary = f"[mementic: record_decision: '{title}']"
+    return f"{summary}  Decision '{title}' saved (status: accepted)."
 
 
 @mcp.tool()
 async def record_constraint(
     description: str,
-    bound_entities: list[str],
+    affected_entities: list[str],
     decision_id: str | None = None,
     id: str | None = None,
+    project: str | None = None,
 ) -> str:
     """Record a new constraint.
 
@@ -223,15 +227,17 @@ async def record_constraint(
 
     Args:
         description: Description of the constraint.
-        bound_entities: Code entity paths this constraint applies to.
+        affected_entities: Code entity paths this constraint applies to.
         decision_id: Optional decision that enforces this constraint.
         id: Optional explicit ID for the constraint. If not provided,
             generated from the description (capped at 40 chars).
+        project: Optional project name to target.  When ``None``,
+            auto-resolution is attempted.
 
     Returns:
         Confirmation message with save status.
     """
-    graph, cfg = _load_graph()
+    graph, cfg = _load_graph(project)
     repo = resolve_repo_name(detect_repo_path(check_global_config=True))
 
     constraint_id = (
@@ -244,7 +250,7 @@ async def record_constraint(
     constraint = Constraint(
         id=constraint_id,
         description=description,
-        bound_entities=bound_entities,
+        bound_entities=affected_entities,
         enforced_by=decision_id or "",
         source="mcp",
         status="active",
@@ -254,7 +260,7 @@ async def record_constraint(
 
     graph.add_constraint(constraint)
 
-    for entity_path in bound_entities:
+    for entity_path in affected_entities:
         clean_path = re.sub(r"::[A-Za-z_]\w*$", "", entity_path)
         clean_path = re.sub(r":[A-Za-z_]\w*$", "", clean_path)
         entity = CodeEntity(id=clean_path, type=EntityType.FILE, repo=repo)
@@ -262,13 +268,15 @@ async def record_constraint(
         graph.link(constraint.id, clean_path, "binds_to")
 
     _save_graph(graph, cfg)
-    return f"Constraint '{constraint.id}' saved."
+    summary = f"[mementic: record_constraint: '{constraint_id}']"
+    return f"{summary}  Constraint '{constraint.id}' saved."
 
 
 @mcp.tool()
-async def deprecate_rule(
+async def deprecate(
     id: str,
     reason: str = "",
+    project: str | None = None,
 ) -> str:
     """Mark a decision or constraint rule as deprecated.
 
@@ -279,21 +287,25 @@ async def deprecate_rule(
     Args:
         id: The decision or constraint ID to deprecate.
         reason: Optional reason for deprecation.
+        project: Optional project name to target.  When ``None``,
+            auto-resolution is attempted.
 
     Returns:
         Confirmation message with the deprecated entity's title or description.
     """
-    graph, cfg = _load_graph()
+    graph, cfg = _load_graph(project)
 
     result = graph.deprecate_entity(id, reason)
     _save_graph(graph, cfg)
-    return result["message"]
+    summary = f"[mementic: deprecate: {id}]"
+    return f"{summary} {result['message']}"
 
 
 @mcp.tool()
-async def review_context(
+async def review_session(
     feature_description: str,
     deprecated_ids: list[str] | None = None,
+    project: str | None = None,
 ) -> str:
     """Review and clean up mementic context after recording decisions/constraints.
 
@@ -304,11 +316,13 @@ async def review_context(
         feature_description: Description of the feature/task just completed.
         deprecated_ids: Optional list of decision or constraint IDs that were
             deprecated during review.
+        project: Optional project name to target.  When ``None``,
+            auto-resolution is attempted.
 
     Returns:
         Summary line with deprecated count and active entity counts.
     """
-    graph, cfg = _load_graph()
+    graph, cfg = _load_graph(project)
     deprecated: list[str] = []
     already: list[str] = []
     not_found: list[str] = []
@@ -331,7 +345,7 @@ async def review_context(
     active_decisions = len(graph.get_all_active_decisions())
 
     parts: list[str] = [
-        f"[mementic: review_context: '{feature_description}'"
+        f"[mementic: review_session: '{feature_description}'"
     ]
     if deprecated:
         parts.append(f"deprecated {', '.join(deprecated)}")
@@ -346,34 +360,45 @@ async def review_context(
 
 
 @mcp.tool()
-async def get_entity_history(
-    entity_path: str,
+async def get_file_history(
+    file_path: str,
     project: str | None = None,
     prefix_match: bool = False,
     max_tokens: int = 1500,
 ) -> str:
-    """Trace all decisions that affected a specific code entity.
+    """Trace all decisions and constraints that affected a specific code file.
 
     Args:
-        entity_path: Path of the code entity to trace.
+        file_path: Path of the code file to trace.
         project: Optional project name to target.  When ``None``,
             auto-resolution is attempted.
-        prefix_match: If True, use prefix matching for entity paths
+        prefix_match: If True, use prefix matching for file paths
             instead of exact match.
         max_tokens: Maximum token budget for the compact-formatted lines.
-            Defaults to 1000.
+            Defaults to 1500.
 
     Returns:
-        Markdown summary of all decisions affecting the entity.
+        Markdown summary of all decisions and constraints affecting the file.
     """
     graph, cfg = _load_graph(project)
     graph.clean_dead_references()
     decisions = graph.get_evolution(
-        entity_path, prefix_match=prefix_match, annotate_overlap=True
+        file_path, prefix_match=prefix_match, annotate_overlap=True
     )
-    evolution_text = format_evolution(entity_path, decisions, max_tokens=max_tokens)
+    evolution_text = format_evolution(file_path, decisions, max_tokens=max_tokens)
+
+    constraints = graph.get_constraints_for_entities(
+        [file_path], prefix_match=prefix_match
+    )
+    if constraints:
+        evolution_text += "\n\n### Constraints\n"
+        for c in constraints:
+            entities = ", ".join(c.bound_entities) if c.bound_entities else "none"
+            evolution_text += f"- {c.description} (#{c.id}, bound: {entities})\n"
+
     summary = (
-        f"[mementic: get_entity_history: "
-        f"{len(decisions)} decisions touching '{entity_path}']"
+        f"[mementic: get_file_history: "
+        f"{len(decisions)} decisions, {len(constraints)} constraints "
+        f"touching '{file_path}']"
     )
     return f"{summary}\n\n{evolution_text}"

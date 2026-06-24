@@ -27,12 +27,12 @@ context window):
    padding with broad terms. Example for "fix authentication bug":
    ["argon2", "token", "login", "session"] — skip "security", "password",
    "hashing" because they match dozens of unrelated items.
-2. Call `mementic_get_task_context(keywords=[...])` with those keywords.
+2. Call `mementic_get_rules(keywords=[...])` with those keywords.
    Echo the `[mementic: ...]` summary line to the user.
 
    **Multi-topic tasks:** When the user request spans multiple distinct
    sub-tasks (e.g., "fix bug X in server.py and fix bug Y in graph.py"),
-   call `mementic_get_task_context` for each sub-task with focused,
+   call `mementic_get_rules` for each sub-task with focused,
    single-topic keywords. Separate mementic memorys for each sub-topic
    produce better keyword matches than one diluted pack for the whole.
 3. **Sufficiency gate — output these two lines before any further reads:**
@@ -40,7 +40,7 @@ context window):
    2. `Files I still need to read and why:` — every code file you will open,
       each with a one-clause justification. If a file is not on this list,
       do not read it.
-4. Call `mementic_get_entity_history` for each file being modified.
+4. Call `mementic_get_file_history` for each file being modified.
 5. Validate your plan against every returned constraint. Do NOT write code
    that violates an active constraint. Cite every entity you apply or
    reject with `[mementic: <id>]` so usage is auditable in the session log.
@@ -64,13 +64,13 @@ failure to the user. Do not silently read entire files wholesale.
 
 **Echo summaries (HARD GATE — check before responding):** EVERY mementic MCP
 tool call returns a `[mementic: ...]` summary line. You MUST echo that line
-verbatim to the user in your response. This applies to `get_task_context`,
-`get_entity_history`, `record_decision`, `record_constraint`, `review_context`,
+verbatim to the user in your response. This applies to `get_rules`,
+`get_file_history`, `record_decision`, `record_constraint`, `review_session`,
 and every other mementic tool. If you called a mementic tool and the
 `[mementic: ...]` line is not in your response text, fix it before sending.
 The user should see exactly what mementic contributed to every message.
 Skipping this is a hard constraint violation — equivalent to skipping
-`get_task_context` itself. The cost is zero (already computed), so there is
+`get_rules` itself. The cost is zero (already computed), so there is
 no excuse.
 
 **Proposing decisions/constraints is cheap (SQLite writes, no LLM). Capture is
@@ -88,7 +88,7 @@ expensive (LLM extraction). Use the right one:**
 
 **Post-recording cleanup:** After recording decisions or constraints via
 `mementic_record_decision` / `mementic_record_constraint`, call
-`mementic_review_context` with the feature description and any entities
+`mementic_review_session` with the feature description and any entities
 you deprecated.
 
 **If you skip these steps, you are violating project constraints.**
