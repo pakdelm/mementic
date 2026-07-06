@@ -11,6 +11,7 @@ dependencies = [
     "tiktoken>=0.5",
     "typer>=0.9",
     "keyring>=25.7.0",
+    "json5>=0.9",
 ]
 
 [project.scripts]

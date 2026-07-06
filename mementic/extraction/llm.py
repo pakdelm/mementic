@@ -6,6 +6,7 @@ import sys
 import time
 from typing import Any
 
+import json5
 from dotenv import load_dotenv
 from openai import (
     APIConnectionError,
@@ -15,7 +16,7 @@ from openai import (
     OpenAI,
     RateLimitError,
 )
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, ValidationError, model_validator
 
 load_dotenv()
 
@@ -26,6 +27,36 @@ from mementic.models import Constraint, DecisionStatus, ExtractionResult, LLMJso
 # Preserves tab (\t), newline (\n), and carriage return (\r).
 _CONTROL_CHAR_PATTERN = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]")
 
+# Maximum number of individual Pydantic errors to report in a schema mismatch
+# warning.  Capped to avoid flooding stderr when the LLM returns a deeply
+# malformed response.
+_MAX_VALIDATION_ERROR_REPORT = 5
+
+
+def _format_validation_error(e: ValidationError) -> str:
+    """Format a Pydantic ``ValidationError`` for human-readable stderr output.
+
+    Extracts field locations and error types from ``e.errors()`` without
+    including raw input values (no LLM content leaked).
+
+    Args:
+        e: The :class:`ValidationError` raised by ``model_validate``.
+
+    Returns:
+        A multi-line string suitable for ``stderr``, capped at
+        ``_MAX_VALIDATION_ERROR_REPORT`` individual errors.
+    """
+    lines: list[str] = []
+    for error in e.errors()[:_MAX_VALIDATION_ERROR_REPORT]:
+        loc_parts = [str(p) for p in error["loc"]] if error.get("loc") else ["root"]
+        loc = ".".join(loc_parts)
+        msg = error.get("msg", "validation error")
+        lines.append(f"  {loc}: {msg}")
+    remaining = max(0, len(e.errors()) - _MAX_VALIDATION_ERROR_REPORT)
+    if remaining:
+        lines.append(f"  ... and {remaining} more error(s)")
+    return "\n".join(lines)
+
 
 def _parse_llm_json(content: str, source: str = "unknown") -> dict:
     """Parse JSON from an LLM response, handling common failure modes.
@@ -33,12 +64,17 @@ def _parse_llm_json(content: str, source: str = "unknown") -> dict:
     Various LLM providers return JSON with:
     - Markdown code fences (`` ```json ... ``` ``)
     - Explanatory text before or after the JSON object
-    - Trailing commas on the last element (invalid in standard JSON)
+    - Trailing commas, single-quoted strings, unquoted keys
+    - ``NaN`` / ``Infinity`` literals, JavaScript-style comments
     - Unescaped control characters in strings
 
-    Sanitization is applied before parsing.  If parsing still fails, a
-    :class:`LLMJsonParseError` is raised with structured metadata (no raw
-    LLM output leaked).
+    Sanitization (fence stripping, string-aware bracket matching, control
+    char removal) is applied first.  A two-pass parse follows: strict
+    :func:`json.loads` for the common case, then lenient
+    :func:`json5.loads` as a recovery fallback for LLM-specific quirks.
+
+    If both parsers fail, a :class:`LLMJsonParseError` is raised with
+    structured metadata (no raw LLM output leaked).
 
     Args:
         content: The raw LLM response text.
@@ -50,7 +86,7 @@ def _parse_llm_json(content: str, source: str = "unknown") -> dict:
 
     Raises:
         LLMJsonParseError: If the content cannot be parsed as JSON after
-            all sanitization attempts.
+            all sanitization and recovery attempts.
     """
     text = content.strip()
 
@@ -59,8 +95,9 @@ def _parse_llm_json(content: str, source: str = "unknown") -> dict:
     if m:
         text = m.group(1).strip()
 
-    # 2. Bracket-match to find the outermost JSON object, handling text
-    #    that may appear before or after the braces.
+    # 2. String-aware bracket match to find the outermost JSON object.
+    #    Skip brace/bracket chars when inside a JSON string so that
+    #    values like `{"path": "/{id}/foo"}` don't fool the depth tracker.
     start = text.find("{")
     if start == -1:
         start = text.find("[")
@@ -68,11 +105,25 @@ def _parse_llm_json(content: str, source: str = "unknown") -> dict:
         open_char = text[start]
         close_char = "}" if open_char == "{" else "]"
         depth = 0
+        in_string = False
+        escape_next = False
         end = -1
         for i in range(start, len(text)):
-            if text[i] == open_char:
+            ch = text[i]
+            if escape_next:
+                escape_next = False
+                continue
+            if ch == "\\":
+                escape_next = True
+                continue
+            if ch == '"':
+                in_string = not in_string
+                continue
+            if in_string:
+                continue
+            if ch == open_char:
                 depth += 1
-            elif text[i] == close_char:
+            elif ch == close_char:
                 depth -= 1
                 if depth == 0:
                     end = i + 1
@@ -80,20 +131,23 @@ def _parse_llm_json(content: str, source: str = "unknown") -> dict:
         if end > start:
             text = text[start:end]
 
-    # 3. Remove trailing commas (invalid in standard JSON).
-    text = re.sub(r",\s*([}\]])", r"\1", text)
-
-    # 4. Strip control characters that are invalid in JSON (preserve \t, \n, \r).
+    # 3. Strip control characters that are invalid in JSON (preserve \t, \n, \r).
     text = _CONTROL_CHAR_PATTERN.sub("", text)
 
+    # 4. Two-pass parse: strict JSON first, then lenient json5 as recovery.
     try:
         return json.loads(text)
-    except json.JSONDecodeError as e:
-        raise LLMJsonParseError(
-            f"Failed to parse LLM response as JSON: {e.msg}",
-            source=source,
-            position=e.pos,
-        ) from None
+    except json.JSONDecodeError:
+        try:
+            return json5.loads(text)
+        except Exception as e:
+            # json5 can raise ValueError, JSON5DecodeError, or other types.
+            position: int | None = getattr(e, "pos", None)
+            raise LLMJsonParseError(
+                f"Failed to parse LLM response as JSON: {e}",
+                source=source,
+                position=position,
+            ) from None
 
 
 # Spec 10a — Session truncation
@@ -274,13 +328,13 @@ def _truncate_tail(session_log: str, max_messages: int = _DEFAULT_MAX_MESSAGES) 
 
 _EXTRACTION_FORMAT = """{
   "decisions": [{"id": "slug", "title": "Title", "rationale": "Why", "rejected_alternatives": ["Alt1"], "source": "origin", "status": "accepted", "created_at": "ISO8601", "modified_at": "ISO8601"}],
-  "constraints": [{"id": "slug", "description": "Hard rule", "bound_entities": ["file.py"], "enforced_by": "decision-id", "source": "origin", "status": "active", "created_at": "ISO8601"}],
+  "constraints": [{"id": "slug", "description": "Hard rule", "bound_entities": ["file.py"], "source": "origin", "status": "active", "created_at": "ISO8601"}],
   "affected_entities": ["path/to/file.py"],
   "edges_to_create": [{"source": "slug", "target": "slug", "relation": "enforces"}]
 }"""
 
 _CONSTRAINTS_FORMAT = """{
-  "constraints": [{"id": "slug", "description": "Hard rule", "bound_entities": ["file.py"], "enforced_by": "decision-id", "source": "origin", "status": "active", "created_at": "ISO8601"}]
+  "constraints": [{"id": "slug", "description": "Hard rule", "bound_entities": ["file.py"], "source": "origin", "status": "active", "created_at": "ISO8601"}]
 }"""
 
 FREE_FORM_SYSTEM_PROMPT = """You are a software architecture analyst. Given text from an engineering document, identify architectural decisions and constraints.
@@ -339,6 +393,37 @@ Rules:
 
 class _ConstraintListResponse(BaseModel):
     constraints: list[Constraint]
+
+    @model_validator(mode="before")
+    @classmethod
+    def _coerce_llm_inputs(cls, data: Any) -> Any:
+        """Coerce common LLM mistakes: null → [], dict → [dict], string → [string]."""
+        if not isinstance(data, dict):
+            return data
+        val = data.get("constraints")
+        if val is None:
+            data["constraints"] = []
+        elif isinstance(val, dict):
+            data["constraints"] = [val]
+        elif isinstance(val, str):
+            data["constraints"] = [val]
+
+        # Strip null from optional fields on nested constraints so
+        # Pydantic uses declared defaults (pipeline fills real values).
+        items = data.get("constraints")
+        if isinstance(items, list):
+            for item in items:
+                if isinstance(item, dict):
+                    for list_field in ("bound_entities",):
+                        fv = item.get(list_field)
+                        if fv is None:
+                            item[list_field] = []
+                        elif isinstance(fv, str):
+                            item[list_field] = [fv]
+                    for str_field in ("enforced_by", "repo"):
+                        if str_field in item and item[str_field] is None:
+                            del item[str_field]
+        return data
 
 
 def get_client(config: LLMConfig) -> OpenAI:
@@ -404,6 +489,7 @@ def _call_llm_with_retry(
             kwargs: dict[str, Any] = {
                 "model": model,
                 "temperature": 0.1,
+                "max_tokens": 16384,
                 "messages": messages,
             }
             if response_format is not None:
@@ -519,8 +605,26 @@ def extract_from_freeform(
         else:
             stats = UsageStats(model=config.extraction_model, status="success")
         return result, stats
-    except (LLMJsonParseError, ValidationError):
-        sys.stderr.write("WARNING: LLM returned invalid JSON. Skipping.\n")
+    except LLMJsonParseError:
+        sys.stderr.write("WARNING: LLM returned unparseable text. Skipping.\n")
+        if usage:
+            stats = UsageStats(
+                input_tokens=usage.prompt_tokens,
+                output_tokens=usage.completion_tokens,
+                total_tokens=usage.total_tokens,
+                model=config.extraction_model,
+                status="error",
+            )
+        else:
+            stats = UsageStats(model=config.extraction_model, status="error")
+        return ExtractionResult(), stats
+    except ValidationError as e:
+        details = _format_validation_error(e)
+        sys.stderr.write(
+            f"WARNING: LLM returned valid JSON but schema mismatch:\n"
+            f"{details}\n"
+            f"Skipping.\n"
+        )
         if usage:
             stats = UsageStats(
                 input_tokens=usage.prompt_tokens,
@@ -664,8 +768,26 @@ def extract_from_session(
         else:
             stats = UsageStats(model=config.extraction_model, status="success")
         return result, stats
-    except (LLMJsonParseError, ValidationError):
-        sys.stderr.write("WARNING: LLM returned invalid JSON. Skipping.\n")
+    except LLMJsonParseError:
+        sys.stderr.write("WARNING: LLM returned unparseable text. Skipping.\n")
+        if usage:
+            stats = UsageStats(
+                input_tokens=usage.prompt_tokens,
+                output_tokens=usage.completion_tokens,
+                total_tokens=usage.total_tokens,
+                model=config.extraction_model,
+                status="error",
+            )
+        else:
+            stats = UsageStats(model=config.extraction_model, status="error")
+        return ExtractionResult(), stats
+    except ValidationError as e:
+        details = _format_validation_error(e)
+        sys.stderr.write(
+            f"WARNING: LLM returned valid JSON but schema mismatch:\n"
+            f"{details}\n"
+            f"Skipping.\n"
+        )
         if usage:
             stats = UsageStats(
                 input_tokens=usage.prompt_tokens,
@@ -757,8 +879,26 @@ def extract_from_adr_consequences(
         else:
             stats = UsageStats(model=config.extraction_model, status="success")
         return parsed.constraints, stats
-    except (LLMJsonParseError, ValidationError):
-        sys.stderr.write("WARNING: LLM returned invalid JSON. Skipping.\n")
+    except LLMJsonParseError:
+        sys.stderr.write("WARNING: LLM returned unparseable text. Skipping.\n")
+        if usage:
+            stats = UsageStats(
+                input_tokens=usage.prompt_tokens,
+                output_tokens=usage.completion_tokens,
+                total_tokens=usage.total_tokens,
+                model=config.extraction_model,
+                status="error",
+            )
+        else:
+            stats = UsageStats(model=config.extraction_model, status="error")
+        return [], stats
+    except ValidationError as e:
+        details = _format_validation_error(e)
+        sys.stderr.write(
+            f"WARNING: LLM returned valid JSON but schema mismatch:\n"
+            f"{details}\n"
+            f"Skipping.\n"
+        )
         if usage:
             stats = UsageStats(
                 input_tokens=usage.prompt_tokens,
@@ -846,8 +986,26 @@ def extract_from_codebase_summary(
     try:
         data = _parse_llm_json(content, source="extract_from_codebase_summary")
         result = ExtractionResult.model_validate(data)
-    except (LLMJsonParseError, ValidationError):
-        sys.stderr.write("WARNING: LLM returned invalid JSON for codebase scan. Skipping.\n")
+    except LLMJsonParseError:
+        sys.stderr.write("WARNING: LLM returned unparseable text for codebase scan. Skipping.\n")
+        if usage:
+            stats = UsageStats(
+                input_tokens=usage.prompt_tokens,
+                output_tokens=usage.completion_tokens,
+                total_tokens=usage.total_tokens,
+                model=config.extraction_model,
+                status="error",
+            )
+        else:
+            stats = UsageStats(model=config.extraction_model, status="error")
+        return ExtractionResult(), stats
+    except ValidationError as e:
+        details = _format_validation_error(e)
+        sys.stderr.write(
+            f"WARNING: LLM returned valid JSON for codebase scan but schema mismatch:\n"
+            f"{details}\n"
+            f"Skipping.\n"
+        )
         if usage:
             stats = UsageStats(
                 input_tokens=usage.prompt_tokens,
