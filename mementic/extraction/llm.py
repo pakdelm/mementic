@@ -20,20 +20,80 @@ from pydantic import BaseModel, ValidationError
 load_dotenv()
 
 from mementic.config import LLMConfig  # noqa: E402
-from mementic.models import Constraint, DecisionStatus, ExtractionResult, UsageStats  # noqa: E402
+from mementic.models import Constraint, DecisionStatus, ExtractionResult, LLMJsonParseError, UsageStats  # noqa: E402
+
+# Regex for control characters that are invalid in JSON strings.
+# Preserves tab (\t), newline (\n), and carriage return (\r).
+_CONTROL_CHAR_PATTERN = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]")
 
 
-def _parse_llm_json(content: str) -> dict:
-    """Parse JSON from an LLM response, stripping markdown code fences if present.
+def _parse_llm_json(content: str, source: str = "unknown") -> dict:
+    """Parse JSON from an LLM response, handling common failure modes.
 
-    Some LLMs wrap JSON in ```json ... ``` blocks despite system prompt
-    instructions. This handles that gracefully.
+    Various LLM providers return JSON with:
+    - Markdown code fences (`` ```json ... ``` ``)
+    - Explanatory text before or after the JSON object
+    - Trailing commas on the last element (invalid in standard JSON)
+    - Unescaped control characters in strings
+
+    Sanitization is applied before parsing.  If parsing still fails, a
+    :class:`LLMJsonParseError` is raised with structured metadata (no raw
+    LLM output leaked).
+
+    Args:
+        content: The raw LLM response text.
+        source: Name of the calling extraction function (e.g.
+            ``"extract_from_freeform"``) for structured error reporting.
+
+    Returns:
+        Parsed dictionary.
+
+    Raises:
+        LLMJsonParseError: If the content cannot be parsed as JSON after
+            all sanitization attempts.
     """
     text = content.strip()
+
+    # 1. Strip markdown code fences if present.
     m = re.search(r"```(?:json)?\s*\n(.*?)```", text, re.DOTALL)
     if m:
         text = m.group(1).strip()
-    return json.loads(text)
+
+    # 2. Bracket-match to find the outermost JSON object, handling text
+    #    that may appear before or after the braces.
+    start = text.find("{")
+    if start == -1:
+        start = text.find("[")
+    if start >= 0:
+        open_char = text[start]
+        close_char = "}" if open_char == "{" else "]"
+        depth = 0
+        end = -1
+        for i in range(start, len(text)):
+            if text[i] == open_char:
+                depth += 1
+            elif text[i] == close_char:
+                depth -= 1
+                if depth == 0:
+                    end = i + 1
+                    break
+        if end > start:
+            text = text[start:end]
+
+    # 3. Remove trailing commas (invalid in standard JSON).
+    text = re.sub(r",\s*([}\]])", r"\1", text)
+
+    # 4. Strip control characters that are invalid in JSON (preserve \t, \n, \r).
+    text = _CONTROL_CHAR_PATTERN.sub("", text)
+
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError as e:
+        raise LLMJsonParseError(
+            f"Failed to parse LLM response as JSON: {e.msg}",
+            source=source,
+            position=e.pos,
+        ) from None
 
 
 # Spec 10a — Session truncation
@@ -446,7 +506,7 @@ def extract_from_freeform(
         return ExtractionResult(), stats
 
     try:
-        data = _parse_llm_json(content)
+        data = _parse_llm_json(content, source="extract_from_freeform")
         result = ExtractionResult.model_validate(data)
         if usage:
             stats = UsageStats(
@@ -459,7 +519,7 @@ def extract_from_freeform(
         else:
             stats = UsageStats(model=config.extraction_model, status="success")
         return result, stats
-    except (json.JSONDecodeError, ValidationError):
+    except (LLMJsonParseError, ValidationError):
         sys.stderr.write("WARNING: LLM returned invalid JSON. Skipping.\n")
         if usage:
             stats = UsageStats(
@@ -591,7 +651,7 @@ def extract_from_session(
         return ExtractionResult(), stats
 
     try:
-        data = _parse_llm_json(content)
+        data = _parse_llm_json(content, source="extract_from_session")
         result = ExtractionResult.model_validate(data)
         if usage:
             stats = UsageStats(
@@ -604,7 +664,7 @@ def extract_from_session(
         else:
             stats = UsageStats(model=config.extraction_model, status="success")
         return result, stats
-    except (json.JSONDecodeError, ValidationError):
+    except (LLMJsonParseError, ValidationError):
         sys.stderr.write("WARNING: LLM returned invalid JSON. Skipping.\n")
         if usage:
             stats = UsageStats(
@@ -684,7 +744,7 @@ def extract_from_adr_consequences(
         return [], stats
 
     try:
-        data = _parse_llm_json(content)
+        data = _parse_llm_json(content, source="extract_from_adr_consequences")
         parsed = _ConstraintListResponse.model_validate(data)
         if usage:
             stats = UsageStats(
@@ -697,7 +757,7 @@ def extract_from_adr_consequences(
         else:
             stats = UsageStats(model=config.extraction_model, status="success")
         return parsed.constraints, stats
-    except (json.JSONDecodeError, ValidationError):
+    except (LLMJsonParseError, ValidationError):
         sys.stderr.write("WARNING: LLM returned invalid JSON. Skipping.\n")
         if usage:
             stats = UsageStats(
@@ -784,9 +844,9 @@ def extract_from_codebase_summary(
         return ExtractionResult(), stats
 
     try:
-        data = _parse_llm_json(content)
+        data = _parse_llm_json(content, source="extract_from_codebase_summary")
         result = ExtractionResult.model_validate(data)
-    except (json.JSONDecodeError, ValidationError):
+    except (LLMJsonParseError, ValidationError):
         sys.stderr.write("WARNING: LLM returned invalid JSON for codebase scan. Skipping.\n")
         if usage:
             stats = UsageStats(

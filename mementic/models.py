@@ -8,6 +8,26 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 
+class LLMJsonParseError(Exception):
+    """Raised when an LLM response cannot be parsed as valid JSON.
+
+    Contains structured metadata for error reporting without exposing raw
+    LLM output in logs or error messages.
+
+    Args:
+        message: Human-readable error description.
+        source: Name of the extraction function that called the parser
+            (e.g. ``"extract_from_freeform"``).
+        position: Character position where parsing failed, from
+            :class:`json.JSONDecodeError`.
+    """
+
+    def __init__(self, message: str, source: str, position: int | None = None):
+        self.source = source
+        self.position = position
+        super().__init__(message)
+
+
 class DecisionStatus(str, Enum):
     ACCEPTED = "accepted"
     DEPRECATED = "deprecated"

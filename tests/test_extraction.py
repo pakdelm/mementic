@@ -16,7 +16,8 @@ from mementic.extraction import (
     extract_from_freeform,
     extract_from_session,
 )
-from mementic.models import Constraint, Decision, DecisionStatus, ExtractionResult, GraphEdge
+from mementic.extraction.llm import _parse_llm_json  # noqa: E402
+from mementic.models import Constraint, Decision, DecisionStatus, ExtractionResult, GraphEdge, LLMJsonParseError
 from openai import (
     APIConnectionError,
     APIError,
@@ -1243,4 +1244,147 @@ class TestExtractFromCodebaseSummary:
 
         assert output == ExtractionResult()
         assert usage.status == "error"
+
+
+class TestParseLlmJson:
+    """Tests for _parse_llm_json sanitization and error handling."""
+
+    def test_valid_json_passthrough(self) -> None:
+        """Clean JSON passes through unchanged."""
+        result = _parse_llm_json('{"key": "value"}', source="test")
+        assert result == {"key": "value"}
+
+    def test_valid_json_array(self) -> None:
+        """Valid JSON array passes through unchanged."""
+        result = _parse_llm_json('[1, 2, 3]', source="test")
+        assert result == [1, 2, 3]
+
+    def test_markdown_fence_stripped(self) -> None:
+        """```json fence is stripped before parsing."""
+        result = _parse_llm_json(
+            '```json\n{"key": "value"}\n```',
+            source="test",
+        )
+        assert result == {"key": "value"}
+
+    def test_markdown_fence_no_language(self) -> None:
+        """``` fence without language specifier is stripped."""
+        result = _parse_llm_json(
+            '```\n{"key": "value"}\n```',
+            source="test",
+        )
+        assert result == {"key": "value"}
+
+    def test_preamble_text_before_json(self) -> None:
+        """Explanatory text before JSON is ignored via bracket-matching."""
+        result = _parse_llm_json(
+            'Here is the result you asked for:\n{"key": "value"}\nHope that helps!',
+            source="test",
+        )
+        assert result == {"key": "value"}
+
+    def test_postamble_text_after_json(self) -> None:
+        """Text after JSON closing brace is ignored."""
+        result = _parse_llm_json(
+            '{"key": "value"} Some extra text here.',
+            source="test",
+        )
+        assert result == {"key": "value"}
+
+    def test_trailing_comma_in_object(self) -> None:
+        """Trailing comma before closing brace is removed."""
+        result = _parse_llm_json(
+            '{"key": "value",}',
+            source="test",
+        )
+        assert result == {"key": "value"}
+
+    def test_trailing_comma_in_array(self) -> None:
+        """Trailing comma before closing bracket is removed."""
+        result = _parse_llm_json(
+            '[1, 2, 3,]',
+            source="test",
+        )
+        assert result == [1, 2, 3]
+
+    def test_control_characters_stripped(self) -> None:
+        """Control characters (except \\t, \\n, \\r) are removed from strings."""
+        result = _parse_llm_json(
+            '{"key": "val\x00ue\x01"}',
+            source="test",
+        )
+        assert result == {"key": "value"}
+
+    def test_preserves_tab_newline_carriage_return(self) -> None:
+        """Tab, newline, and carriage return are preserved in strings."""
+        result = _parse_llm_json(
+            '{"key": "line1\\nline2\\tindented\\r"}',
+            source="test",
+        )
+        assert result == {"key": "line1\nline2\tindented\r"}
+
+    def test_nested_objects_bracket_matching(self) -> None:
+        """Nested braces are handled correctly by depth tracking."""
+        result = _parse_llm_json(
+            '{"outer": {"inner": [1, 2]}} trailing',
+            source="test",
+        )
+        assert result == {"outer": {"inner": [1, 2]}}
+
+    def test_deeply_nested_bracket_matching(self) -> None:
+        """Deeply nested braces and brackets are handled correctly."""
+        result = _parse_llm_json(
+            '{"a": {"b": {"c": [{"d": "e"}]}}}',
+            source="test",
+        )
+        assert result == {"a": {"b": {"c": [{"d": "e"}]}}}
+
+    def test_mixed_object_and_array_root(self) -> None:
+        """Finds the first brace or bracket as the root."""
+        result = _parse_llm_json(
+            'Before [1, 2, 3] after',
+            source="test",
+        )
+        assert result == [1, 2, 3]
+
+    def test_combined_failure_modes(self) -> None:
+        """Fence, trailing comma, control chars — all handled together."""
+        result = _parse_llm_json(
+            '```json\n{\n  "key": "val\x1fue",\n  "x": 1,\n}\n```',
+            source="test",
+        )
+        assert result == {"key": "value", "x": 1}
+
+    def test_unparseable_raises_llm_json_parse_error(self) -> None:
+        """Totally invalid content raises LLMJsonParseError with metadata."""
+        with pytest.raises(LLMJsonParseError) as exc_info:
+            _parse_llm_json("not json at all", source="extract_from_freeform")
+        assert exc_info.value.source == "extract_from_freeform"
+        assert exc_info.value.position is not None
+
+    def test_unparseable_set_position(self) -> None:
+        """Position field is set from json.JSONDecodeError.pos."""
+        with pytest.raises(LLMJsonParseError) as exc_info:
+            _parse_llm_json("{bad json}", source="test_func")
+        assert exc_info.value.position == 1  # 'b' at position 1 is invalid
+        assert "test_func" in str(exc_info.value.source)
+
+    def test_empty_content_unparseable(self) -> None:
+        """Empty string after sanitization raises LLMJsonParseError."""
+        with pytest.raises(LLMJsonParseError) as exc_info:
+            _parse_llm_json(" ", source="test")
+        assert exc_info.value.source == "test"
+
+    def test_bare_non_json_text_unparseable(self) -> None:
+        """Bare text with no braces raises LLMJsonParseError."""
+        with pytest.raises(LLMJsonParseError) as exc_info:
+            _parse_llm_json("just some words", source="test")
+        assert exc_info.value.source == "test"
+
+    def test_no_raw_content_leaked(self) -> None:
+        """LLMJsonParseError message does not contain raw LLM content."""
+        with pytest.raises(LLMJsonParseError) as exc_info:
+            _parse_llm_json("secret_api_key_12345 {invalid", source="test")
+        assert "secret_api_key" not in str(exc_info.value)
+        assert "12345" not in str(exc_info.value)
 
