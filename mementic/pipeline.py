@@ -173,13 +173,13 @@ def _zero_usage() -> UsageStats:
 
 
 def _should_use_llm(cfg: MementicConfig) -> bool:
-    """Check if LLM extraction should be attempted based on mode and key presence."""
-    mode = cfg.llm.extraction_mode
-    if mode == "deterministic":
+    """Check if LLM extraction should be attempted.
+
+    Returns True when an API key is available AND deterministic mode has not
+    been forced via the ``_force_deterministic`` attribute set by ``run_init``.
+    """
+    if getattr(cfg, "_force_deterministic", False):
         return False
-    if mode == "llm":
-        return True
-    # auto: use LLM only if key is present
     return cfg.llm.get_api_key() is not None
 
 
@@ -192,8 +192,6 @@ def _extract_markdown(
     try:
         return extract_from_freeform(content, source_label, cfg.llm)
     except Exception:
-        if cfg.llm.extraction_mode == "llm":
-            raise
         sys.stderr.write("LLM unavailable, falling back to deterministic.\n")
         sys.stderr.flush()
         return extract_from_markdown(content, source_label), _zero_usage()
@@ -216,8 +214,6 @@ def _extract_consequences(
     try:
         return extract_from_adr_consequences(consequences_text, cfg.llm)
     except Exception:
-        if cfg.llm.extraction_mode == "llm":
-            raise
         sys.stderr.write("LLM unavailable, falling back to deterministic.\n")
         return (
             extract_constraints_from_consequences(
@@ -251,8 +247,6 @@ def _extract_session(
             custom_keywords=custom_keywords,
         )
     except Exception:
-        if cfg.llm.extraction_mode == "llm":
-            raise
         sys.stderr.write("LLM unavailable, falling back to deterministic.\n")
         result = extract_from_session_deterministic(
             session_log, git_diff, user_notes, max_messages, custom_keywords
@@ -490,8 +484,13 @@ def run_init(
     db_path: str | None = None,
     project: str | None = None,
     advance: Callable[[str], None] | None = None,
+    deep: bool = False,
 ) -> tuple[GraphStore, list[UsageStats]]:
     """Initialize the knowledge graph from all configured sources.
+
+    By default, extraction runs deterministically (regex-based, near-instant).
+    Pass ``deep=True`` to enable full LLM-powered extraction for maximum
+    quality seed decisions (requires an API key).
 
     When ``repo_path`` is provided (or CWD is auto-detected as a codebase),
     a deterministic structural scan runs first to detect architectural
@@ -509,12 +508,17 @@ def run_init(
         no_scan: If True, skip the codebase structural scan.
         db_path: Optional path to a SQLite database for persistent storage.
         project: Optional project name to scope the loaded configuration.
+        deep: If True, use LLM extraction for all phases (requires API key).
+            Default is deterministic (fast, no API calls).
 
     Returns:
         A tuple of (GraphStore, list[UsageStats]) — usage stats from all
         LLM extraction calls made during init.
     """
     cfg = load_config(repo_path=repo_path, project=project)
+
+    if not deep:
+        cfg._force_deterministic = True  # type: ignore[attr-defined]
 
     # Resolve db_path from project config when not explicitly provided.
     # Avoids falling back to the deprecated .mementic/graph.json path.

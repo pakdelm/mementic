@@ -6,7 +6,6 @@ import json
 import os
 import sys
 from pathlib import Path
-from typing import Literal
 
 import keyring
 from pydantic import BaseModel, Field, model_validator
@@ -171,7 +170,6 @@ class LLMConfig(BaseModel):
     provider: str = DEFAULT_PROVIDER
     model: str = DEFAULT_MODEL
     extraction_model: str = DEFAULT_MODEL
-    extraction_mode: Literal["auto", "deterministic", "llm"] = "auto"
 
     @model_validator(mode="after")
     def _validate_provider(self: LLMConfig) -> LLMConfig:

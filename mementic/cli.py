@@ -228,6 +228,11 @@ def init(
         False, "--no-scan",
         help="Skip codebase structural scan (use configured sources only)",
     ),
+    deep: bool = typer.Option(
+        False, "--deep",
+        help="Full LLM-powered extraction (requires API key). "
+             "Without --deep, init runs deterministically in seconds.",
+    ),
     interactive: bool = typer.Option(
         False, "--interactive", help="Walk through setup interactively"
     ),
@@ -545,6 +550,12 @@ def init(
                         raise typer.Exit(code=0)
                 # Non-interactive mode: proceed silently (CI/automation)
 
+    if not deep:
+        typer.echo()
+        typer.echo("Running deterministic init (fast, no LLM).")
+        typer.echo("Use --deep for full LLM extraction (requires API key).")
+        typer.echo()
+
     # Run init — pipeline reads global config (no config_path)
     try:
         with Progress(
@@ -573,6 +584,7 @@ def init(
                 db_path=project_db_path,
                 project=project,
                 advance=_step,
+                deep=deep,
             )
     except RuntimeError as e:
         typer.echo(str(e), err=True)
