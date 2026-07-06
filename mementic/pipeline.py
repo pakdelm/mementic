@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
@@ -194,6 +195,7 @@ def _extract_markdown(
         if cfg.llm.extraction_mode == "llm":
             raise
         sys.stderr.write("LLM unavailable, falling back to deterministic.\n")
+        sys.stderr.flush()
         return extract_from_markdown(content, source_label), _zero_usage()
 
 
@@ -295,7 +297,8 @@ def _resolve_db_path(repo_path: str | None) -> str | None:
 
 
 def _run_codebase_scan(
-    graph: GraphStore, repo_path: str, cfg: MementicConfig, no_scan: bool
+    graph: GraphStore, repo_path: str, cfg: MementicConfig, no_scan: bool,
+    advance: Callable[[str], None] | None = None,
 ) -> list[UsageStats]:
     """Phase 1: scan codebase structure for architectural patterns (Spec 12a).
 
@@ -304,29 +307,108 @@ def _run_codebase_scan(
     if no_scan or not _should_use_llm(cfg):
         return []
 
+    if advance:
+        advance("Scanning codebase structure...")
+
     summary = scan_codebase_structure(repo_path)
     if not summary.strip():
         return []
 
+    sys.stderr.write("Codebase structural scan complete. Analyzing with LLM...\n")
+    sys.stderr.flush()
+
+    if advance:
+        advance("Analyzing structure with LLM...")
+
+    t0 = time.monotonic()
     result, usage = extract_from_codebase_summary(summary, cfg.llm)
+    elapsed = time.monotonic() - t0
+
     if result.decisions:
         sys.stderr.write(
-            f"Codebase scan: detected {len(result.decisions)} "
-            f"potential decision(s) from structural patterns.\n"
+            f"LLM analysis completed in {elapsed:.1f}s — "
+            f"{len(result.decisions)} potential decision(s) detected.\n"
         )
+        sys.stderr.flush()
     _ingest_result(graph, result, source_path="init", repo_path=repo_path)
     return [usage]
 
 
+# Characters per batch — ~10K tokens at 4 chars/token, well below max_tokens=16384.
+_MD_BATCH_CHARS = 40_000
+
+
+def _build_md_batches(
+    md_files: list[tuple[str, str]], max_chars: int
+) -> list[list[tuple[str, str]]]:
+    """Split markdown files into batches that fit within ``max_chars``.
+
+    Each batch contains complete files — a file is never split across batches.
+    """
+    batches: list[list[tuple[str, str]]] = []
+    current_batch: list[tuple[str, str]] = []
+    current_chars = 0
+
+    for relpath, content in md_files:
+        file_chars = len(relpath) + len(content) + 20  # padding for "### File: ..."
+        if current_batch and current_chars + file_chars > max_chars:
+            batches.append(current_batch)
+            current_batch = []
+            current_chars = 0
+        current_batch.append((relpath, content))
+        current_chars += file_chars
+
+    if current_batch:
+        batches.append(current_batch)
+    return batches
+
+
 def _run_markdown_scan(
-    graph: GraphStore, repo_path: str, cfg: MementicConfig
+    graph: GraphStore, repo_path: str, cfg: MementicConfig,
 ) -> list[UsageStats]:
-    """Phase 0: scan repo-wide markdown files for decisions (Spec 15)."""
+    """Phase 0: scan repo-wide markdown files for decisions (Spec 15).
+
+    In LLM mode, files are batched into token-budget groups — one API call
+    per batch instead of one per file.  Deterministic mode processes per-file
+    since there is no API cost.
+    """
     usage_list: list[UsageStats] = []
-    for md_relpath, md_content in collect_markdown_files(repo_path):
-        result, usage = _extract_markdown(md_content, md_relpath, cfg)
+    md_files = collect_markdown_files(repo_path)
+    if not md_files:
+        return usage_list
+
+    if not _should_use_llm(cfg):
+        for md_relpath, md_content in md_files:
+            result, usage = _extract_markdown(md_content, md_relpath, cfg)
+            usage_list.append(usage)
+            _ingest_result(graph, result, source_path=md_relpath, repo_path=repo_path)
+        return usage_list
+
+    # LLM mode: batch files to reduce API calls
+    batches = _build_md_batches(md_files, _MD_BATCH_CHARS)
+    sys.stderr.write(
+        f"Markdown scan: processing {len(md_files)} file(s)...\n"
+    )
+    sys.stderr.flush()
+    t0 = time.monotonic()
+    for batch_idx, batch in enumerate(batches, 1):
+        batch_content = "\n\n".join(
+            f"### File: {relpath}\n{content}" for relpath, content in batch
+        )
+        result, usage = extract_from_freeform(
+            batch_content, f"markdown-scan-batch-{batch_idx}", cfg.llm
+        )
         usage_list.append(usage)
-        _ingest_result(graph, result, source_path=md_relpath, repo_path=repo_path)
+        _ingest_result(
+            graph, result, source_path="markdown-scan", repo_path=repo_path
+        )
+
+    elapsed = time.monotonic() - t0
+    sys.stderr.write(
+        f"Markdown scan: processed {len(md_files)} file(s) in {elapsed:.1f}s\n"
+    )
+    sys.stderr.flush()
+
     return usage_list
 
 
@@ -340,6 +422,7 @@ def _ingest_adr_source(
     """
     if not Path(adr_dir_path).is_dir():
         sys.stderr.write(f"Warning: Source '{adr_dir_path}' not found. Skipping.\n")
+        sys.stderr.flush()
         return []
 
     usage_list: list[UsageStats] = []
@@ -390,6 +473,7 @@ def _ingest_instruction_source(
     """
     if not Path(source_path).is_dir():
         sys.stderr.write(f"Warning: Source '{source_path}' not found. Skipping.\n")
+        sys.stderr.flush()
         return []
 
     usage_list: list[UsageStats] = []
@@ -444,9 +528,7 @@ def run_init(
 
     # Phase 1: Codebase structural scan (Spec 12a) — cold-start killer.
     if repo_path:
-        if advance:
-            advance("Scanning codebase structure...")
-        all_usage.extend(_run_codebase_scan(graph, repo_path, cfg, no_scan))
+        all_usage.extend(_run_codebase_scan(graph, repo_path, cfg, no_scan, advance=advance))
 
     # Phase 0: Repo-wide markdown scan (Spec 15) — deterministic-friendly.
     if repo_path:

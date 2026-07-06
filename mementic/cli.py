@@ -492,7 +492,7 @@ def init(
     phase_cfg = load_config(repo_path=str(cwd), project=project)
     phase_total = 0
     if effective_repo:
-        phase_total += 2  # codebase scan + markdown scan
+        phase_total += 3  # codebase I/O + codebase LLM + markdown scan
     phase_total += len(phase_cfg.sources.adr_dirs)
     phase_total += len(phase_cfg.sources.opencode_instructions)
     phase_total += len(phase_cfg.sources.claude_instructions)
@@ -510,6 +510,40 @@ def init(
     if project_db_path and effective_repo:
         phase_total += 1  # track repo in project_sources
     phase_total = max(phase_total, 1)  # avoid indeterminate bar
+
+    # Warn on re-init when the graph already contains data.
+    if project_db_path:
+        db_path = str(Path(project_db_path).expanduser())
+        if Path(db_path).exists():
+            try:
+                import sqlite3
+                conn = sqlite3.connect(db_path)
+                cur = conn.execute(
+                    "SELECT COUNT(*) FROM decisions UNION ALL "
+                    "SELECT COUNT(*) FROM constraints"
+                )
+                rows = cur.fetchall()
+                conn.close()
+                d_count = rows[0][0] if len(rows) > 0 else 0
+                c_count = rows[1][0] if len(rows) > 1 else 0
+            except Exception:
+                d_count = c_count = 0
+
+            if d_count > 0 or c_count > 0:
+                typer.echo(
+                    f"Graph already contains {d_count} decision(s), "
+                    f"{c_count} constraint(s)."
+                )
+                if sys.stdin.isatty():
+                    if not typer.confirm(
+                        "Re-initializing will re-scan sources (may take "
+                        "several minutes). Existing entries will not be "
+                        "overwritten. Continue?",
+                        default=False,
+                    ):
+                        typer.echo("Init cancelled.")
+                        raise typer.Exit(code=0)
+                # Non-interactive mode: proceed silently (CI/automation)
 
     # Run init — pipeline reads global config (no config_path)
     try:

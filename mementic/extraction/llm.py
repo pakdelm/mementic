@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import re
 import sys
 import time
@@ -23,70 +22,24 @@ load_dotenv()
 from mementic.config import LLMConfig  # noqa: E402
 from mementic.models import Constraint, DecisionStatus, ExtractionResult, LLMJsonParseError, UsageStats  # noqa: E402
 
-# Regex for control characters that are invalid in JSON strings.
-# Preserves tab (\t), newline (\n), and carriage return (\r).
-_CONTROL_CHAR_PATTERN = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]")
-
-# Maximum number of individual Pydantic errors to report in a schema mismatch
-# warning.  Capped to avoid flooding stderr when the LLM returns a deeply
-# malformed response.
-_MAX_VALIDATION_ERROR_REPORT = 5
-
-
-def _format_validation_error(e: ValidationError) -> str:
-    """Format a Pydantic ``ValidationError`` for human-readable stderr output.
-
-    Extracts field locations and error types from ``e.errors()`` without
-    including raw input values (no LLM content leaked).
-
-    Args:
-        e: The :class:`ValidationError` raised by ``model_validate``.
-
-    Returns:
-        A multi-line string suitable for ``stderr``, capped at
-        ``_MAX_VALIDATION_ERROR_REPORT`` individual errors.
-    """
-    lines: list[str] = []
-    for error in e.errors()[:_MAX_VALIDATION_ERROR_REPORT]:
-        loc_parts = [str(p) for p in error["loc"]] if error.get("loc") else ["root"]
-        loc = ".".join(loc_parts)
-        msg = error.get("msg", "validation error")
-        lines.append(f"  {loc}: {msg}")
-    remaining = max(0, len(e.errors()) - _MAX_VALIDATION_ERROR_REPORT)
-    if remaining:
-        lines.append(f"  ... and {remaining} more error(s)")
-    return "\n".join(lines)
-
 
 def _parse_llm_json(content: str, source: str = "unknown") -> dict:
     """Parse JSON from an LLM response, handling common failure modes.
 
-    Various LLM providers return JSON with:
-    - Markdown code fences (`` ```json ... ``` ``)
-    - Explanatory text before or after the JSON object
-    - Trailing commas, single-quoted strings, unquoted keys
-    - ``NaN`` / ``Infinity`` literals, JavaScript-style comments
-    - Unescaped control characters in strings
-
-    Sanitization (fence stripping, string-aware bracket matching, control
-    char removal) is applied first.  A two-pass parse follows: strict
-    :func:`json.loads` for the common case, then lenient
-    :func:`json5.loads` as a recovery fallback for LLM-specific quirks.
-
-    If both parsers fail, a :class:`LLMJsonParseError` is raised with
-    structured metadata (no raw LLM output leaked).
+    Applies fence stripping and string-aware bracket matching, then
+    delegates to :func:`json5.loads` which handles single quotes,
+    unquoted keys, trailing commas, ``NaN`` / ``Infinity``, comments,
+    and control characters in a single pass.
 
     Args:
         content: The raw LLM response text.
-        source: Name of the calling extraction function (e.g.
-            ``"extract_from_freeform"``) for structured error reporting.
+        source: Name of the calling extraction function for error metadata.
 
     Returns:
         Parsed dictionary.
 
     Raises:
-        LLMJsonParseError: If the content cannot be parsed as JSON after
-            all sanitization and recovery attempts.
+        LLMJsonParseError: If parsing fails after all attempts.
     """
     text = content.strip()
 
@@ -96,8 +49,6 @@ def _parse_llm_json(content: str, source: str = "unknown") -> dict:
         text = m.group(1).strip()
 
     # 2. String-aware bracket match to find the outermost JSON object.
-    #    Skip brace/bracket chars when inside a JSON string so that
-    #    values like `{"path": "/{id}/foo"}` don't fool the depth tracker.
     start = text.find("{")
     if start == -1:
         start = text.find("[")
@@ -131,23 +82,17 @@ def _parse_llm_json(content: str, source: str = "unknown") -> dict:
         if end > start:
             text = text[start:end]
 
-    # 3. Strip control characters that are invalid in JSON (preserve \t, \n, \r).
-    text = _CONTROL_CHAR_PATTERN.sub("", text)
-
-    # 4. Two-pass parse: strict JSON first, then lenient json5 as recovery.
+    # 3. Parse with json5 (handles trailing commas, control chars,
+    #    single quotes, unquoted keys, NaN/Infinity, comments, hex).
     try:
-        return json.loads(text)
-    except json.JSONDecodeError:
-        try:
-            return json5.loads(text)
-        except Exception as e:
-            # json5 can raise ValueError, JSON5DecodeError, or other types.
-            position: int | None = getattr(e, "pos", None)
-            raise LLMJsonParseError(
-                f"Failed to parse LLM response as JSON: {e}",
-                source=source,
-                position=position,
-            ) from None
+        return json5.loads(text)
+    except Exception as e:
+        position: int | None = getattr(e, "pos", None)
+        raise LLMJsonParseError(
+            f"Failed to parse LLM response: {e}",
+            source=source,
+            position=position,
+        ) from None
 
 
 # Spec 10a — Session truncation
@@ -443,7 +388,7 @@ def get_client(config: LLMConfig) -> OpenAI:
     """
     base_url = config.base_url
     api_key = config.ensure_api_key()
-    return OpenAI(api_key=api_key, base_url=base_url)
+    return OpenAI(api_key=api_key, base_url=base_url, timeout=300.0)
 
 
 def _provider_prefix(config: LLMConfig) -> str:
@@ -565,14 +510,17 @@ def extract_from_freeform(
         raise RuntimeError(msg) from None
     except RateLimitError:
         sys.stderr.write(f"WARNING: {prefix} rate limit hit. Skipping this source.\n")
+        sys.stderr.flush()
         stats = UsageStats(model=config.extraction_model, status="rate_limited")
         return ExtractionResult(), stats
     except (APITimeoutError, APIConnectionError):
         sys.stderr.write(f"WARNING: {prefix} API unreachable. Skipping this source.\n")
+        sys.stderr.flush()
         stats = UsageStats(model=config.extraction_model, status="error")
         return ExtractionResult(), stats
     except APIError as e:
         sys.stderr.write(f"WARNING: {prefix} API error: {e}. Skipping this source.\n")
+        sys.stderr.flush()
         stats = UsageStats(model=config.extraction_model, status="error")
         return ExtractionResult(), stats
 
@@ -607,6 +555,7 @@ def extract_from_freeform(
         return result, stats
     except LLMJsonParseError:
         sys.stderr.write("WARNING: LLM returned unparseable text. Skipping.\n")
+        sys.stderr.flush()
         if usage:
             stats = UsageStats(
                 input_tokens=usage.prompt_tokens,
@@ -618,13 +567,9 @@ def extract_from_freeform(
         else:
             stats = UsageStats(model=config.extraction_model, status="error")
         return ExtractionResult(), stats
-    except ValidationError as e:
-        details = _format_validation_error(e)
-        sys.stderr.write(
-            f"WARNING: LLM returned valid JSON but schema mismatch:\n"
-            f"{details}\n"
-            f"Skipping.\n"
-        )
+    except ValidationError:
+        sys.stderr.write("WARNING: LLM returned valid JSON but schema mismatch. Skipping.\n")
+        sys.stderr.flush()
         if usage:
             stats = UsageStats(
                 input_tokens=usage.prompt_tokens,
@@ -728,14 +673,17 @@ def extract_from_session(
         raise RuntimeError(msg) from None
     except RateLimitError:
         sys.stderr.write(f"WARNING: {prefix} rate limit hit. Skipping this source.\n")
+        sys.stderr.flush()
         stats = UsageStats(model=config.extraction_model, status="rate_limited")
         return ExtractionResult(), stats
     except (APITimeoutError, APIConnectionError):
         sys.stderr.write(f"WARNING: {prefix} API unreachable. Skipping this source.\n")
+        sys.stderr.flush()
         stats = UsageStats(model=config.extraction_model, status="error")
         return ExtractionResult(), stats
     except APIError as e:
         sys.stderr.write(f"WARNING: {prefix} API error: {e}. Skipping this source.\n")
+        sys.stderr.flush()
         stats = UsageStats(model=config.extraction_model, status="error")
         return ExtractionResult(), stats
 
@@ -770,6 +718,7 @@ def extract_from_session(
         return result, stats
     except LLMJsonParseError:
         sys.stderr.write("WARNING: LLM returned unparseable text. Skipping.\n")
+        sys.stderr.flush()
         if usage:
             stats = UsageStats(
                 input_tokens=usage.prompt_tokens,
@@ -781,13 +730,9 @@ def extract_from_session(
         else:
             stats = UsageStats(model=config.extraction_model, status="error")
         return ExtractionResult(), stats
-    except ValidationError as e:
-        details = _format_validation_error(e)
-        sys.stderr.write(
-            f"WARNING: LLM returned valid JSON but schema mismatch:\n"
-            f"{details}\n"
-            f"Skipping.\n"
-        )
+    except ValidationError:
+        sys.stderr.write("WARNING: LLM returned valid JSON but schema mismatch. Skipping.\n")
+        sys.stderr.flush()
         if usage:
             stats = UsageStats(
                 input_tokens=usage.prompt_tokens,
@@ -839,14 +784,17 @@ def extract_from_adr_consequences(
         raise RuntimeError(msg) from None
     except RateLimitError:
         sys.stderr.write(f"WARNING: {prefix} rate limit hit. Skipping this source.\n")
+        sys.stderr.flush()
         stats = UsageStats(model=config.extraction_model, status="rate_limited")
         return [], stats
     except (APITimeoutError, APIConnectionError):
         sys.stderr.write(f"WARNING: {prefix} API unreachable. Skipping this source.\n")
+        sys.stderr.flush()
         stats = UsageStats(model=config.extraction_model, status="error")
         return [], stats
     except APIError as e:
         sys.stderr.write(f"WARNING: {prefix} API error: {e}. Skipping this source.\n")
+        sys.stderr.flush()
         stats = UsageStats(model=config.extraction_model, status="error")
         return [], stats
 
@@ -881,6 +829,7 @@ def extract_from_adr_consequences(
         return parsed.constraints, stats
     except LLMJsonParseError:
         sys.stderr.write("WARNING: LLM returned unparseable text. Skipping.\n")
+        sys.stderr.flush()
         if usage:
             stats = UsageStats(
                 input_tokens=usage.prompt_tokens,
@@ -892,13 +841,9 @@ def extract_from_adr_consequences(
         else:
             stats = UsageStats(model=config.extraction_model, status="error")
         return [], stats
-    except ValidationError as e:
-        details = _format_validation_error(e)
-        sys.stderr.write(
-            f"WARNING: LLM returned valid JSON but schema mismatch:\n"
-            f"{details}\n"
-            f"Skipping.\n"
-        )
+    except ValidationError:
+        sys.stderr.write("WARNING: LLM returned valid JSON but schema mismatch. Skipping.\n")
+        sys.stderr.flush()
         if usage:
             stats = UsageStats(
                 input_tokens=usage.prompt_tokens,
@@ -957,14 +902,17 @@ def extract_from_codebase_summary(
         raise RuntimeError(msg) from None
     except RateLimitError:
         sys.stderr.write(f"WARNING: {prefix} rate limit hit. Skipping codebase scan.\n")
+        sys.stderr.flush()
         stats = UsageStats(model=config.extraction_model, status="rate_limited")
         return ExtractionResult(), stats
     except (APITimeoutError, APIConnectionError):
         sys.stderr.write(f"WARNING: {prefix} API unreachable. Skipping codebase scan.\n")
+        sys.stderr.flush()
         stats = UsageStats(model=config.extraction_model, status="error")
         return ExtractionResult(), stats
     except APIError as e:
         sys.stderr.write(f"WARNING: {prefix} API error: {e}. Skipping codebase scan.\n")
+        sys.stderr.flush()
         stats = UsageStats(model=config.extraction_model, status="error")
         return ExtractionResult(), stats
 
@@ -988,6 +936,7 @@ def extract_from_codebase_summary(
         result = ExtractionResult.model_validate(data)
     except LLMJsonParseError:
         sys.stderr.write("WARNING: LLM returned unparseable text for codebase scan. Skipping.\n")
+        sys.stderr.flush()
         if usage:
             stats = UsageStats(
                 input_tokens=usage.prompt_tokens,
@@ -999,13 +948,9 @@ def extract_from_codebase_summary(
         else:
             stats = UsageStats(model=config.extraction_model, status="error")
         return ExtractionResult(), stats
-    except ValidationError as e:
-        details = _format_validation_error(e)
-        sys.stderr.write(
-            f"WARNING: LLM returned valid JSON for codebase scan but schema mismatch:\n"
-            f"{details}\n"
-            f"Skipping.\n"
-        )
+    except ValidationError:
+        sys.stderr.write("WARNING: LLM returned valid JSON for codebase scan but schema mismatch. Skipping.\n")
+        sys.stderr.flush()
         if usage:
             stats = UsageStats(
                 input_tokens=usage.prompt_tokens,

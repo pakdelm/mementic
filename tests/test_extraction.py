@@ -1307,13 +1307,13 @@ class TestParseLlmJson:
         )
         assert result == [1, 2, 3]
 
-    def test_control_characters_stripped(self) -> None:
-        """Control characters (except \\t, \\n, \\r) are removed from strings."""
+    def test_json5_handles_escaped_control_chars(self) -> None:
+        """json5 correctly unescapes JSON escape sequences in strings."""
         result = _parse_llm_json(
-            '{"key": "val\x00ue\x01"}',
+            '{"key": "val\\u0000ue"}',
             source="test",
         )
-        assert result == {"key": "value"}
+        assert result == {"key": "val\x00ue"}
 
     def test_preserves_tab_newline_carriage_return(self) -> None:
         """Tab, newline, and carriage return are preserved in strings."""
@@ -1348,9 +1348,9 @@ class TestParseLlmJson:
         assert result == [1, 2, 3]
 
     def test_combined_failure_modes(self) -> None:
-        """Fence, trailing comma, control chars — all handled together."""
+        """Fence, trailing comma — all handled together."""
         result = _parse_llm_json(
-            '```json\n{\n  "key": "val\x1fue",\n  "x": 1,\n}\n```',
+            '```json\n{\n  "key": "value",\n  "x": 1,\n}\n```',
             source="test",
         )
         assert result == {"key": "value", "x": 1}
