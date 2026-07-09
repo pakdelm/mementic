@@ -9,20 +9,28 @@ from typing import Any, TYPE_CHECKING
 
 import typer
 from pydantic import ValidationError
-from rich.console import Console, Group
-from rich.table import Table
-from rich.panel import Panel
-from rich.text import Text
 from rich.markdown import Markdown
-from rich.progress import (
-    BarColumn,
-    Progress,
-    SpinnerColumn,
-    TaskProgressColumn,
-    TextColumn,
-    TimeElapsedColumn,
+from mementic.console import (
+    C_DIM,
+    C_FAIL,
+    C_HEADER,
+    C_ID,
+    C_PATH,
+    C_SUCCESS,
+    C_WARN,
+    STATUS_DEPRECATED,
+    STATUS_FAIL,
+    STATUS_OK,
+    console,
+    err_console,
+    kv_table,
+    make_progress,
+    make_step_tracker,
+    panel,
+    rule,
+    table,
+    text,
 )
-from rich import box
 
 from mementic.config import (
     PROVIDER_CONFIGS,
@@ -63,8 +71,6 @@ from mementic.conflict import auto_resolve_capture
 from mementic.metrics import UsageStore
 from mementic.sources.adr import scan_adr_dir
 from mementic.sources.opencode import scan_opencode_instructions
-
-console = Console(highlight=False)
 
 if TYPE_CHECKING:
     from mementic.config import MementicConfig  # noqa: F401
@@ -204,7 +210,7 @@ def _run_git_diff(reference: str) -> tuple[str, int]:
     """
     try:
         result = subprocess.run(
-            ["git", "diff", reference], capture_output=True, text=True
+            ["git", "diff", reference], capture_output=True, text=True, encoding="utf-8"
         )
         return result.stdout or "", result.returncode
     except FileNotFoundError:
@@ -292,9 +298,11 @@ def init(
                 discovered_sources.opencode_instructions,
             )
         ):
-            typer.echo(
-                "No pre-configured sources. All markdown files will be "
-                "scanned during init."
+            console.print(
+                text(
+                    f"[{C_WARN}]No pre-configured sources. All markdown "
+                    f"files will be scanned during init.[/]"
+                )
             )
 
         # Detect codebase-only repos (relax: register with empty sources)
@@ -329,8 +337,11 @@ def init(
             sources=discovered_sources,
         )
         save_global_config(global_cfg)
-        typer.echo(
-            f"Registered repo '{repo_name}' in project '{proj_name}'."
+        console.print(
+            text(
+                f"[{C_SUCCESS}]{STATUS_OK}[/] Registered repo "
+                f"'{repo_name}' in project '{proj_name}'."
+            )
         )
 
     # Auto-detect repo if not explicitly given
@@ -369,30 +380,38 @@ def init(
     if key:
         # --key flag: select provider and set/rotate key interactively
         if not sys.stdin.isatty():
-            typer.echo(
-                "Error: --key requires an interactive terminal.\n"
-                "  Run 'mementic init' without --key for guided setup, or\n"
-                "  set the environment variable for your provider:\n"
-                "    export DEEPSEEK_API_KEY=\"your-key-here\"\n"
-                "    export OPENAI_API_KEY=\"your-key-here\"\n"
-                "    export OPENROUTER_API_KEY=\"your-key-here\"",
-                err=True,
+            err_console.print(
+                panel(
+                    text(
+                        "Error: --key requires an interactive terminal.\n"
+                        "  Run 'mementic init' without --key for guided setup, or\n"
+                        "  set the environment variable for your provider:\n"
+                        "    export DEEPSEEK_API_KEY=\"your-key-here\"\n"
+                        "    export OPENAI_API_KEY=\"your-key-here\"\n"
+                        "    export OPENROUTER_API_KEY=\"your-key-here\""
+                    ),
+                    title="Error",
+                    border_style=C_FAIL,
+                )
             )
             raise typer.Exit(code=1)
 
-        typer.echo()
-        typer.echo("Select an LLM provider.")
-        typer.echo(f"  {', '.join(PROVIDER_CONFIGS.keys())}")
-        typer.echo(
-            f"  Press Enter to keep current ({global_cfg.llm.provider})."
+        console.print(
+            text(
+                f"\n[{C_HEADER} bold]Select an LLM provider[/]\n"
+                f"  {', '.join(PROVIDER_CONFIGS.keys())}\n"
+                f"  [{C_DIM}]Press Enter to keep current "
+                f"({global_cfg.llm.provider})[/]"
+            )
         )
         provider = typer.prompt("Provider", default=global_cfg.llm.provider).strip()
 
         if provider not in PROVIDER_CONFIGS:
-            typer.echo(
-                f"Error: Unknown provider '{provider}'.\n"
-                f"  Known: {', '.join(PROVIDER_CONFIGS.keys())}",
-                err=True,
+            err_console.print(
+                text(
+                    f"[{C_FAIL}]Error: Unknown provider '{provider}'.\n"
+                    f"  Known: {', '.join(PROVIDER_CONFIGS.keys())}[/]"
+                )
             )
             raise typer.Exit(code=1)
 
@@ -401,8 +420,14 @@ def init(
 
         if env_var is None:
             global_cfg.llm.provider = provider
-            typer.echo("Ollama runs locally — no API key needed.")
-            typer.echo("Make sure ollama is running on localhost:11434")
+            console.print(
+                text(
+                    f"[{C_SUCCESS}]{STATUS_OK}[/] Ollama runs locally "
+                    f"— no API key needed.\n"
+                    f"  [{C_DIM}]Make sure ollama is running on "
+                    f"localhost:11434[/]"
+                )
+            )
             save_global_config(global_cfg)
             typer.echo(f"Saved to {GLOBAL_CONFIG_DISPLAY_PATH}")
         else:
@@ -412,7 +437,9 @@ def init(
                 show_default=False,
             )
             if not key_val.strip():
-                typer.echo("No key entered — no changes made.")
+                console.print(
+                    text(f"[{C_DIM}]No key entered — no changes made.[/]")
+                )
             else:
                 global_cfg.llm.provider = provider
                 try:
@@ -421,9 +448,11 @@ def init(
                     typer.echo(str(e), err=True)
                     raise typer.Exit(code=1)
 
-                typer.echo("Key stored in OS keyring.")
-                typer.echo(
-                    f"Fallback (CI/containers): export {env_var}=\"your-key-here\""
+                console.print(
+                    text(
+                        f"[{C_SUCCESS}]{STATUS_OK}[/] Key stored in OS keyring.\n"
+                        f"  [{C_DIM}]Fallback: export {env_var}=...[/]"
+                    )
                 )
                 save_global_config(global_cfg)
                 typer.echo(f"Saved to {GLOBAL_CONFIG_DISPLAY_PATH}")
@@ -431,32 +460,45 @@ def init(
         return
     elif not api_key and sys.stdin.isatty():
         # No key found — offer to set one up
-        typer.echo()
-        typer.echo("Mementic can extract richer architectural context using an LLM.")
-        typer.echo(
-            "Deterministic mode (no key) works but produces lower-quality results."
+        console.print(
+            text(
+                f"\n[{C_HEADER}]Mementic can extract richer architectural "
+                f"context using an LLM.[/]\n"
+                f"[{C_DIM}]Deterministic mode (no key) works but produces "
+                f"lower-quality results.[/]\n"
+            )
         )
-        typer.echo()
         setup_key = typer.confirm("Set up an LLM provider now?", default=True)
 
         if setup_key:
-            typer.echo()
-            typer.echo("Select an LLM provider.")
-            typer.echo(f"  {', '.join(PROVIDER_CONFIGS.keys())}")
+            console.print(
+                text(
+                    f"\n[{C_HEADER} bold]Select an LLM provider[/]\n"
+                    f"  {', '.join(PROVIDER_CONFIGS.keys())}"
+                )
+            )
             provider = typer.prompt(
                 "Provider", default="", show_default=False
             )
 
             if provider not in PROVIDER_CONFIGS:
-                typer.echo(f"Unknown provider '{provider}'. Skipping LLM setup.")
+                typer.echo(
+                    f"Unknown provider '{provider}'. Skipping LLM setup."
+                )
             else:
                 provider_cfg = PROVIDER_CONFIGS[provider]
                 env_var = provider_cfg["key_env_var"]
 
                 if env_var is None:
                     # ollama — no key needed
-                    typer.echo("Ollama runs locally — no API key needed.")
-                    typer.echo("Make sure ollama is running on localhost:11434")
+                    console.print(
+                        text(
+                            f"[{C_SUCCESS}]{STATUS_OK}[/] Ollama runs locally "
+                            f"— no API key needed.\n"
+                            f"  [{C_DIM}]Make sure ollama is running on "
+                            f"localhost:11434[/]"
+                        )
+                    )
                 else:
                     key_val = typer.prompt(
                         f"API key for {provider} ({env_var})",
@@ -471,9 +513,12 @@ def init(
                         except RuntimeError as e:
                             typer.echo(str(e), err=True)
                             raise typer.Exit(code=1)
-                        typer.echo("Key stored in OS keyring.")
-                        typer.echo(
-                            f"Fallback for CI/headless: export {env_var}=..."
+                        console.print(
+                            text(
+                                f"[{C_SUCCESS}]{STATUS_OK}[/] Key stored in "
+                                f"OS keyring.\n"
+                                f"  [{C_DIM}]Fallback: export {env_var}=...[/]"
+                            )
                         )
 
                 default_model = ""  # user must choose
@@ -492,17 +537,34 @@ def init(
     # has empty log_dirs (preserves user overrides on subsequent runs).
     _populate_session_defaults(global_cfg)
 
-    # Compute total phases for progress bar.
-    # Must load config early to count sources.
+    # Compute tick total for progress bar.
+    # Pipeline calls advance() per sub-step — count actual work items,
+    # not abstract phases, so the bar tracks real progress.
     phase_cfg = load_config(repo_path=str(cwd), project=project)
-    phase_total = 0
-    if effective_repo:
-        phase_total += 3  # codebase I/O + codebase LLM + markdown scan
-    phase_total += len(phase_cfg.sources.adr_dirs)
-    phase_total += len(phase_cfg.sources.opencode_instructions)
-    phase_total += len(phase_cfg.sources.claude_instructions)
-    phase_total += len(phase_cfg.sources.cursor_instructions)
-    phase_total += len(phase_cfg.sources.windsurf_instructions)
+    tick_total = 0
+
+    if effective_repo and not no_scan:
+        if deep:
+            tick_total += 2  # _run_codebase_scan: I/O + LLM (2 ticks)
+        try:
+            md_count = sum(
+                1 for _ in Path(effective_repo).rglob("*.md")
+                if ".mementic" not in _.parts and "node_modules" not in _.parts
+            )
+            md_count = max(md_count, 1)
+            if deep:
+                # LLM mode: pipeline advances per batch (~10 files per batch)
+                tick_total += max(1, (md_count + 9) // 10)
+            else:
+                # Deterministic: pipeline advances per file
+                tick_total += md_count
+        except (OSError, ValueError):
+            tick_total += 10 if deep else 5
+    tick_total += len(phase_cfg.sources.adr_dirs)
+    tick_total += len(phase_cfg.sources.opencode_instructions)
+    tick_total += len(phase_cfg.sources.claude_instructions)
+    tick_total += len(phase_cfg.sources.cursor_instructions)
+    tick_total += len(phase_cfg.sources.windsurf_instructions)
     has_src = bool(
         phase_cfg.sources.adr_dirs
         or phase_cfg.sources.opencode_instructions
@@ -511,10 +573,10 @@ def init(
         or phase_cfg.sources.windsurf_instructions
     )
     if has_src or (effective_repo and not no_scan):
-        phase_total += 1  # backfill edges
+        tick_total += 1  # backfill edges
     if project_db_path and effective_repo:
-        phase_total += 1  # track repo in project_sources
-    phase_total = max(phase_total, 1)  # avoid indeterminate bar
+        tick_total += 1  # track repo in project_sources
+    tick_total = max(tick_total, 1)  # avoid indeterminate bar
 
     # Warn on re-init when the graph already contains data.
     if project_db_path:
@@ -535,15 +597,21 @@ def init(
                 d_count = c_count = 0
 
             if d_count > 0 or c_count > 0:
-                typer.echo(
-                    f"Graph already contains {d_count} decision(s), "
-                    f"{c_count} constraint(s)."
+                console.print(
+                    panel(
+                        text(
+                            f"Graph already contains {d_count} decision(s), "
+                            f"{c_count} constraint(s).\n"
+                            f"[{C_DIM}]Re-initializing will re-scan sources. "
+                            f"Existing entries will not be overwritten.[/]"
+                        ),
+                        title="Re-initialize?",
+                        border_style=C_WARN,
+                    )
                 )
                 if sys.stdin.isatty():
                     if not typer.confirm(
-                        "Re-initializing will re-scan sources (may take "
-                        "several minutes). Existing entries will not be "
-                        "overwritten. Continue?",
+                        "Continue?",
                         default=False,
                     ):
                         typer.echo("Init cancelled.")
@@ -551,43 +619,39 @@ def init(
                 # Non-interactive mode: proceed silently (CI/automation)
 
     if not deep:
-        typer.echo()
-        typer.echo("Running deterministic init (fast, no LLM).")
-        typer.echo("Use --deep for full LLM extraction (requires API key).")
-        typer.echo()
+        console.print(
+            panel(
+                text(
+                    f"Running deterministic init (fast, no LLM).\n"
+                    f"[{C_DIM}]Use --deep for full LLM extraction "
+                    f"(requires API key).[/]"
+                ),
+                title="Note",
+                border_style=C_WARN,
+            )
+        )
 
     # Run init — pipeline reads global config (no config_path)
     try:
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            BarColumn(),
-            TaskProgressColumn(),
-            TimeElapsedColumn(),
-            console=console,
-        ) as progress:
+        with make_progress() as progress:
             task_id = progress.add_task(
-                "[bold]Initializing knowledge graph...",
-                total=phase_total,
+                "Initializing knowledge graph...",
+                total=tick_total,
             )
-
-            def _step(description: str) -> None:
-                progress.update(
-                    task_id,
-                    advance=1,
-                    description=f"[bold]{description}[/]",
-                )
+            advance = make_step_tracker(progress, task_id, preamble="")
 
             graph, all_usage = run_init(
                 repo_path=effective_repo,
                 no_scan=no_scan,
                 db_path=project_db_path,
                 project=project,
-                advance=_step,
+                advance=advance,
                 deep=deep,
             )
     except RuntimeError as e:
-        typer.echo(str(e), err=True)
+        err_console.print(
+            panel(text(str(e)), title="Error", border_style=C_FAIL)
+        )
         raise typer.Exit(code=1)
 
     # Load config for source counts in post-bootstrap output
@@ -607,58 +671,69 @@ def init(
     )
     entity_count = stats.get("entities", 0)
 
-    panel_renderables: list = []
-    panel_renderables.append(Text())  # blank
-    panel_renderables.append(Text("Sources", style="bold"))
-    panel_renderables.append(
-        Text(f"  ADR: {adr_count}          Instructions: {instr_count}")
-    )
-    panel_renderables.append(
-        Text(f"  Codebase: {entity_count} entities")
-    )
-    panel_renderables.append(Text())
-    panel_renderables.append(Text("Graph", style="bold"))
-    panel_renderables.append(
-        Text(
-            f"  {stats.get('decisions', 0)} decisions    "
-            f"{stats.get('constraints', 0)} constraints"
-        )
-    )
-    panel_renderables.append(
-        Text(
-            f"  {entity_count} entities    "
-            f"{stats.get('edges', 0)} edges"
-        )
-    )
-    panel_renderables.append(Text())
+    # Post-bootstrap summary
+    from mementic.health import check_health
 
-    # Health checklist
-    health_table = Table(
-        box=box.ASCII2, show_header=False, show_edge=False, padding=(0, 1)
+    items = check_health(graph, repo_path=cwd)
+
+    adr_count = len(cfg.sources.adr_dirs)
+    instr_count = (
+        len(cfg.sources.opencode_instructions)
+        + len(cfg.sources.claude_instructions)
+        + len(cfg.sources.cursor_instructions)
+        + len(cfg.sources.windsurf_instructions)
     )
-    health_table.add_column("Status", style="", width=7)
-    health_table.add_column("Check", style="")
-    health_table.add_column("Hint", style="dim")
+    entity_count = stats.get("entities", 0)
+
+    # Sources summary
+    src_table = kv_table()
+    src_table.add_column("Label", style="bold", width=20)
+    src_table.add_column("Value", style=C_DIM)
+    src_table.add_row("ADR", str(adr_count))
+    src_table.add_row("Instructions", str(instr_count))
+    src_table.add_row("Codebase entities", str(entity_count))
+
+    # Graph summary
+    g_table = kv_table()
+    g_table.add_column("Label", style="bold", width=20)
+    g_table.add_column("Value", style=C_DIM)
+    g_table.add_row("Decisions", str(stats.get("decisions", 0)))
+    g_table.add_row("Constraints", str(stats.get("constraints", 0)))
+    g_table.add_row("Entities", str(entity_count))
+    g_table.add_row("Edges", str(stats.get("edges", 0)))
+
+    # Health table
+    health_table = table(show_header=False, show_edge=False, padding=(0, 1))
+    health_table.add_column("Status", width=7)
+    health_table.add_column("Check", style="bold")
+    health_table.add_column("Hint", style=C_DIM)
+    ok_count = 0
     for item in items:
-        status = Text()
         if item.status == "ok":
-            status.append("[OK]", style="green")
+            health_table.add_row(
+                f"[{C_SUCCESS}]{STATUS_OK}[/]", item.label, item.hint or ""
+            )
+            ok_count += 1
         else:
-            status.append("[FAIL]", style="red")
-        health_table.add_row(status, item.label, item.hint or "")
-    panel_renderables.append(Text("Status", style="bold"))
-    panel_renderables.append(health_table)
-    panel_renderables.append(Text())
-    panel_renderables.append(
-        Text("Next: mementic capture", style="dim italic")
-    )
+            health_table.add_row(
+                f"[{C_FAIL}]{STATUS_FAIL}[/]", item.label, item.hint or ""
+            )
 
-    console.print(Panel(
-        Group(*panel_renderables),
-        title="[bold white]Mementic initialized[/]",
-        border_style="",
-        safe_box=True,
-    ))
+    console.print(
+        panel(
+            text(f"[{C_HEADER} bold]Sources[/]"),
+            src_table,
+            rule(),
+            text(f"[{C_HEADER} bold]Graph[/]"),
+            g_table,
+            rule(),
+            text(f"[{C_HEADER} bold]Status ({ok_count}/{len(items)})[/]"),
+            health_table,
+            rule(),
+            text(f"[{C_DIM} italic]Next: mementic capture[/]"),
+            title="Mementic initialized",
+        )
+    )
 
     # Enforcement injection check
     from mementic.inject import detect_agents, has_enforcement, inject_enforcement
@@ -667,7 +742,7 @@ def init(
     if not has_enforcement(agents_md_path):
         detected = detect_agents(cwd)
         if detected:
-            typer.echo()
+            console.print()
             if sys.stdin.isatty():
                 inject_ok = typer.confirm(
                     "No enforcement instructions found. Add to AGENTS.md?",
@@ -675,28 +750,38 @@ def init(
                 )
                 if inject_ok:
                     result = inject_enforcement(agents_md_path)
-                    typer.echo(f"  {result}")
+                    console.print(text(f"  [{C_SUCCESS}]{result}[/]"))
                 else:
-                    typer.echo(
-                        "  Warning: Without enforcement, mementic operates as CLI-only."
-                    )
-                    typer.echo(
-                        "  Agents won't automatically query the graph."
-                        " Run 'mementic init' to retry."
+                    console.print(
+                        text(
+                            f"  [{C_WARN}]Warning: Without enforcement, "
+                            f"mementic operates as CLI-only.[/]\n"
+                            f"  [{C_DIM}]Agents won't automatically query "
+                            f"the graph. Run 'mementic init' to retry.[/]"
+                        )
                     )
             else:
-                typer.echo(
-                    "  No enforcement instructions found."
-                    " Run 'mementic init' to add them."
+                console.print(
+                    text(
+                        f"  [{C_DIM}]No enforcement instructions found. "
+                        f"Run 'mementic init' to add them.[/]"
+                    )
                 )
 
     # Quality notice for deterministic mode
     post_cfg = load_global_config()
     if not post_cfg.llm.get_api_key():
-        typer.echo()
-        typer.echo("  Note  Running without LLM API key — deterministic extraction only.")
-        typer.echo(f"        Graph quality is reduced. Set a provider key in {GLOBAL_CONFIG_DISPLAY_PATH}")
-        typer.echo("        for richer extraction, or continue as-is (inline proposals work regardless).")
+        console.print(
+            panel(
+                text(
+                    f"Running without LLM API key — deterministic extraction only.\n"
+                    f"[{C_DIM}]Graph quality is reduced. Set a provider key "
+                    f"for richer extraction.[/]"
+                ),
+                title="Note",
+                border_style=C_WARN,
+            )
+        )
 
     # Log extraction costs to metrics (project database only)
     if all_usage and graph._conn is not None:
@@ -759,7 +844,9 @@ def capture(
             raise typer.Exit(code=1)
         session = detected
         detected_agent = provider.agent_name
-        typer.echo(f"[{detected_agent}] Using session: {session}")
+        console.print(
+            text(f"[{C_ID}]{detected_agent}[/] [{C_DIM}]session: {session}[/]")
+        )
     elif agent:
         # Explicit agent, possibly with explicit session path
         provider, resolved = registry.detect(agent=agent, session_path=session)
@@ -771,17 +858,21 @@ def capture(
             raise typer.Exit(code=1)
         session = resolved
         detected_agent = agent
-        typer.echo(f"[{detected_agent}] Using session: {session}")
+        console.print(
+            text(f"[{C_ID}]{detected_agent}[/] [{C_DIM}]session: {session}[/]")
+        )
     elif session:
         # Explicit session path, detect which provider can read it
         provider, _ = registry.detect(session_path=session)
         detected_agent = provider.agent_name
-        typer.echo(f"[{detected_agent}] Using session: {session}")
+        console.print(
+            text(f"[{C_ID}]{detected_agent}[/] [{C_DIM}]session: {session}[/]")
+        )
     else:
         typer.echo("No session found. Provide --session PATH.", err=True)
         raise typer.Exit(code=1)
 
-    session_text = Path(session).read_text()
+    session_text = Path(session).read_text(encoding="utf-8", errors="replace")
 
     # Load or create graph — needed for checkpoint query
     is_project = False
@@ -826,17 +917,22 @@ def capture(
         # Check if there are new commits since last capture
         try:
             head_result = subprocess.run(
-                ["git", "rev-parse", "HEAD"], capture_output=True, text=True
+                ["git", "rev-parse", "HEAD"], capture_output=True, text=True,
+                encoding="utf-8",
             )
         except FileNotFoundError:
             head_result = subprocess.CompletedProcess(args=[], returncode=1, stdout="")
         if head_result.returncode == 0 and checkpoint.strip() == head_result.stdout.strip():
-            typer.echo("No new commits since last capture.")
+            console.print(
+                text(f"[{C_DIM}]No new commits since last capture.[/]")
+            )
             git_diff = ""
         else:
             git_diff, rc = _run_git_diff(checkpoint)
             if rc == 1:
-                typer.echo("git not found. Proceeding without diff.", err=True)
+                console.print(
+                    text(f"[{C_WARN}]git not found. Proceeding without diff.[/]")
+                )
                 git_diff = ""
             elif rc == 128:
                 typer.echo("Not a git repository. Skipping diff.", err=True)
@@ -844,7 +940,9 @@ def capture(
             elif rc == 0:
                 got_diff = True
                 if not git_diff.strip():
-                    typer.echo("No changes since last capture.")
+                    console.print(
+                        text(f"[{C_DIM}]No changes since last capture.[/]")
+                    )
             else:
                 typer.echo(
                     "Warning: git diff failed. Proceeding without diff.",
@@ -854,7 +952,9 @@ def capture(
     else:
         git_diff, rc = _run_git_diff("HEAD~1")
         if rc == 1:
-            typer.echo("git not found. Proceeding without diff.", err=True)
+            console.print(
+                text(f"[{C_WARN}]git not found. Proceeding without diff.[/]")
+            )
             git_diff = ""
         elif rc == 128:
             typer.echo("Not a git repository. Skipping diff.", err=True)
@@ -862,7 +962,9 @@ def capture(
         elif rc == 0:
             got_diff = True
             if not git_diff.strip():
-                typer.echo("No changes since last capture.")
+                console.print(
+                    text(f"[{C_DIM}]No changes since last capture.[/]")
+                )
         else:
             typer.echo(
                 "Warning: git diff failed. Proceeding without diff.",
@@ -871,16 +973,23 @@ def capture(
             git_diff = ""
 
     try:
-        extraction, _usage = _extract_session(
-            session_text, git_diff, notes or "", cfg,
-            max_messages=tail, custom_keywords=keyword or None,
-        )
+        with console.status(
+            f"[{C_HEADER}]Extracting architectural decisions...[/]"
+        ):
+            extraction, _usage = _extract_session(
+                session_text, git_diff, notes or "", cfg,
+                max_messages=tail, custom_keywords=keyword or None,
+            )
     except RuntimeError as e:
-        typer.echo(str(e), err=True)
+        err_console.print(
+            panel(text(str(e)), title="Error", border_style=C_FAIL)
+        )
         raise typer.Exit(code=1)
 
     if not extraction.decisions and not extraction.constraints:
-        typer.echo("No architectural decisions or constraints found.")
+        console.print(
+            text(f"[{C_DIM}]No architectural decisions or constraints found.[/]")
+        )
         raise typer.Exit()
 
     # Replace LLM-generated IDs (dec-001, etc.) with deterministic slugs
@@ -893,17 +1002,22 @@ def capture(
         graph, extraction.decisions, extraction.constraints
     )
 
-    # Add only NEW and UPDATED decisions (skipped are not added)
+    # Add only NEW and UPDATED decisions (skipped are not added).
+    # Track disposition per decision for output listing.
+    decision_dispositions: dict[str, str] = {}
     for d in extraction.decisions:
         if not graph.has_node(d.id) or d.status == DecisionStatus.ACCEPTED:
             if graph.has_node(d.id):
                 # Rule 3: existing Decision is deprecated; overwrite with accepted
-                # add_decision handles cross-type collision safety (raises ValueError)
+                decision_dispositions[d.id] = "updated"
                 graph.add_decision(d)
             else:
                 # Rule 1: new node
+                decision_dispositions[d.id] = "new"
                 graph.add_decision(d)
-        # Rule 2 (skipped): don't add
+        else:
+            # Rule 2 (skipped): don't add
+            decision_dispositions[d.id] = "skipped"
 
         for entity_path in extraction.affected_entities:
             graph.add_code_entity(
@@ -911,13 +1025,19 @@ def capture(
             )
             graph.link(d.id, entity_path, "affects")
 
+    constraint_dispositions: dict[str, str] = {}
     for c in extraction.constraints:
-        if not graph.has_node(c.id):
+        existing = graph.has_node(c.id)
+        if not existing:
+            constraint_dispositions[c.id] = "new"
             graph.add_constraint(c)
         elif c.status == "active":
             # Updated constraint: existing was deprecated; add_constraint handles update
+            constraint_dispositions[c.id] = "updated"
             graph.add_constraint(c)
-        # Skipped: don't add
+        else:
+            # Skipped: don't add
+            constraint_dispositions[c.id] = "skipped"
 
         for entity_path in c.bound_entities:
             graph.link(c.id, entity_path, "binds_to")
@@ -932,45 +1052,102 @@ def capture(
         graph.save(graph_path)
 
     # F6 — Summary output
-    table = Table(box=box.ASCII2, show_header=False, show_edge=False, padding=(0, 1))
-    table.add_column("Label", style="bold", width=15)
-    table.add_column("Value")
-    table.add_row(
-        "New:",
-        f"[green]{counts['new_decisions']} decisions, "
-        f"{counts['new_constraints']} constraints[/]",
+    result_table = kv_table()
+    result_table.add_column("", style="bold", width=15)
+    result_table.add_column("", width=60)
+    result_table.add_row(
+        "New",
+        text(
+            f"[{C_SUCCESS}]{counts['new_decisions']} decisions, "
+            f"{counts['new_constraints']} constraints[/]"
+        ),
     )
     if counts["updated_decisions"] > 0:
-        table.add_row(
-            "Updated:",
-            f"[green]{counts['updated_decisions']} decisions[/] "
-            f"[dim](existing deprecated)[/]",
+        result_table.add_row(
+            "Updated",
+            text(
+                f"[{C_SUCCESS}]{counts['updated_decisions']} decisions[/] "
+                f"[{C_DIM}](existing deprecated)[/]"
+            ),
         )
     if counts["skipped_decisions"] > 0 or counts["skipped_constraints"] > 0:
         total_skipped = (
             counts["skipped_decisions"] + counts["skipped_constraints"]
         )
-        table.add_row(
-            "Duplicates:",
-            f"[yellow]{total_skipped} skipped[/]",
+        result_table.add_row(
+            "Skipped",
+            text(f"[{C_WARN}]{total_skipped} duplicates[/]"),
         )
     if is_project and project_display:
-        table.add_row(
-            "Written:",
-            f"[dim]project '{project_display}' database[/]",
+        result_table.add_row(
+            "Written",
+            text(f"[{C_DIM}]project '{project_display}' database[/]"),
         )
     else:
-        table.add_row("Written:", f"[dim]{graph_path}[/]")
-    if _usage.model == "deterministic":
-        table.add_row(
-            "Mode:",
-            "[dim]deterministic (no API key -- reduced quality)[/]",
+        result_table.add_row(
+            "Written", text(f"[{C_DIM}]{graph_path}[/]")
         )
-    console.print(Panel(
-        table,
-        title="[bold white]Capture complete[/]",
-        safe_box=True,
-    ))
+    if _usage.model == "deterministic":
+        result_table.add_row(
+            "Mode",
+            text(
+                f"[{C_WARN}]deterministic (no API key — reduced quality)[/]"
+            ),
+        )
+
+    # Build the panel content: summary table + optional lists of what was extracted
+    panel_content: list = [result_table]
+
+    # Decisions list
+    if extraction.decisions:
+        panel_content.append(rule())
+        d_title_text = text(
+            f"Decisions ({len(extraction.decisions)})", style=f"bold {C_HEADER}"
+        )
+        d_table = table(show_header=False, show_edge=False, padding=(0, 1))
+        d_table.add_column("", width=4)
+        d_table.add_column("Title", overflow="fold")
+        d_table.add_column("ID", style=C_DIM, width=40)
+        for d in extraction.decisions:
+            disp = decision_dispositions.get(d.id, "new")
+            if disp == "new":
+                icon = f"[{C_SUCCESS}]{STATUS_OK}[/]"
+                suffix = ""
+            elif disp == "updated":
+                icon = f"[{C_WARN}]{STATUS_DEPRECATED}[/]"
+                suffix = f" [{C_DIM}](updated)[/]"
+            else:
+                icon = f"[{C_DIM}]~[/]"
+                suffix = f" [{C_DIM}](duplicate)[/]"
+            d_table.add_row(icon, f"[bold]{d.title}[/]{suffix}", d.id)
+        panel_content.extend([d_title_text, d_table])
+
+    # Constraints list
+    if extraction.constraints:
+        panel_content.append(rule())
+        c_title_text = text(
+            f"Constraints ({len(extraction.constraints)})",
+            style=f"bold {C_HEADER}",
+        )
+        c_table = table(show_header=False, show_edge=False, padding=(0, 1))
+        c_table.add_column("", width=4)
+        c_table.add_column("Description", overflow="fold")
+        c_table.add_column("ID", style=C_DIM, width=40)
+        for c in extraction.constraints:
+            disp = constraint_dispositions.get(c.id, "new")
+            if disp == "new":
+                icon = f"[{C_SUCCESS}]{STATUS_OK}[/]"
+                suffix = ""
+            elif disp == "updated":
+                icon = f"[{C_WARN}]{STATUS_DEPRECATED}[/]"
+                suffix = f" [{C_DIM}](updated)[/]"
+            else:
+                icon = f"[{C_DIM}]~[/]"
+                suffix = f" [{C_DIM}](duplicate)[/]"
+            c_table.add_row(icon, f"[bold]{c.description}[/]{suffix}", c.id)
+        panel_content.extend([c_title_text, c_table])
+
+    console.print(panel(*panel_content, title="Capture complete"))
 
     # Log capture metrics (project database only)
     if graph._conn is not None:
@@ -992,7 +1169,8 @@ def capture(
     if got_diff:
         try:
             head_result = subprocess.run(
-                ["git", "rev-parse", "HEAD"], capture_output=True, text=True
+                ["git", "rev-parse", "HEAD"], capture_output=True, text=True,
+                encoding="utf-8",
             )
             if head_result.returncode == 0:
                 graph.set_capture_checkpoint(
@@ -1023,11 +1201,18 @@ def keywords(
         keywords=keywords,
     )
     kw_list = ", ".join(keywords)
-    console.print(
-        f"[dim]{len(constraints)} constraints, {len(decisions)} decisions "
-        f"for [{kw_list}][/]"
+    summary = text(
+        f"[{C_DIM}]{len(constraints)} constraints, "
+        f"{len(decisions)} decisions[/]"
     )
-    console.print(Markdown(output))
+    console.print(
+        panel(
+            summary,
+            rule(),
+            Markdown(output),
+            title=f"Context pack: {kw_list}",
+        )
+    )
 
 
 @query_app.command()
@@ -1048,11 +1233,9 @@ def file(
         for c in constraints:
             entities = ", ".join(c.bound_entities) if c.bound_entities else "none"
             evolution_text += f"- {c.description} (#{c.id}, bound: {entities})\n"
-    console.print(Panel(
-        Markdown(evolution_text),
-        title=f"[bold white]File history: {path}[/]",
-        safe_box=True,
-    ))
+    console.print(
+        panel(Markdown(evolution_text), title=f"File history: {path}")
+    )
 
 
 @query_app.command()
@@ -1070,36 +1253,30 @@ def search(
 
     panel_lines: list = []
     if matching_d:
-        decisions_table = Table(
-            box=box.ASCII2, show_header=False, show_edge=False, padding=(0, 1)
-        )
-        decisions_table.add_column("ID", style="cyan")
+        decisions_table = table(show_header=False, show_edge=False, padding=(0, 1))
+        decisions_table.add_column("ID", style=C_ID)
         decisions_table.add_column("Title")
         for d in matching_d:
             decisions_table.add_row(d.id, d.title)
         panel_lines.append(
-            Text(f"Decisions ({len(matching_d)})", style="bold")
+            text(f"[{C_HEADER} bold]Decisions ({len(matching_d)})[/]")
         )
         panel_lines.append(decisions_table)
     if matching_c:
         if panel_lines:
-            panel_lines.append(Text())
-        constraints_table = Table(
-            box=box.ASCII2, show_header=False, show_edge=False, padding=(0, 1)
-        )
-        constraints_table.add_column("ID", style="cyan")
+            panel_lines.append(text(""))
+        constraints_table = table(show_header=False, show_edge=False, padding=(0, 1))
+        constraints_table.add_column("ID", style=C_ID)
         constraints_table.add_column("Description")
         for c in matching_c:
             constraints_table.add_row(c.id, c.description)
         panel_lines.append(
-            Text(f"Constraints ({len(matching_c)})", style="bold")
+            text(f"[{C_HEADER} bold]Constraints ({len(matching_c)})[/]")
         )
         panel_lines.append(constraints_table)
-    console.print(Panel(
-        Group(*panel_lines),
-        title=f'[bold white]Search: "{term}"[/]',
-        safe_box=True,
-    ))
+    console.print(
+        panel(*panel_lines, title=f'Search: "{term}"')
+    )
 
 
 @query_app.command()
@@ -1109,13 +1286,12 @@ def stats(
     """Show graph statistics."""
     graph, _cfg = _resolve_graph(project)
     s = graph.stats()
-    console.print(Panel(
-        Text.assemble(
-            *[Text(f"{k.title()}:  {v}\n") for k, v in s.items()]
-        ),
-        title="[bold white]Graph statistics[/]",
-        safe_box=True,
-    ))
+    stats_table = kv_table()
+    stats_table.add_column("Metric", style="bold", width=20)
+    stats_table.add_column("Value", justify="right")
+    for k, v in s.items():
+        stats_table.add_row(k.title(), str(v))
+    console.print(panel(stats_table, title="Graph statistics"))
 
 
 @app.command()
@@ -1138,11 +1314,11 @@ def log(
         if not rows:
             typer.echo("Audit log is empty. Run init or capture first.")
             raise typer.Exit()
-        table = Table(box=box.ASCII2)
-        table.add_column("Timestamp", style="dim")
-        table.add_column("Action")
-        table.add_column("Rule ID", style="cyan")
-        table.add_column("Summary")
+        audit_table = table()
+        audit_table.add_column("Timestamp", style=C_DIM)
+        audit_table.add_column("Action")
+        audit_table.add_column("Rule ID", style=C_ID)
+        audit_table.add_column("Summary")
         for row in rows:
             entity_type = row["entity_type"]
             action = row["action"]
@@ -1167,27 +1343,25 @@ def log(
             else:
                 summary = "-"
             action_style = {
-                "add": "green",
-                "remove": "red",
-                "deprecate": "yellow",
-                "update": "green",
+                "add": C_SUCCESS,
+                "remove": C_FAIL,
+                "deprecate": C_WARN,
+                "update": C_SUCCESS,
             }.get(action, "")
             action_text = (
                 f"[{action_style}]{entity_type}/{action}[/]"
                 if action_style
                 else f"{entity_type}/{action}"
             )
-            table.add_row(
+            audit_table.add_row(
                 str(timestamp_val),
                 action_text,
                 entity_id,
                 summary,
             )
-        console.print(Panel(
-            table,
-            title=f"[bold white]Audit log (last {n})[/]",
-            safe_box=True,
-        ))
+        console.print(
+            panel(audit_table, title=f"Audit log (last {n})")
+        )
         return
 
     # Fallback: read legacy JSONL audit log
@@ -1203,6 +1377,15 @@ def log(
     for line in lines[-n:]:
         entry = json.loads(line)
         typer.echo(f"[{entry['timestamp']}] {entry['action']}: {entry.get('id', '-')}")
+    console.print(
+        panel(
+            text(
+                f"[{C_DIM}]No SQLite audit log found. "
+                f"Read {len(lines)} legacy entries.[/]"
+            ),
+            title="Audit log",
+        )
+    )
 
 
 @app.command()
@@ -1225,24 +1408,29 @@ def status(
     except (ValueError, OSError):
         repo = Path.cwd()
     items = check_health(graph, repo_path=repo)
-    table = Table(
-        box=box.ASCII2, show_header=False, show_edge=False, padding=(0, 1)
-    )
-    table.add_column("Status", width=7)
-    table.add_column("Label", style="bold")
-    table.add_column("Hint", style="dim")
+    health_table = table(show_header=False, show_edge=False, padding=(0, 1))
+    health_table.add_column("Status", width=7)
+    health_table.add_column("Check", style="bold")
+    health_table.add_column("Hint", style=C_DIM)
+    ok_count = 0
     for item in items:
-        s = Text()
         if item.status == "ok":
-            s.append("[OK]", style="green")
+            health_table.add_row(
+                f"[{C_SUCCESS}]{STATUS_OK}[/]", item.label, item.hint or ""
+            )
+            ok_count += 1
         else:
-            s.append("[FAIL]", style="red")
-        table.add_row(s, item.label, item.hint or "")
-    console.print(Panel(
-        table,
-        title="[bold white]Status[/]",
-        safe_box=True,
-    ))
+            health_table.add_row(
+                f"[{C_FAIL}]{STATUS_FAIL}[/]", item.label, item.hint or ""
+            )
+    console.print(
+        panel(
+            health_table,
+            rule(),
+            text(f"[{C_DIM}]{ok_count}/{len(items)} checks passed[/]"),
+            title="Status",
+        )
+    )
 
 
 @app.command()
@@ -1289,11 +1477,15 @@ def visualize(
         html = generate_html_graph(g, filter_type=ft)
         Path(output).parent.mkdir(parents=True, exist_ok=True)
         Path(output).write_text(html, encoding="utf-8")
-    console.print(Panel(
-        f"[green]Written to[/] {output}  [dim]({len(html):,} bytes)[/]",
-        title="[bold white]Graph visualization[/]",
-        safe_box=True,
-    ))
+    console.print(
+        panel(
+            text(
+                f"[{C_SUCCESS}]{STATUS_OK}[/] Written to {output}  "
+                f"[{C_DIM}]({len(html):,} bytes)[/]"
+            ),
+            title="Graph visualization",
+        )
+    )
 
     if open_browser:
         webbrowser.open(Path(output).resolve().as_uri())
@@ -1302,10 +1494,10 @@ def visualize(
 def _status_icon(status: str) -> str:
     """Return a compact status marker for list output."""
     icons = {
-        "accepted": "+",
-        "deprecated": "-",
-        "rejected": "x",
-        "active": "+",
+        "accepted": STATUS_OK,
+        "deprecated": STATUS_DEPRECATED,
+        "rejected": STATUS_FAIL,
+        "active": STATUS_OK,
     }
     return icons.get(status, " ")
 
@@ -1352,21 +1544,24 @@ def decisions(
         typer.echo("No decisions found.")
         raise typer.Exit()
 
-    table = Table(box=box.ASCII2)
-    table.add_column("", width=3)  # status icon
-    table.add_column("ID", style="cyan")
-    table.add_column("Date", style="dim")
-    table.add_column("Title", overflow="fold")
+    decision_table = table()
+    decision_table.add_column("", width=3)  # status icon
+    decision_table.add_column("ID", style=C_ID)
+    decision_table.add_column("Date", style=C_DIM)
+    decision_table.add_column("Title", overflow="fold")
     for d in all_d:
         icon = _status_icon(d.status)
-        color = {"+": "green", "-": "yellow", "x": "red"}.get(icon, "")
+        color_map = {
+            STATUS_OK: C_SUCCESS,
+            STATUS_DEPRECATED: C_WARN,
+            STATUS_FAIL: C_FAIL,
+        }
+        color = color_map.get(icon, "")
         date = d.created_at[:10] if d.created_at else ""
-        table.add_row(f"[{color}]{icon}[/]", d.id, date, d.title)
-    console.print(Panel(
-        table,
-        title=f"[bold white]Decisions ({len(all_d)})[/]",
-        safe_box=True,
-    ))
+        decision_table.add_row(f"[{color}]{icon}[/]", d.id, date, d.title)
+    console.print(
+        panel(decision_table, title=f"Decisions ({len(all_d)})")
+    )
 
 
 @list_app.command()
@@ -1394,21 +1589,26 @@ def constraints(
         typer.echo("No constraints found.")
         raise typer.Exit()
 
-    table = Table(box=box.ASCII2)
-    table.add_column("", width=3)  # status icon
-    table.add_column("ID", style="cyan")
-    table.add_column("Enforced By", style="dim")
-    table.add_column("Description", overflow="fold")
+    constraint_table = table()
+    constraint_table.add_column("", width=3)  # status icon
+    constraint_table.add_column("ID", style=C_ID)
+    constraint_table.add_column("Enforced By", style=C_DIM)
+    constraint_table.add_column("Description", overflow="fold")
     for c in all_c:
         icon = _status_icon(c.status)
-        color = {"+": "green", "-": "yellow", "x": "red"}.get(icon, "")
+        color_map = {
+            STATUS_OK: C_SUCCESS,
+            STATUS_DEPRECATED: C_WARN,
+            STATUS_FAIL: C_FAIL,
+        }
+        color = color_map.get(icon, "")
         enforced = f"via {c.enforced_by}" if c.enforced_by else ""
-        table.add_row(f"[{color}]{icon}[/]", c.id, enforced, c.description)
-    console.print(Panel(
-        table,
-        title=f"[bold white]Constraints ({len(all_c)})[/]",
-        safe_box=True,
-    ))
+        constraint_table.add_row(
+            f"[{color}]{icon}[/]", c.id, enforced, c.description
+        )
+    console.print(
+        panel(constraint_table, title=f"Constraints ({len(all_c)})")
+    )
 
 
 @list_app.command()
@@ -1442,19 +1642,17 @@ def entities(
         typer.echo("No entities found.")
         raise typer.Exit()
 
-    table = Table(box=box.ASCII2)
-    table.add_column("Path", style="cyan", overflow="fold")
-    table.add_column("Type")
-    table.add_column("Repo", style="dim")
+    entity_table = table()
+    entity_table.add_column("Path", style=C_ID, overflow="fold")
+    entity_table.add_column("Type")
+    entity_table.add_column("Repo", style=C_DIM)
     for eid, p in all_e:
         etype = p.get("type", "file")
         repo = p.get("repo", "-")
-        table.add_row(eid, etype, repo)
-    console.print(Panel(
-        table,
-        title=f"[bold white]Entities ({len(all_e)})[/]",
-        safe_box=True,
-    ))
+        entity_table.add_row(eid, etype, repo)
+    console.print(
+        panel(entity_table, title=f"Entities ({len(all_e)})")
+    )
 
 
 @app.command()
@@ -1496,8 +1694,8 @@ def metrics(
                     adrs = scan_adr_dir(adr_source.path)
                     for adr in adrs:
                         try:
-                            text = Path(adr.path).read_text(encoding="utf-8")
-                            source_tokens += count_tokens(text)
+                            adr_text = Path(adr.path).read_text(encoding="utf-8")
+                            source_tokens += count_tokens(adr_text)
                             source_file_count += 1
                         except Exception:  # noqa: S110
                             pass
@@ -1562,9 +1760,7 @@ def metrics(
             return f"{v:.1f}%"
 
         # Section 1: Setup (one-time)
-        setup_table = Table(
-            box=box.ASCII2, show_header=True, padding=(0, 2)
-        )
+        setup_table = table()
         setup_table.add_column("", style="bold", width=30)
         setup_table.add_column("Count", justify="right", width=10)
         setup_table.add_column("Tokens", justify="right", width=15)
@@ -1577,9 +1773,7 @@ def metrics(
         setup_table.add_row("Compression ratio", "", _p(compression_ratio))
 
         # Section 2: Capture (recurring)
-        capture_table = Table(
-            box=box.ASCII2, show_header=True, padding=(0, 2)
-        )
+        capture_table = table()
         capture_table.add_column("", style="bold", width=30)
         capture_table.add_column("Count", justify="right", width=10)
         capture_table.add_column("Tokens", justify="right", width=15)
@@ -1590,9 +1784,7 @@ def metrics(
         capture_table.add_row("Avg per session", "", ca)
 
         # Section 3: Context Packs
-        cp_table = Table(
-            box=box.ASCII2, show_header=True, padding=(0, 2)
-        )
+        cp_table = table()
         cp_table.add_column("", style="bold", width=30)
         cp_table.add_column("Count", justify="right", width=10)
         cp_table.add_column("Tokens", justify="right", width=15)
@@ -1601,12 +1793,9 @@ def metrics(
         cp_table.add_row("Avg per pack", "", qa)
 
         # Section 4: Reference
-        ref_table = Table(
-            box=box.ASCII2, show_header=False, show_edge=False,
-            padding=(0, 1),
-        )
-        ref_table.add_column("", style="bold", width=30)
-        ref_table.add_column("", style="", width=40)
+        ref_table = kv_table()
+        ref_table.add_column("", style="bold", width=35)
+        ref_table.add_column("", style=C_DIM, width=55)
         gc = _p(graph_compression)
         gc_detail = (
             f"({_n(extraction_total)} / {_n(source_tokens)})"
@@ -1640,28 +1829,22 @@ def metrics(
             f"{ea}  tokens/query {ea_detail}".rstrip(),
         )
 
-        group = Group(
-            Text("Setup (one-time)", style="bold"),
-            Text(),
-            setup_table,
-            Text(),
-            Text("Capture (recurring)", style="bold"),
-            Text(),
-            capture_table,
-            Text(),
-            Text("Context Packs", style="bold"),
-            Text(),
-            cp_table,
-            Text(),
-            Text("Reference", style="bold"),
-            Text(),
-            ref_table,
+        console.print(
+            panel(
+                text(f"[{C_HEADER} bold]Setup (one-time)[/]"),
+                setup_table,
+                rule(),
+                text(f"[{C_HEADER} bold]Capture (recurring)[/]"),
+                capture_table,
+                rule(),
+                text(f"[{C_HEADER} bold]Context Packs[/]"),
+                cp_table,
+                rule(),
+                text(f"[{C_HEADER} bold]Reference[/]"),
+                ref_table,
+                title="Token usage",
+            )
         )
-        console.print(Panel(
-            group,
-            title="[bold white]Token usage[/]",
-            safe_box=True,
-        ))
 
     if reset:
         if typer.confirm("Delete all metrics?"):
@@ -1693,9 +1876,23 @@ def deprecate(
     _save_graph_cli(graph, cfg)
 
     if result["status"] == "deprecated":
-        console.print(f"[green]Deprecated[/] {id}  [dim]{reason}[/]")
+        console.print(
+            panel(
+                text(
+                    f"Rule ID: [{C_ID}]{id}[/]\n"
+                    f"Reason: [{C_DIM}]{reason or '—'}[/]"
+                ),
+                title="Deprecated",
+            )
+        )
     elif result["status"] == "already_deprecated":
-        console.print(f"[yellow]Already deprecated[/] {id}")
+        console.print(
+            panel(
+                text(f"Rule [{C_ID}]{id}[/] is already deprecated."),
+                title="Already deprecated",
+                border_style=C_WARN,
+            )
+        )
         raise typer.Exit()
     elif result["status"] == "wrong_type":
         typer.echo(result["message"], err=True)
@@ -1740,7 +1937,16 @@ def decision(
         graph.add_code_entity(e)
         graph.link(d.id, clean, "affects")
     _save_graph_cli(graph, cfg)
-    console.print(f"[green]Added decision[/] '{title}'")
+    console.print(
+        panel(
+            text(
+                f"Title:  [{C_HEADER}]{title}[/]\n"
+                f"ID:     [{C_ID}]{d.id}[/]\n"
+                f"Status: [{C_SUCCESS}]accepted[/]"
+            ),
+            title="Decision added",
+        )
+    )
 
 
 @add_app.command()
@@ -1773,8 +1979,18 @@ def constraint(
         graph.add_code_entity(e)
         graph.link(c.id, clean, "binds_to")
     _save_graph_cli(graph, cfg)
+    bound_list = ", ".join(entities[:5])
+    if len(entities) > 5:
+        bound_list += f" +{len(entities) - 5} more"
     console.print(
-        f"[green]Added constraint[/] '{c.id}'  [dim]{description}[/]"
+        panel(
+            text(
+                f"ID:       [{C_ID}]{c.id}[/]\n"
+                f"Bound to: [{C_PATH}]{bound_list}[/]\n"
+                f"Desc:     [{C_DIM}]{description}[/]"
+            ),
+            title="Constraint added",
+        )
     )
 
 
@@ -1807,8 +2023,13 @@ def create(
     )
     save_global_config(config)
     console.print(
-        f"[green]Created project[/] '{name}'. "
-        f"Database will be created on first mementic init."
+        panel(
+            text(
+                f"Project [{C_ID}]{name}[/] created.\n"
+                f"[{C_DIM}]Database will be created on first mementic init.[/]"
+            ),
+            title="Project created",
+        )
     )
 
 
@@ -1822,24 +2043,20 @@ def list_projects() -> None:
         raise typer.Exit()
 
     default = config.default_project
-    table = Table(box=box.ASCII2)
-    table.add_column("Default", width=2)
-    table.add_column("Name", style="bold")
-    table.add_column("Repos")
-    table.add_column("Description", style="dim")
+    proj_table = table()
+    proj_table.add_column("Default", width=2)
+    proj_table.add_column("Name", style="bold")
+    proj_table.add_column("Repos")
+    proj_table.add_column("Description", style=C_DIM)
     for proj_name, proj_entry in config.projects.items():
-        marker = "[green]*[/]" if proj_name == default else " "
-        table.add_row(
+        marker = f"[{C_SUCCESS}]*[/]" if proj_name == default else " "
+        proj_table.add_row(
             marker,
             proj_name,
             str(len(proj_entry.repos)),
             proj_entry.description or "",
         )
-    console.print(Panel(
-        table,
-        title="[bold white]Projects[/]",
-        safe_box=True,
-    ))
+    console.print(panel(proj_table, title="Projects"))
 
 
 @project_app.command()
@@ -1859,7 +2076,12 @@ def set_default(
 
     config.default_project = name
     save_global_config(config)
-    console.print(f"[green]Default project set to[/] '{name}'.")
+    console.print(
+        panel(
+            text(f"Default project: [{C_ID}]{name}[/]"),
+            title="Default set",
+        )
+    )
 
 
 @project_app.command()
@@ -1905,7 +2127,9 @@ def delete(
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=1)
 
-    console.print(f"[green]{msg}[/]")
+    console.print(
+        panel(text(f"[{C_SUCCESS}]{msg}[/]"), title="Project deleted")
+    )
 
 
 @project_app.command()
@@ -1930,28 +2154,33 @@ def info(
     proj = config.projects[target]
     is_default = target == config.default_project
 
-    lines: list = []
-    lines.append(Text(f"DB path:   {proj.db_path}"))
+    info_table = kv_table()
+    info_table.add_column("", style="bold", width=15)
+    info_table.add_column("", style=C_DIM)
+    info_table.add_row("DB path", str(proj.db_path))
     if proj.description:
-        lines.append(
-            Text(f"Description: {proj.description}", style="dim")
+        info_table.add_row("Description", proj.description)
+    info_table.add_row("Repos", str(len(proj.repos)))
+
+    console.print(
+        panel(
+            info_table,
+            title=f"Project: {target}{' (default)' if is_default else ''}",
         )
-    lines.append(Text())
-    lines.append(Text(f"Repos ({len(proj.repos)}):"))
-    if not proj.repos:
-        lines.append(Text("  (none)"))
-    else:
+    )
+
+    # Also show individual repos
+    if proj.repos:
+        repo_lines = []
         for repo_path, repo_entry in proj.repos.items():
-            label = f"  [{repo_entry.label}]" if repo_entry.label else ""
-            lines.append(Text(f"  {repo_path}{label}"))
-    console.print(Panel(
-        Group(*lines),
-        title=(
-            f"[bold white]Project: {target}"
-            f"{' (default)' if is_default else ''}[/]"
-        ),
-        safe_box=True,
-    ))
+            label = f" [{repo_entry.label}]" if repo_entry.label else ""
+            repo_lines.append(f"[{C_PATH}]{repo_path}{label}[/]")
+        console.print(
+            panel(
+                *[text(line) for line in repo_lines],
+                title="Registered repos",
+            )
+        )
 
 
 if __name__ == "__main__":

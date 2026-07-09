@@ -1078,6 +1078,7 @@ dependencies = [
     { name = "openai" },
     { name = "pydantic" },
     { name = "pyvis" },
+    { name = "rich" },
     { name = "tiktoken" },
     { name = "typer" },
 ]
@@ -1102,6 +1103,7 @@ requires-dist = [
     { name = "openai", specifier = ">=1.0" },
     { name = "pydantic", specifier = ">=2.0" },
     { name = "pyvis", specifier = ">=0.3" },
+    { name = "rich", specifier = ">=13.0" },
     { name = "tiktoken", specifier = ">=0.5" },
     { name = "typer", specifier = ">=0.9" },
 ]

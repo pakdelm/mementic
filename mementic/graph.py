@@ -21,6 +21,20 @@ from mementic.models import (
 SCHEMA_VERSION = 4
 
 
+class _BatchScope:
+    """Context manager that defers GraphStore SQLite syncs until exit."""
+
+    def __init__(self, graph: GraphStore) -> None:
+        self._graph = graph
+
+    def __enter__(self) -> None:
+        self._graph._batch_mode = True
+
+    def __exit__(self, *exc: object) -> None:
+        self._graph._batch_mode = False
+        self._graph._write_back()
+
+
 class GraphStore:
     """Knowledge graph store backed by NetworkX (in-memory) and optionally SQLite.
 
@@ -33,6 +47,7 @@ class GraphStore:
         self._g: nx.DiGraph = nx.DiGraph()
         self._conn: sqlite3.Connection | None = None
         self._db_path: Path | None = None
+        self._batch_mode: bool = False  # suppress per-mutation _write_back
         self._in_memory = db_path == ":memory:"
         if self._in_memory:
             self._ensure_db()
@@ -45,6 +60,39 @@ class GraphStore:
         if self._conn is not None:
             self._conn.close()
             self._conn = None
+
+    def flush(self) -> None:
+        """Public wrapper around :meth:`_write_back` for callers in batch mode.
+
+        Call after a ``with graph.batch():`` block to persist all buffered
+        mutations in one transaction.  Safe to call outside batch mode
+        (it will still sync once).
+        """
+        self._write_back()
+
+    # ------------------------------------------------------------------
+    # Batch mode — suppresses per-mutation SQLite syncs
+    # ------------------------------------------------------------------
+
+    def batch(self) -> "_BatchScope":
+        """Return a context manager that defers SQLite syncs until exit.
+
+        Usage::
+
+            with graph.batch():
+                graph.add_decision(d1)
+                graph.add_decision(d2)
+                graph.link(d1, entity, "affects")
+                # ... hundreds more mutations ...
+            # ← single _write_back() fires here
+
+        Without batch mode, every mutation triggers a full
+        ``DELETE + re-INSERT`` of the entire graph to SQLite —
+        catastrophically slow for bulk init/capture.  With batch mode
+        enabled, ``_write_back`` becomes a no-op until the context
+        manager exits.
+        """
+        return _BatchScope(self)
 
     # ------------------------------------------------------------------
     # Database lifecycle
@@ -208,8 +256,10 @@ class GraphStore:
             )
 
     def _write_back(self) -> None:
-        """Sync the NetworkX graph to SQLite. No-op when db_path is None."""
-        if self._conn is None:
+        """Sync the NetworkX graph to SQLite. No-op when db_path is None
+        or when batch mode is active.
+        """
+        if self._conn is None or self._batch_mode:
             return
 
         now = datetime.now(timezone.utc).isoformat()
