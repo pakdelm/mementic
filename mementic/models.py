@@ -151,26 +151,3 @@ class ExtractionResult(BaseModel):
                         del item[str_field]
 
         return data
-
-
-class UsageStats(BaseModel):
-    """Raw token counts from a single LLM API call."""
-
-    input_tokens: int = 0
-    output_tokens: int = 0
-    total_tokens: int = 0
-    model: str = ""
-    status: str = "success"
-
-
-class MetricsEntry(BaseModel):
-    """One row in the metrics log, representing a single mementic operation."""
-
-    timestamp: str
-    operation: str  # init_freeform / init_adr / capture / get_rules
-    source_label: str = ""
-    input_tokens: int = 0
-    output_tokens: int = 0
-    total_tokens: int = 0
-    model: str = ""
-    status: str = "success"

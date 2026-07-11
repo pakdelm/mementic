@@ -49,7 +49,6 @@ from mementic.format import (
     CONTEXT_PACK_DEFAULT_MAX_DECISION_TOKENS,
     DECISION_ID_MAX_LENGTH,
     CONSTRAINT_ID_MAX_LENGTH,
-    count_tokens,
     detect_repo_path,
     format_evolution,
     format_memory_context,
@@ -64,14 +63,9 @@ from mementic.models import (
     Decision,
     DecisionStatus,
     EntityType,
-    MetricsEntry,
 )
 from mementic.pipeline import _extract_session, run_init
 from mementic.conflict import auto_resolve_capture
-from mementic.metrics import UsageStore
-from mementic.sources.adr import scan_adr_dir
-from mementic.sources.opencode import scan_opencode_instructions
-
 if TYPE_CHECKING:
     from mementic.config import MementicConfig  # noqa: F401
 
@@ -640,7 +634,7 @@ def init(
             )
             advance = make_step_tracker(progress, task_id, preamble="")
 
-            graph, all_usage = run_init(
+            graph = run_init(
                 repo_path=effective_repo,
                 no_scan=no_scan,
                 db_path=project_db_path,
@@ -780,25 +774,8 @@ def init(
                 ),
                 title="Note",
                 border_style=C_WARN,
-            )
         )
-
-    # Log extraction costs to metrics (project database only)
-    if all_usage and graph._conn is not None:
-        store = UsageStore(conn=graph._conn)
-        for usage in all_usage:
-            if usage.total_tokens > 0 or usage.status != "success":
-                entry = MetricsEntry(
-                    timestamp=timestamp(),
-                    operation="init",
-                    source_label=usage.model,
-                    input_tokens=usage.input_tokens,
-                    output_tokens=usage.output_tokens,
-                    total_tokens=usage.total_tokens,
-                    model=usage.model,
-                    status=usage.status,
-                )
-                store.append(entry)
+    )
 
 
 @app.command()
@@ -976,7 +953,7 @@ def capture(
         with console.status(
             f"[{C_HEADER}]Extracting architectural decisions...[/]"
         ):
-            extraction, _usage = _extract_session(
+            extraction = _extract_session(
                 session_text, git_diff, notes or "", cfg,
                 max_messages=tail, custom_keywords=keyword or None,
             )
@@ -1087,14 +1064,6 @@ def capture(
         result_table.add_row(
             "Written", text(f"[{C_DIM}]{graph_path}[/]")
         )
-    if _usage.model == "deterministic":
-        result_table.add_row(
-            "Mode",
-            text(
-                f"[{C_WARN}]deterministic (no API key — reduced quality)[/]"
-            ),
-        )
-
     # Build the panel content: summary table + optional lists of what was extracted
     panel_content: list = [result_table]
 
@@ -1148,23 +1117,6 @@ def capture(
         panel_content.extend([c_title_text, c_table])
 
     console.print(panel(*panel_content, title="Capture complete"))
-
-    # Log capture metrics (project database only)
-    if graph._conn is not None:
-        metrics_store = UsageStore(conn=graph._conn)
-    else:
-        metrics_store = UsageStore(path=".mementic/metrics.jsonl")  # legacy fallback
-    entry = MetricsEntry(
-        timestamp=timestamp(),
-        operation="capture",
-        source_label=f"{detected_agent}:{session}" if detected_agent else (session or "auto-detected"),
-        input_tokens=_usage.input_tokens,
-        output_tokens=_usage.output_tokens,
-        total_tokens=_usage.total_tokens,
-        model=_usage.model,
-        status=_usage.status,
-    )
-    metrics_store.append(entry)
 
     if got_diff:
         try:
@@ -1595,203 +1547,6 @@ def entities(
     console.print(
         panel(entity_table, title=f"Entities ({len(all_e)})")
     )
-
-
-@app.command()
-def metrics(
-    json_output: bool = typer.Option(
-        False, "--json", help="Output as JSON"
-    ),
-    reset: bool = typer.Option(
-        False, "--reset", help="Reset all metrics after displaying"
-    ),
-    project: str | None = typer.Option(
-        None, "--project",
-        help="Target project name (uses project-scoped metrics when set)",
-    ),
-) -> None:
-    """Display aggregated token usage metrics."""
-    cfg: MementicConfig | None = None
-    try:
-        graph, cfg = _resolve_graph(project)
-        store = UsageStore(conn=graph._conn) if graph._conn else UsageStore()
-    except typer.Exit:
-        if project is not None:
-            raise  # explicit --project not found: propagate error
-        store = UsageStore()  # no project configured — empty store
-
-    summary = store.summary()
-
-    if json_output:
-        typer.echo(json.dumps(summary, indent=2, default=str))
-    else:
-        # Task 2.2 — Lazy source material counting
-        source_file_count = 0
-        source_tokens = 0
-
-        if cfg is not None:
-            # Count ADR files
-            for adr_source in cfg.sources.adr_dirs:
-                if Path(adr_source.path).is_dir():
-                    adrs = scan_adr_dir(adr_source.path)
-                    for adr in adrs:
-                        try:
-                            adr_text = Path(adr.path).read_text(encoding="utf-8")
-                            source_tokens += count_tokens(adr_text)
-                            source_file_count += 1
-                        except Exception:  # noqa: S110
-                            pass
-
-            # Count instruction files (all agent types — same reader)
-            for source_list in (
-                cfg.sources.opencode_instructions,
-                cfg.sources.claude_instructions,
-                cfg.sources.cursor_instructions,
-                cfg.sources.windsurf_instructions,
-            ):
-                for source in source_list:
-                    if Path(source.path).is_dir():
-                        instructions = scan_opencode_instructions(source.path)
-                        for instr in instructions:
-                            source_tokens += count_tokens(instr.content)
-                            source_file_count += 1
-
-        source_available = source_tokens > 0
-
-        init_calls: int = summary["extraction_init_calls"]
-        init_tokens: int = summary["extraction_init_tokens"]
-        capture_calls: int = summary["extraction_capture_calls"]
-        capture_tokens: int = summary["extraction_capture_tokens"]
-        cp_queries: int = summary["memory_context_queries"]
-        cp_total: int = summary["memory_context_total_tokens"]
-        cp_avg: float = summary["memory_context_avg_tokens"]
-
-        extraction_total = init_tokens + capture_tokens
-        capture_avg = (
-            capture_tokens / capture_calls if capture_calls > 0 else 0.0
-        )
-
-        compression_ratio = (
-            (init_tokens / source_tokens * 100)
-            if source_tokens > 0
-            else None
-        )
-        graph_compression = (
-            (extraction_total / source_tokens * 100)
-            if source_tokens > 0
-            else None
-        )
-        pack_vs_source = (
-            (cp_avg / source_tokens * 100)
-            if source_tokens > 0 and cp_avg > 0
-            else None
-        )
-        extraction_amortized = (
-            (extraction_total / cp_queries) if cp_queries > 0 else None
-        )
-
-        def _n(v: int) -> str:
-            return f"{v:,}"
-
-        def _t(v: int | float) -> str:
-            return f"{v:,.0f}"
-
-        def _p(v: float | None) -> str:
-            if v is None:
-                return "--"
-            return f"{v:.1f}%"
-
-        # Section 1: Setup (one-time)
-        setup_table = table()
-        setup_table.add_column("", style="bold", width=30)
-        setup_table.add_column("Count", justify="right", width=10)
-        setup_table.add_column("Tokens", justify="right", width=15)
-        sc = _n(source_file_count) if source_available else "--"
-        st = _n(source_tokens) if source_available else "--"
-        setup_table.add_row("Source material", sc, st)
-        setup_table.add_row(
-            "Init extraction", _n(init_calls), _n(init_tokens)
-        )
-        setup_table.add_row("Compression ratio", "", _p(compression_ratio))
-
-        # Section 2: Capture (recurring)
-        capture_table = table()
-        capture_table.add_column("", style="bold", width=30)
-        capture_table.add_column("Count", justify="right", width=10)
-        capture_table.add_column("Tokens", justify="right", width=15)
-        capture_table.add_row(
-            "Sessions", _n(capture_calls), _n(capture_tokens)
-        )
-        ca = _t(capture_avg) if capture_calls > 0 else "--"
-        capture_table.add_row("Avg per session", "", ca)
-
-        # Section 3: Context Packs
-        cp_table = table()
-        cp_table.add_column("", style="bold", width=30)
-        cp_table.add_column("Count", justify="right", width=10)
-        cp_table.add_column("Tokens", justify="right", width=15)
-        cp_table.add_row("Queries", _n(cp_queries), _n(cp_total))
-        qa = _t(cp_avg) if cp_queries > 0 else "--"
-        cp_table.add_row("Avg per pack", "", qa)
-
-        # Section 4: Reference
-        ref_table = kv_table()
-        ref_table.add_column("", style="bold", width=35)
-        ref_table.add_column("", style=C_DIM, width=55)
-        gc = _p(graph_compression)
-        gc_detail = (
-            f"({_n(extraction_total)} / {_n(source_tokens)})"
-            if source_available
-            else ""
-        )
-        ref_table.add_row(
-            "Graph compression", f"{gc}  {gc_detail}".rstrip()
-        )
-        pv = _p(pack_vs_source)
-        pv_detail = (
-            f"({_t(cp_avg)} / {_n(source_tokens)})"
-            if source_available and cp_queries > 0
-            else ""
-        )
-        ref_table.add_row(
-            "Pack vs source", f"{pv}  {pv_detail}".rstrip()
-        )
-        ea = (
-            _t(extraction_amortized)
-            if extraction_amortized is not None
-            else "--"
-        )
-        ea_detail = (
-            f"({_n(extraction_total)} / {cp_queries})"
-            if cp_queries > 0
-            else ""
-        )
-        ref_table.add_row(
-            "Extraction amortized",
-            f"{ea}  tokens/query {ea_detail}".rstrip(),
-        )
-
-        console.print(
-            panel(
-                text(f"[{C_HEADER} bold]Setup (one-time)[/]"),
-                setup_table,
-                rule(),
-                text(f"[{C_HEADER} bold]Capture (recurring)[/]"),
-                capture_table,
-                rule(),
-                text(f"[{C_HEADER} bold]Context Packs[/]"),
-                cp_table,
-                rule(),
-                text(f"[{C_HEADER} bold]Reference[/]"),
-                ref_table,
-                title="Token usage",
-            )
-        )
-
-    if reset:
-        if typer.confirm("Delete all metrics?"):
-            store.reset()
-            typer.echo("Metrics reset.")
 
 
 @app.command()

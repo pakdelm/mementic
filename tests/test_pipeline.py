@@ -21,7 +21,6 @@ from mementic.models import (
     DecisionStatus,
     ExtractionResult,
     GraphEdge,
-    UsageStats,
 )
 from mementic.format import find_file_paths
 from mementic.pipeline import (
@@ -331,7 +330,7 @@ class TestRunInitWithAdr:
         (adr_dir / "0001-use-postgres.md").write_text(ADR_CONTENT)
         _configure_repo(repo_path, sources={"adr_dirs": [str(adr_dir)]})
 
-        gs, _all_usage = run_init(repo_path=repo_path)
+        gs = run_init(repo_path=repo_path)
 
         decisions = gs.get_all_decisions()
         assert len(decisions) == 1
@@ -352,7 +351,7 @@ class TestRunInitWithAdr:
         (adr_dir / "0003-deprecated.md").write_text(ADR_DEPRECATED)
         _configure_repo(repo_path, sources={"adr_dirs": [str(adr_dir)]})
 
-        gs, _all_usage = run_init(repo_path=repo_path)
+        gs = run_init(repo_path=repo_path)
 
         decisions = gs.get_all_decisions()
         assert len(decisions) == 2
@@ -370,7 +369,7 @@ class TestRunInitWithAdr:
         (adr_dir / "0001-use-postgres.md").write_text(ADR_CONTENT)
         _configure_repo(repo_path, sources={"adr_dirs": [str(adr_dir)]})
 
-        gs, _all_usage = run_init(repo_path=repo_path)
+        gs = run_init(repo_path=repo_path)
 
         stats = gs.stats()
         assert stats["entities"] >= 1
@@ -391,7 +390,7 @@ class TestRunInitWithAdr:
         (adr_dir / "0001-use-postgres.md").write_text(ADR_CONTENT)
         _configure_repo(repo_path, sources={"adr_dirs": [str(adr_dir)]})
 
-        gs, _all_usage = run_init(repo_path=repo_path)
+        gs = run_init(repo_path=repo_path)
 
         constraints = gs.get_all_constraints()
         assert len(constraints) >= 1
@@ -404,7 +403,7 @@ class TestRunInitEmptyConfig:
         """A registered repo with no sources produces an empty graph."""
         _config_path, repo_path = tmp_global_config
 
-        gs, _all_usage = run_init(repo_path=repo_path)
+        gs = run_init(repo_path=repo_path)
 
         stats = gs.stats()
         assert stats["decisions"] == 0
@@ -425,7 +424,7 @@ class TestRunInitEmptyConfig:
         repo_path = tmp_path / "unregistered_repo"
         repo_path.mkdir()
 
-        gs, _all_usage = run_init(repo_path=str(repo_path))
+        gs = run_init(repo_path=str(repo_path))
 
         stats = gs.stats()
         assert stats == {"decisions": 0, "constraints": 0, "entities": 0, "edges": 0}
@@ -458,7 +457,7 @@ class TestRunInitWithOpenCode:
             lambda content, label: _mock_freeform_result(),
         )
 
-        gs, _all_usage = run_init(repo_path=repo_path)
+        gs = run_init(repo_path=repo_path)
 
         decisions = gs.get_all_decisions()
         assert len(decisions) == 1
@@ -496,7 +495,7 @@ class TestRunInitWithOpenCode:
             lambda content, label: result,
         )
 
-        gs, _all_usage = run_init(repo_path=repo_path)
+        gs = run_init(repo_path=repo_path)
 
         stats = gs.stats()
         assert stats["edges"] >= 2
@@ -523,7 +522,7 @@ class TestRunInitWithClaude:
             lambda content, label: _mock_claude_freeform_result(),
         )
 
-        gs, _all_usage = run_init(repo_path=repo_path)
+        gs = run_init(repo_path=repo_path)
 
         decisions = gs.get_all_decisions()
         assert len(decisions) == 1
@@ -571,7 +570,7 @@ class TestRunInitCombined:
             lambda content, label: _mock_freeform_result(),
         )
 
-        gs, _all_usage = run_init(repo_path=repo_path)
+        gs = run_init(repo_path=repo_path)
 
         decisions = gs.get_all_decisions()
         assert len(decisions) == 2
@@ -619,7 +618,7 @@ class TestRunInitCombined:
             lambda content, label: next(results),
         )
 
-        gs, _all_usage = run_init(repo_path=repo_path)
+        gs = run_init(repo_path=repo_path)
 
         decisions = gs.get_all_decisions()
         assert len(decisions) == 3
@@ -654,7 +653,7 @@ class TestSaveAndLoad:
         default_proj = global_cfg.projects[global_cfg.default_project]
         db_path = Path(default_proj.db_path).expanduser()
 
-        gs1, _all_usage = run_init(repo_path=repo_path)
+        gs1 = run_init(repo_path=repo_path)
 
         assert db_path.is_file()
 
@@ -867,7 +866,7 @@ class TestRunInitWithCursor:
             lambda content, label: _mock_cursor_freeform_result(),
         )
 
-        gs, _all_usage = run_init(repo_path=repo_path)
+        gs = run_init(repo_path=repo_path)
 
         decisions = gs.get_all_decisions()
         assert len(decisions) == 1
@@ -886,11 +885,9 @@ class TestRunInitWithCursor:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Pipeline tracks LLM UsageStats from cursor instruction extraction.
+        """Pipeline extracts decisions from cursor instruction sources via LLM.
 
-        Requires LLM dispatch (extraction_mode='llm' + API key) so the
-        dispatcher calls ``extract_from_freeform`` and surfaces its
-        UsageStats. Deterministic mode would emit ``model='deterministic'``.
+        Requires LLM dispatch so the dispatcher calls ``extract_from_freeform``.
         """
         _config_path, repo_path = tmp_global_config
         cursor_dir = tmp_path / "cursor_instructions"
@@ -904,17 +901,12 @@ class TestRunInitWithCursor:
 
         monkeypatch.setattr(
             "mementic.pipeline.extract_from_freeform",
-            lambda content, label, llm_cfg: (
-                _mock_cursor_freeform_result(),
-                UsageStats(model="test-model", status="success"),
-            ),
+            lambda content, label, llm_cfg: _mock_cursor_freeform_result(),
         )
 
-        _gs, all_usage = run_init(repo_path=repo_path, deep=True)
+        _gs = run_init(repo_path=repo_path, deep=True)
 
-        assert len(all_usage) == 1
-        assert all_usage[0].model == "test-model"
-        assert all_usage[0].status == "success"
+        assert _gs is not None
 
 
 class TestRunInitWithWindsurf:
@@ -940,7 +932,7 @@ class TestRunInitWithWindsurf:
             lambda content, label: _mock_windsurf_freeform_result(),
         )
 
-        gs, _all_usage = run_init(repo_path=repo_path)
+        gs = run_init(repo_path=repo_path)
 
         decisions = gs.get_all_decisions()
         assert len(decisions) == 1
@@ -959,7 +951,7 @@ class TestRunInitWithWindsurf:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Pipeline tracks LLM UsageStats from windsurf instruction extraction."""
+        """Pipeline extracts decisions from windsurf instruction sources via LLM."""
         _config_path, repo_path = tmp_global_config
         windsurf_dir = tmp_path / "windsurf_instructions"
         windsurf_dir.mkdir()
@@ -972,17 +964,12 @@ class TestRunInitWithWindsurf:
 
         monkeypatch.setattr(
             "mementic.pipeline.extract_from_freeform",
-            lambda content, label, llm_cfg: (
-                _mock_windsurf_freeform_result(),
-                UsageStats(model="test-model", status="success"),
-            ),
+            lambda content, label, llm_cfg: _mock_windsurf_freeform_result(),
         )
 
-        _gs, all_usage = run_init(repo_path=repo_path, deep=True)
+        _gs = run_init(repo_path=repo_path, deep=True)
 
-        assert len(all_usage) == 1
-        assert all_usage[0].model == "test-model"
-        assert all_usage[0].status == "success"
+        assert _gs is not None
 
 
 class TestRunInitCombinedCursorWindsurf:
@@ -1022,14 +1009,13 @@ class TestRunInitCombinedCursorWindsurf:
             lambda content, label: next(results),
         )
 
-        gs, all_usage = run_init(repo_path=repo_path)
+        gs = run_init(repo_path=repo_path)
 
         decisions = gs.get_all_decisions()
         assert len(decisions) == 2
         sources = {d.source for d in decisions}
         assert any(s.startswith("cursor:") for s in sources)
         assert any(s.startswith("windsurf:") for s in sources)
-        assert len(all_usage) == 2
 
 
 # ── Spec 12a: Codebase Scanner Pipeline Integration ────────────────
@@ -1081,9 +1067,9 @@ class TestRunInitWithRepoScan:
 
         with patch(
             "mementic.pipeline.extract_from_codebase_summary",
-            return_value=(mock_result, UsageStats(model="test-model", status="success")),
+            return_value=mock_result,
         ):
-            gs, _all_usage = run_init(repo_path=repo_path, deep=True)
+            gs = run_init(repo_path=repo_path, deep=True)
 
         decisions = gs.get_all_decisions()
         assert len(decisions) >= 1
@@ -1106,10 +1092,9 @@ class TestRunInitWithRepoScan:
         with patch(
             "mementic.pipeline.extract_from_codebase_summary"
         ) as mock_extract:
-            _gs, all_usage = run_init(repo_path=repo_path, no_scan=True, deep=True)
+            _gs = run_init(repo_path=repo_path, no_scan=True, deep=True)
 
         mock_extract.assert_not_called()
-        assert len(all_usage) == 0
 
     def test_init_repo_path_none_skips_scanner(
         self,
@@ -1124,10 +1109,9 @@ class TestRunInitWithRepoScan:
         with patch(
             "mementic.pipeline.extract_from_codebase_summary"
         ) as mock_extract:
-            _gs, all_usage = run_init()
+            _gs = run_init()
 
         mock_extract.assert_not_called()
-        assert len(all_usage) == 0
 
     def test_init_with_repo_scanner_empty_summary(
         self,
@@ -1147,7 +1131,6 @@ class TestRunInitWithRepoScan:
         with patch(
             "mementic.pipeline.extract_from_codebase_summary"
         ) as mock_extract:
-            _gs, all_usage = run_init(repo_path=repo_path)
+            _gs = run_init(repo_path=repo_path)
 
         mock_extract.assert_not_called()
-        assert len(all_usage) == 0
