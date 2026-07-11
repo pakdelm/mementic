@@ -11,6 +11,7 @@ dependencies = [
     "typer>=0.9",
     "keyring>=25.7.0",
     "json5>=0.9",
+    "python-dotenv>=0.21",
 ]
 
 [project.scripts]
@@ -46,5 +47,5 @@ quote-style = "double"
 [tool.mypy]
 ignore_missing_imports = false
 [[tool.mypy.overrides]]
-module = ["dotenv", "json5"]
+module = ["json5"]
 ignore_missing_imports = true
