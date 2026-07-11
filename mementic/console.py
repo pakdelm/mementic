@@ -16,16 +16,10 @@ from rich.rule import Rule as _Rule
 from rich.table import Table as _Table
 from rich.text import Text as _Text
 
-# ---------------------------------------------------------------------------
-# Consoles
-# ---------------------------------------------------------------------------
 
 console = Console(highlight=False)
 err_console = Console(stderr=True, highlight=False)
 
-# ---------------------------------------------------------------------------
-# Color palette (GitHub Dark)
-# ---------------------------------------------------------------------------
 
 C_SUCCESS: str = "#3fb950"
 C_FAIL: str = "#f85149"
@@ -39,9 +33,6 @@ C_PROGRESS: str = "#58a6ff"
 C_EMPTY_BAR: str = "#21262d"
 C_BORDER: str = "#30363d"
 
-# ---------------------------------------------------------------------------
-# Shared keyword-argument sets
-# ---------------------------------------------------------------------------
 
 PANEL_KWARGS: dict[str, Any] = {
     "border_style": C_BORDER,
@@ -60,10 +51,6 @@ KV_TABLE_KWARGS: dict[str, Any] = {
     "show_edge": False,
     "padding": (0, 2),
 }
-
-# ---------------------------------------------------------------------------
-# Factory helpers
-# ---------------------------------------------------------------------------
 
 
 def panel(
@@ -113,9 +100,6 @@ def text(markup: str, **kwargs: Any) -> _Text:
     return _Text.from_markup(markup, **kwargs)
 
 
-# ---------------------------------------------------------------------------
-# Status / icon helpers
-# ---------------------------------------------------------------------------
 
 STATUS_OK: str = "[OK]"
 STATUS_FAIL: str = "[FAIL]"
@@ -147,10 +131,6 @@ def status_warn(label: str, detail: str = "") -> str:
     return base
 
 
-# ---------------------------------------------------------------------------
-# Progress bar factory
-# ---------------------------------------------------------------------------
-
 
 def make_progress() -> Any:
     """Return a Rich Progress bar configured with the project theme."""
@@ -178,10 +158,6 @@ def make_progress() -> Any:
         console=console,
     )
 
-
-# ---------------------------------------------------------------------------
-# Progress step tracker  (for pipeline integration)
-# ---------------------------------------------------------------------------
 
 
 def make_step_tracker(
