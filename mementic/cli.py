@@ -655,19 +655,6 @@ def init(
 
     # Post-bootstrap summary
     from mementic.health import check_health
-    items = check_health(graph, repo_path=cwd)
-
-    adr_count = len(cfg.sources.adr_dirs)
-    instr_count = (
-        len(cfg.sources.opencode_instructions)
-        + len(cfg.sources.claude_instructions)
-        + len(cfg.sources.cursor_instructions)
-        + len(cfg.sources.windsurf_instructions)
-    )
-    entity_count = stats.get("entities", 0)
-
-    # Post-bootstrap summary
-    from mementic.health import check_health
 
     items = check_health(graph, repo_path=cwd)
 
@@ -1281,13 +1268,8 @@ def log(
     """Show recent graph mutations from the audit log."""
     graph, _cfg = _resolve_graph(project)
 
-    if graph._conn is not None:
-        rows = graph._conn.execute(
-            "SELECT * FROM audit_log ORDER BY id DESC LIMIT ?", (n,)
-        ).fetchall()
-        if not rows:
-            typer.echo("Audit log is empty. Run init or capture first.")
-            raise typer.Exit()
+    rows = graph.get_audit_entries(limit=n)
+    if rows:
         audit_table = table()
         audit_table.add_column("Timestamp", style=C_DIM)
         audit_table.add_column("Action")
@@ -1338,7 +1320,7 @@ def log(
         )
         return
 
-    # Fallback: read legacy JSONL audit log
+    # Fallback: no SQLite project database attached — try legacy JSONL
     audit_path = Path(".mementic/audit.jsonl")
     if not audit_path.exists():
         typer.echo("No audit log found. Run init or capture first.")

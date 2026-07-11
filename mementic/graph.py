@@ -1112,3 +1112,20 @@ class GraphStore:
             (repo_name, "", repo_name, now, commit),
         )
         self._conn.commit()
+
+    def get_audit_entries(self, limit: int = 20) -> list[sqlite3.Row]:
+        """Return recent audit log entries, newest first.
+
+        Args:
+            limit: Maximum number of entries to return.
+
+        Returns:
+            List of ``sqlite3.Row`` objects with keys: id, entity_type,
+            entity_id, action, details, source, timestamp.  Empty list
+            when no project database is attached.
+        """
+        if self._conn is None:
+            return []
+        return self._conn.execute(
+            "SELECT * FROM audit_log ORDER BY id DESC LIMIT ?", (limit,)
+        ).fetchall()
