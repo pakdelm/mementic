@@ -44,3 +44,7 @@ line-length = 100
 quote-style = "double"
 
 [tool.mypy]
+ignore_missing_imports = false
+[[tool.mypy.overrides]]
+module = ["dotenv", "json5"]
+ignore_missing_imports = true
