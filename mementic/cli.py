@@ -1139,6 +1139,7 @@ app.add_typer(query_app, name="query")
 @query_app.command()
 def keywords(
     keywords: list[str] = typer.Argument(..., help="Keywords for matching (e.g. auth login session pydantic)"),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
     project: str | None = typer.Option(None, "--project", help="Target project name"),
 ) -> None:
     """Return ranked context pack of constraints and decisions matched by keywords."""
@@ -1146,6 +1147,18 @@ def keywords(
     graph.clean_dead_references()
     constraints = graph.get_all_active_constraints()
     decisions = graph.get_all_active_decisions()
+
+    if json_output:
+        from mementic.format import format_context_pack_json
+        result = format_context_pack_json(
+            decisions, constraints,
+            max_constraint_tokens=CONTEXT_PACK_DEFAULT_MAX_CONSTRAINT_TOKENS,
+            max_decision_tokens=CONTEXT_PACK_DEFAULT_MAX_DECISION_TOKENS,
+            keywords=keywords,
+        )
+        typer.echo(json.dumps(result, indent=2, default=str))
+        return
+
     output = format_memory_context(
         decisions, constraints,
         max_constraint_tokens=CONTEXT_PACK_DEFAULT_MAX_CONSTRAINT_TOKENS,
@@ -1172,6 +1185,7 @@ def file(
     path: str = typer.Argument(..., help="File path to trace evolution for"),
     prefix: bool = typer.Option(False, "--prefix", help="Use prefix matching for entity paths"),
     max_tokens: int = typer.Option(1500, "--max-tokens", help="Maximum token budget for output"),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
     project: str | None = typer.Option(None, "--project", help="Target project name"),
 ) -> None:
     """Show constraints and decisions affecting a specific file."""
@@ -1179,6 +1193,13 @@ def file(
     graph.clean_dead_references()
     constraints = graph.get_constraints_for_entities([path], prefix_match=prefix)
     decisions = graph.get_evolution(path, prefix_match=prefix, annotate_overlap=True)
+
+    if json_output:
+        from mementic.format import format_file_history_json
+        result = format_file_history_json(path, decisions, constraints)
+        typer.echo(json.dumps(result, indent=2, default=str))
+        return
+
     evolution_text = format_evolution(path, decisions, max_tokens=max_tokens)
     if constraints:
         evolution_text += "\n\n### Constraints\n"

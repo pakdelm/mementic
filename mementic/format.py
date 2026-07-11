@@ -133,10 +133,12 @@ def detect_repo_path(*, check_global_config: bool = False) -> str:
             pass
 
     import subprocess
+
     try:
         result = subprocess.run(
             ["git", "rev-parse", "--show-toplevel"],
-            capture_output=True, text=True,
+            capture_output=True,
+            text=True,
         )
         if result.returncode == 0:
             return result.stdout.strip()
@@ -242,6 +244,10 @@ def _compact_evolution_line(d: Decision) -> str:
 CONTEXT_PACK_DEFAULT_MAX_CONSTRAINT_TOKENS: int = 10000
 CONTEXT_PACK_DEFAULT_MAX_DECISION_TOKENS: int = 10000
 
+# Max character count for rationale in file_history_json output.
+# Longer rationales are truncated with "..." appended.
+_RATIONALE_MAX_CHARS: int = 200
+
 
 def keyword_overlap_score(
     constraint_description: str,
@@ -291,6 +297,7 @@ def specificity_factor(bound_entities: list[str]) -> float:
     if not bound_entities:
         return 0.1
     return 1.0 / len(bound_entities)
+
 
 # ---------------------------------------------------------------------------
 # Ranking helpers
@@ -370,7 +377,6 @@ def rank_and_truncate(
 # ---------------------------------------------------------------------------
 
 
-
 def format_memory_context(
     decisions: list[Decision],
     constraints: list[Constraint],
@@ -441,12 +447,14 @@ def format_memory_context(
         # Fallback: recency + status ranking (no keywords available)
         constraint_tuples = [(c, 0) for c in constraints]
         selected_c_tuples, shown_c = rank_and_truncate(
-            constraint_tuples, max_constraint_tokens,
+            constraint_tuples,
+            max_constraint_tokens,
             line_formatter=_compact_constraint_line,
         )[:2]
         selected_c = selected_c_tuples  # type: ignore[assignment]
         tokens_used_c = sum(
-            count_tokens(_compact_constraint_line(c)) for c in selected_c  # type: ignore[arg-type]
+            count_tokens(_compact_constraint_line(c))
+            for c in selected_c  # type: ignore[arg-type]
         )
 
     lines.append("")
@@ -455,18 +463,13 @@ def format_memory_context(
         if total_c == 0:
             lines.append("_None_")
         else:
-            lines.append(
-                f"_... and {total_c} constraints omitted (token budget)._"
-            )
+            lines.append(f"_... and {total_c} constraints omitted (token budget)._")
     else:
         for c in selected_c:
             lines.append(_compact_constraint_line(c))
         if shown_c < total_c:
             omitted = total_c - shown_c
-            lines.append(
-                f"... and {omitted} more constraints omitted "
-                f"(token budget)."
-            )
+            lines.append(f"... and {omitted} more constraints omitted (token budget).")
 
     # --- Decisions section (always present) ---
     total_d = len(decisions)
@@ -501,7 +504,8 @@ def format_memory_context(
         if decisions:
             decision_tuples = [(d, 0) for d in decisions]
             fallback_selected, shown_d = rank_and_truncate(
-                decision_tuples, max_decision_tokens,
+                decision_tuples,
+                max_decision_tokens,
                 line_formatter=_compact_decision_line,
             )[:2]
             selected_d = fallback_selected  # type: ignore[assignment]
@@ -514,18 +518,13 @@ def format_memory_context(
         if total_d == 0:
             lines.append("_None_")
         else:
-            lines.append(
-                f"_... and {total_d} decisions omitted (token budget)._"
-            )
+            lines.append(f"_... and {total_d} decisions omitted (token budget)._")
     else:
         for d in selected_d:
             lines.append(_compact_decision_line(d))  # type: ignore[arg-type]
         if shown_d < total_d:
             omitted = total_d - shown_d
-            lines.append(
-                f"... and {omitted} more decisions omitted "
-                f"(token budget)."
-            )
+            lines.append(f"... and {omitted} more decisions omitted (token budget).")
 
     return "\n".join(lines)
 
@@ -561,9 +560,198 @@ def format_evolution(
         for d in selected:
             lines.append(_compact_evolution_line(d))  # type: ignore[arg-type]
         if shown < total:
-            lines.append(
-                f"... and {total - shown} more decisions omitted "
-                f"(token budget)."
-            )
+            lines.append(f"... and {total - shown} more decisions omitted (token budget).")
 
     return "\n".join(lines)
+
+
+def format_context_pack_json(
+    decisions: list[Decision],
+    constraints: list[Constraint],
+    max_constraint_tokens: int = CONTEXT_PACK_DEFAULT_MAX_CONSTRAINT_TOKENS,
+    max_decision_tokens: int = CONTEXT_PACK_DEFAULT_MAX_DECISION_TOKENS,
+    *,
+    keywords: list[str] | None = None,
+) -> dict:
+    """Produces a JSON-serializable dict for agent context injection.
+
+    Uses the same keyword overlap scoring and token budget truncation as
+    :func:`format_memory_context`.  When ``keywords`` is provided, items
+    are ranked by ``keyword_overlap_score * specificity_factor``, then
+    gated (score > 0) and truncated to token budgets.  Without keywords,
+    falls back to recency + status ranking.
+
+    Args:
+        decisions: List of ``Decision`` objects.
+        constraints: List of ``Constraint`` objects.
+        max_constraint_tokens: Maximum token budget for constraint lines.
+        max_decision_tokens: Maximum token budget for decision lines.
+        keywords: Keywords for matching (agent-generated).  When ``None``,
+            items are ranked by recency + status.
+
+    Returns:
+        A JSON-serializable dict with ``summary``, ``constraints``, and
+        ``decisions`` keys.
+    """
+    total_c = len(constraints)
+    total_d = len(decisions)
+    shown_c: int
+    shown_d: int
+    selected_c: list[Constraint]
+    selected_d: list[Decision]
+
+    if keywords:
+        # --- Constraints: keyword-based ranking ---
+        scored_c: list[tuple[Constraint, float]] = []
+        for c in constraints:
+            score = keyword_overlap_score(c.description, keywords)
+            score *= specificity_factor(c.bound_entities)
+            scored_c.append((c, score))
+        scored_c.sort(key=lambda x: x[1], reverse=True)
+        scored_c = [(c, s) for c, s in scored_c if s > 0.0]
+
+        selected_c = []
+        tokens_used_c = 0
+        for c, _ in scored_c:
+            line_tokens = count_tokens(_compact_constraint_line(c))
+            if tokens_used_c + line_tokens > max_constraint_tokens:
+                break
+            selected_c.append(c)
+            tokens_used_c += line_tokens
+        shown_c = len(selected_c)
+
+        # --- Decisions: keyword-based ranking ---
+        scored_d: list[tuple[Decision, float]] = []
+        for d in decisions:
+            score = keyword_overlap_score(d.rationale, keywords)
+            score *= specificity_factor(d.affected_entities)
+            scored_d.append((d, score))
+        scored_d.sort(key=lambda x: x[1], reverse=True)
+        scored_d = [(d, s) for d, s in scored_d if s > 0.0]
+
+        selected_d = []
+        tokens_used_d = 0
+        for d, _ in scored_d:
+            line_tokens = count_tokens(_compact_decision_line(d))
+            if tokens_used_d + line_tokens > max_decision_tokens:
+                break
+            selected_d.append(d)
+            tokens_used_d += line_tokens
+        shown_d = len(selected_d)
+    else:
+        # --- Fallback: recency + status ranking ---
+        constraint_tuples = [(c, 0) for c in constraints]
+        selected_c_tuples, shown_c = rank_and_truncate(
+            constraint_tuples,
+            max_constraint_tokens,
+            line_formatter=_compact_constraint_line,
+        )[:2]
+        selected_c = selected_c_tuples  # type: ignore[assignment]
+
+        if decisions:
+            decision_tuples = [(d, 0) for d in decisions]
+            fallback_selected, shown_d = rank_and_truncate(
+                decision_tuples,
+                max_decision_tokens,
+                line_formatter=_compact_decision_line,
+            )[:2]
+            selected_d = fallback_selected  # type: ignore[assignment]
+        else:
+            selected_d, shown_d = [], 0
+
+    # --- Build summary ---
+    c_label = f"{shown_c} of {total_c}" if shown_c < total_c else str(shown_c)
+    d_label = f"{shown_d} of {total_d}" if shown_d < total_d else str(shown_d)
+
+    if keywords:
+        kw_summary = ", ".join(keywords)
+        summary = f"{c_label} constraints, {d_label} decisions matched for [{kw_summary}]"
+    else:
+        summary = f"{c_label} constraints, {d_label} decisions"
+
+    if shown_c < total_c or shown_d < total_d:
+        summary += " (token budget)"
+
+    return {
+        "summary": summary,
+        "constraints": [
+            {
+                "id": c.id,
+                "description": c.description,
+                "entities": c.bound_entities,
+                "status": c.status,
+            }
+            for c in selected_c
+        ],
+        "decisions": [
+            {
+                "id": d.id,
+                "title": d.title,
+                "rationale": d.rationale,
+                "entities": d.affected_entities,
+                "status": d.status.value,
+            }
+            for d in selected_d
+        ],
+    }
+
+
+def format_file_history_json(
+    entity_path: str,
+    decisions: list[tuple[Decision, int]],
+    constraints: list[Constraint],
+) -> dict:
+    """Produces a JSON-serializable dict for the ``query file`` command.
+
+    Formats decisions with ``id``, ``title``, ``rationale`` (truncated to
+    :data:`_RATIONALE_MAX_CHARS` chars), ``source``, and ``created_at``.
+    Formats constraints with ``id``, ``description``, ``source``, ``status``,
+    and ``created_at``.
+
+    Args:
+        entity_path: Path of the code entity (e.g. ``mementic/format.py``).
+        decisions: List of ``(Decision, overlap_score)`` tuples from the
+            graph query.
+        constraints: List of ``Constraint`` objects bound to the entity.
+
+    Returns:
+        A JSON-serializable dict with ``summary``, ``file``, ``decisions``,
+        and ``constraints`` keys.
+    """
+    decisions_json: list[dict] = []
+    for d, _ in decisions:
+        rationale = d.rationale
+        if len(rationale) > _RATIONALE_MAX_CHARS:
+            rationale = rationale[:_RATIONALE_MAX_CHARS] + "..."
+        decisions_json.append(
+            {
+                "id": d.id,
+                "title": d.title,
+                "rationale": rationale,
+                "source": d.source,
+                "created_at": d.created_at,
+            }
+        )
+
+    constraints_json: list[dict] = []
+    for c in constraints:
+        constraints_json.append(
+            {
+                "id": c.id,
+                "description": c.description,
+                "source": c.source,
+                "status": c.status,
+                "created_at": c.created_at,
+            }
+        )
+
+    total_d = len(decisions)
+    total_c = len(constraints)
+    summary = f"{total_d} decisions, {total_c} constraints affecting {entity_path}"
+
+    return {
+        "summary": summary,
+        "file": entity_path,
+        "decisions": decisions_json,
+        "constraints": constraints_json,
+    }

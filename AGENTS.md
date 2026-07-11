@@ -62,7 +62,7 @@ purpose.**
 targeted reads only (grep first, read specific sections), and report the
 failure to the user. Do not silently read entire files wholesale.
 
-**Echo summaries (HARD GATE — check before responding):** EVERY mementic MCP
+**Echo summaries (HARD GATE — check before responding):** EVERY mementic
 tool call returns a `[mementic: ...]` summary line. You MUST echo that line
 verbatim to the user in your response. This applies to `query keywords`,
 `query file`, `add decision`, `add constraint`, `deprecate`, and every
