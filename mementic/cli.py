@@ -28,6 +28,7 @@ from mementic.console import (
     make_step_tracker,
     panel,
     rule,
+    sanitize,
     table,
     text,
 )
@@ -1174,7 +1175,7 @@ def keywords(
         panel(
             summary,
             rule(),
-            Markdown(output),
+            Markdown(sanitize(output)),
             title=f"Context pack: {kw_list}",
         )
     )
@@ -1207,7 +1208,7 @@ def file(
             entities = ", ".join(c.bound_entities) if c.bound_entities else "none"
             evolution_text += f"- {c.description} (#{c.id}, bound: {entities})\n"
     console.print(
-        panel(Markdown(evolution_text), title=f"File history: {path}")
+        panel(Markdown(sanitize(evolution_text)), title=f"File history: {path}")
     )
 
 
