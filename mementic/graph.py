@@ -21,6 +21,20 @@ from mementic.models import (
 SCHEMA_VERSION = 4
 
 
+class _BatchScope:
+    """Context manager that defers GraphStore SQLite syncs until exit."""
+
+    def __init__(self, graph: GraphStore) -> None:
+        self._graph = graph
+
+    def __enter__(self) -> None:
+        self._graph._batch_mode = True
+
+    def __exit__(self, *exc: object) -> None:
+        self._graph._batch_mode = False
+        self._graph._write_back()
+
+
 class GraphStore:
     """Knowledge graph store backed by NetworkX (in-memory) and optionally SQLite.
 
@@ -33,6 +47,7 @@ class GraphStore:
         self._g: nx.DiGraph = nx.DiGraph()
         self._conn: sqlite3.Connection | None = None
         self._db_path: Path | None = None
+        self._batch_mode: bool = False  # suppress per-mutation _write_back
         self._in_memory = db_path == ":memory:"
         if self._in_memory:
             self._ensure_db()
@@ -40,15 +55,45 @@ class GraphStore:
             self._db_path = Path(db_path)
             self._ensure_db()
 
+    @property
+    def is_persistent(self) -> bool:
+        """Return True if the graph is backed by a persistent SQLite database."""
+        return self._db_path is not None
+
     def close(self) -> None:
         """Close the SQLite connection if open. Safe to call multiple times."""
         if self._conn is not None:
             self._conn.close()
             self._conn = None
 
-    # ------------------------------------------------------------------
-    # Database lifecycle
-    # ------------------------------------------------------------------
+    def flush(self) -> None:
+        """Public wrapper around :meth:`_write_back` for callers in batch mode.
+
+        Call after a ``with graph.batch():`` block to persist all buffered
+        mutations in one transaction.  Safe to call outside batch mode
+        (it will still sync once).
+        """
+        self._write_back()
+
+    def batch(self) -> "_BatchScope":
+        """Return a context manager that defers SQLite syncs until exit.
+
+        Usage::
+
+            with graph.batch():
+                graph.add_decision(d1)
+                graph.add_decision(d2)
+                graph.link(d1, entity, "affects")
+                # ... hundreds more mutations ...
+            # ← single _write_back() fires here
+
+        Without batch mode, every mutation triggers a full
+        ``DELETE + re-INSERT`` of the entire graph to SQLite —
+        catastrophically slow for bulk init/capture.  With batch mode
+        enabled, ``_write_back`` becomes a no-op until the context
+        manager exits.
+        """
+        return _BatchScope(self)
 
     def _ensure_db(self) -> None:
         """Open the SQLite database, apply migrations, and load data into NetworkX."""
@@ -208,8 +253,10 @@ class GraphStore:
             )
 
     def _write_back(self) -> None:
-        """Sync the NetworkX graph to SQLite. No-op when db_path is None."""
-        if self._conn is None:
+        """Sync the NetworkX graph to SQLite. No-op when db_path is None
+        or when batch mode is active.
+        """
+        if self._conn is None or self._batch_mode:
             return
 
         now = datetime.now(timezone.utc).isoformat()
@@ -280,10 +327,6 @@ class GraphStore:
                         ),
                     )
 
-    # ------------------------------------------------------------------
-    # Helpers for row → Pydantic model parsing
-    # ------------------------------------------------------------------
-
     @staticmethod
     def _row_to_decision(row: sqlite3.Row) -> Decision:
         payload = dict(row)
@@ -298,10 +341,6 @@ class GraphStore:
         payload = dict(row)
         payload["bound_entities"] = json.loads(payload["bound_entities"])
         return Constraint(**payload)
-
-    # ------------------------------------------------------------------
-    # Mutations (NetworkX + optional SQLite write-back)
-    # ------------------------------------------------------------------
 
     def _log_audit(
         self,
@@ -479,10 +518,6 @@ class GraphStore:
                 f"not a decision or constraint."
             ),
         }
-
-    # ------------------------------------------------------------------
-    # Queries (SQLite when available, otherwise NetworkX)
-    # ------------------------------------------------------------------
 
     @overload
     def get_constraints_for_entities(
@@ -780,7 +815,7 @@ class GraphStore:
         """Return all constraints with ``status == "active"``.
 
         Filters out deprecated/superseded constraints.  Used by
-        ``get_task_context`` to provide the full active set for
+        ``get_rules`` to provide the full active set for
         keyword-based ranking (Spec 14).
 
         Returns:
@@ -793,7 +828,7 @@ class GraphStore:
         """Return all decisions with ``status == "accepted"``.
 
         Filters out deprecated/rejected decisions.  Used by
-        ``get_task_context`` to provide the full accepted set for
+        ``get_rules`` to provide the full accepted set for
         relevance ranking (Spec 14).
 
         Returns:
@@ -813,10 +848,6 @@ class GraphStore:
             for _node_id, attrs in self._g.nodes(data=True)
             if attrs.get("node_type") == "Constraint"
         ]
-
-    # ------------------------------------------------------------------
-    # Serialization (JSON for backward compat; no-op for SQLite)
-    # ------------------------------------------------------------------
 
     def save(self, path: str) -> None:
         if self._conn is not None:
@@ -869,17 +900,12 @@ class GraphStore:
             )
         return gs
 
-    # ------------------------------------------------------------------
-    # Node / Edge accessors (always NetworkX)
-    # ------------------------------------------------------------------
-
     def has_node(self, node_id: str) -> bool:
         return node_id in self._g
 
     def get_node_payload(self, node_id: str) -> dict[str, Any]:
         return dict(self._g.nodes[node_id].get("payload", {}))
 
-    # Mapping from NetworkX node_type to audit_log entity_type
     _ENTITY_TYPE_MAP: dict[str, str] = {
         "Decision": "decision",
         "Constraint": "constraint",
@@ -922,10 +948,6 @@ class GraphStore:
             return []
         return list(self._g.predecessors(node_id))
 
-    # ------------------------------------------------------------------
-    # Statistics
-    # ------------------------------------------------------------------
-
     def stats(self) -> dict[str, int]:
         if self._conn is not None:
             return {
@@ -961,14 +983,10 @@ class GraphStore:
             "edges": self._g.number_of_edges(),
         }
 
-    # ------------------------------------------------------------------
-    # Graph cleaning — deterministic dead-reference removal
-    # ------------------------------------------------------------------
-
     def clean_dead_references(self) -> dict[str, int]:
         """Clean dead references from the graph. Deterministic, zero network cost.
 
-        Called transparently before every get_task_context and get_entity_history
+        Called transparently before every get_rules and get_file_history
         query. The agent never knows it ran.
 
         Returns:
@@ -1008,9 +1026,6 @@ class GraphStore:
                 self.set_node_payload(nid, payload)
                 counts["constraints_deprecated"] += 1
 
-        # Only FILE-type entities are checked for disk existence.
-        # CLASS/FUNCTION/MODULE entities have compound IDs (e.g.
-        # "src/mod.py:MyClass") that are not valid filesystem paths.
         stale_ids: list[str] = []
         for nid, ntype, payload in self.iter_nodes():
             if ntype != "CodeEntity":
@@ -1067,8 +1082,6 @@ class GraphStore:
         self._write_back()
 
         return counts
-
-    # Capture checkpoint (stored in project_sources)
 
     def get_capture_checkpoint(self, repo_path: str) -> str:
         """Return the last captured git commit SHA for a repo.

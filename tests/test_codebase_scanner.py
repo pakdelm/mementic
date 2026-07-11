@@ -86,31 +86,6 @@ class TestScannerDirectoryStructure:
         assert "e/" not in output
         assert "f/" not in output
 
-
-class TestScannerConfigFiles:
-    def test_reads_config_files(self, tmp_path: Path) -> None:
-        """Scanner reads pyproject.toml and .env.example content."""
-        (tmp_path / "pyproject.toml").write_text(
-            "[project]\nname = \"mementic\"\n"
-        )
-        (tmp_path / ".env.example").write_text("OPENAI_API_KEY=sk-...\n")
-
-        output = scan_codebase_structure(str(tmp_path))
-
-        assert "## Configuration" in output
-        assert "pyproject.toml" in output
-        assert "mementic" in output
-        assert ".env.example" in output
-
-    def test_config_section_absent_when_no_config_files(self, tmp_path: Path) -> None:
-        """Scanner omits Configuration section when no recognized config files exist."""
-        (tmp_path / "random.txt").write_text("not a config file")
-
-        output = scan_codebase_structure(str(tmp_path))
-
-        assert "## Configuration" not in output
-
-
 class TestScannerMarkdownFiles:
     def test_scans_markdown_files(self, tmp_path: Path) -> None:
         """Scanner includes markdown file content in Markdown Files section."""

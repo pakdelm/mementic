@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -8,6 +9,28 @@ from typing import Any, TYPE_CHECKING
 
 import typer
 from pydantic import ValidationError
+from rich.markdown import Markdown
+from mementic.console import (
+    C_DIM,
+    C_FAIL,
+    C_HEADER,
+    C_ID,
+    C_PATH,
+    C_SUCCESS,
+    C_WARN,
+    STATUS_DEPRECATED,
+    STATUS_FAIL,
+    STATUS_OK,
+    console,
+    err_console,
+    kv_table,
+    make_progress,
+    make_step_tracker,
+    panel,
+    rule,
+    table,
+    text,
+)
 
 from mementic.config import (
     PROVIDER_CONFIGS,
@@ -24,27 +47,30 @@ from mementic.config import (
 from mementic.format import (
     CONTEXT_PACK_DEFAULT_MAX_CONSTRAINT_TOKENS,
     CONTEXT_PACK_DEFAULT_MAX_DECISION_TOKENS,
+    DECISION_ID_MAX_LENGTH,
+    CONSTRAINT_ID_MAX_LENGTH,
     count_tokens,
     detect_repo_path,
+    format_evolution,
     format_memory_context,
+    resolve_repo_name,
+    slugify,
     timestamp,
 )
 from mementic.graph import GraphStore
-from mementic.models import CodeEntity, DecisionStatus, EntityType, MetricsEntry
+from mementic.models import (
+    CodeEntity,
+    Constraint,
+    Decision,
+    DecisionStatus,
+    EntityType,
+    MetricsEntry,
+)
 from mementic.pipeline import _extract_session, run_init
 from mementic.conflict import auto_resolve_capture
 from mementic.metrics import UsageStore
 from mementic.sources.adr import scan_adr_dir
 from mementic.sources.opencode import scan_opencode_instructions
-from mementic.inject import (
-    _AGENT_MARKERS,
-    detect_agents,
-    get_mcp_config_file,
-    get_rules_file,
-    has_enforcement,
-    inject_enforcement,
-)
-from mementic.lint import lint as lint_graph, lint_fix, LintFinding
 
 if TYPE_CHECKING:
     from mementic.config import MementicConfig  # noqa: F401
@@ -184,11 +210,18 @@ def _run_git_diff(reference: str) -> tuple[str, int]:
     """
     try:
         result = subprocess.run(
-            ["git", "diff", reference], capture_output=True, text=True
+            ["git", "diff", reference], capture_output=True, text=True, encoding="utf-8"
         )
         return result.stdout or "", result.returncode
     except FileNotFoundError:
         return "", 1
+
+
+def _save_graph_cli(graph: GraphStore, cfg: "MementicConfig") -> None:
+    """Save graph to disk only when using legacy JSON mode (not SQLite)."""
+    if graph.is_persistent:
+        return
+    graph.save(cfg.output.graph_path)
 
 
 @app.command()
@@ -200,6 +233,11 @@ def init(
     no_scan: bool = typer.Option(
         False, "--no-scan",
         help="Skip codebase structural scan (use configured sources only)",
+    ),
+    deep: bool = typer.Option(
+        False, "--deep",
+        help="Full LLM-powered extraction (requires API key). "
+             "Without --deep, init runs deterministically in seconds.",
     ),
     interactive: bool = typer.Option(
         False, "--interactive", help="Walk through setup interactively"
@@ -260,9 +298,11 @@ def init(
                 discovered_sources.opencode_instructions,
             )
         ):
-            typer.echo(
-                "No pre-configured sources. All markdown files will be "
-                "scanned during init."
+            console.print(
+                text(
+                    f"[{C_WARN}]No pre-configured sources. All markdown "
+                    f"files will be scanned during init.[/]"
+                )
             )
 
         # Detect codebase-only repos (relax: register with empty sources)
@@ -297,8 +337,11 @@ def init(
             sources=discovered_sources,
         )
         save_global_config(global_cfg)
-        typer.echo(
-            f"Registered repo '{repo_name}' in project '{proj_name}'."
+        console.print(
+            text(
+                f"[{C_SUCCESS}]{STATUS_OK}[/] Registered repo "
+                f"'{repo_name}' in project '{proj_name}'."
+            )
         )
 
     # Auto-detect repo if not explicitly given
@@ -337,30 +380,38 @@ def init(
     if key:
         # --key flag: select provider and set/rotate key interactively
         if not sys.stdin.isatty():
-            typer.echo(
-                "Error: --key requires an interactive terminal.\n"
-                "  Run 'mementic init' without --key for guided setup, or\n"
-                "  set the environment variable for your provider:\n"
-                "    export DEEPSEEK_API_KEY=\"your-key-here\"\n"
-                "    export OPENAI_API_KEY=\"your-key-here\"\n"
-                "    export OPENROUTER_API_KEY=\"your-key-here\"",
-                err=True,
+            err_console.print(
+                panel(
+                    text(
+                        "Error: --key requires an interactive terminal.\n"
+                        "  Run 'mementic init' without --key for guided setup, or\n"
+                        "  set the environment variable for your provider:\n"
+                        "    export DEEPSEEK_API_KEY=\"your-key-here\"\n"
+                        "    export OPENAI_API_KEY=\"your-key-here\"\n"
+                        "    export OPENROUTER_API_KEY=\"your-key-here\""
+                    ),
+                    title="Error",
+                    border_style=C_FAIL,
+                )
             )
             raise typer.Exit(code=1)
 
-        typer.echo()
-        typer.echo("Select an LLM provider.")
-        typer.echo(f"  {', '.join(PROVIDER_CONFIGS.keys())}")
-        typer.echo(
-            f"  Press Enter to keep current ({global_cfg.llm.provider})."
+        console.print(
+            text(
+                f"\n[{C_HEADER} bold]Select an LLM provider[/]\n"
+                f"  {', '.join(PROVIDER_CONFIGS.keys())}\n"
+                f"  [{C_DIM}]Press Enter to keep current "
+                f"({global_cfg.llm.provider})[/]"
+            )
         )
         provider = typer.prompt("Provider", default=global_cfg.llm.provider).strip()
 
         if provider not in PROVIDER_CONFIGS:
-            typer.echo(
-                f"Error: Unknown provider '{provider}'.\n"
-                f"  Known: {', '.join(PROVIDER_CONFIGS.keys())}",
-                err=True,
+            err_console.print(
+                text(
+                    f"[{C_FAIL}]Error: Unknown provider '{provider}'.\n"
+                    f"  Known: {', '.join(PROVIDER_CONFIGS.keys())}[/]"
+                )
             )
             raise typer.Exit(code=1)
 
@@ -369,8 +420,14 @@ def init(
 
         if env_var is None:
             global_cfg.llm.provider = provider
-            typer.echo("Ollama runs locally — no API key needed.")
-            typer.echo("Make sure ollama is running on localhost:11434")
+            console.print(
+                text(
+                    f"[{C_SUCCESS}]{STATUS_OK}[/] Ollama runs locally "
+                    f"— no API key needed.\n"
+                    f"  [{C_DIM}]Make sure ollama is running on "
+                    f"localhost:11434[/]"
+                )
+            )
             save_global_config(global_cfg)
             typer.echo(f"Saved to {GLOBAL_CONFIG_DISPLAY_PATH}")
         else:
@@ -380,7 +437,9 @@ def init(
                 show_default=False,
             )
             if not key_val.strip():
-                typer.echo("No key entered — no changes made.")
+                console.print(
+                    text(f"[{C_DIM}]No key entered — no changes made.[/]")
+                )
             else:
                 global_cfg.llm.provider = provider
                 try:
@@ -389,9 +448,11 @@ def init(
                     typer.echo(str(e), err=True)
                     raise typer.Exit(code=1)
 
-                typer.echo("Key stored in OS keyring.")
-                typer.echo(
-                    f"Fallback (CI/containers): export {env_var}=\"your-key-here\""
+                console.print(
+                    text(
+                        f"[{C_SUCCESS}]{STATUS_OK}[/] Key stored in OS keyring.\n"
+                        f"  [{C_DIM}]Fallback: export {env_var}=...[/]"
+                    )
                 )
                 save_global_config(global_cfg)
                 typer.echo(f"Saved to {GLOBAL_CONFIG_DISPLAY_PATH}")
@@ -399,32 +460,45 @@ def init(
         return
     elif not api_key and sys.stdin.isatty():
         # No key found — offer to set one up
-        typer.echo()
-        typer.echo("Mementic can extract richer architectural context using an LLM.")
-        typer.echo(
-            "Deterministic mode (no key) works but produces lower-quality results."
+        console.print(
+            text(
+                f"\n[{C_HEADER}]Mementic can extract richer architectural "
+                f"context using an LLM.[/]\n"
+                f"[{C_DIM}]Deterministic mode (no key) works but produces "
+                f"lower-quality results.[/]\n"
+            )
         )
-        typer.echo()
         setup_key = typer.confirm("Set up an LLM provider now?", default=True)
 
         if setup_key:
-            typer.echo()
-            typer.echo("Select an LLM provider.")
-            typer.echo(f"  {', '.join(PROVIDER_CONFIGS.keys())}")
+            console.print(
+                text(
+                    f"\n[{C_HEADER} bold]Select an LLM provider[/]\n"
+                    f"  {', '.join(PROVIDER_CONFIGS.keys())}"
+                )
+            )
             provider = typer.prompt(
                 "Provider", default="", show_default=False
             )
 
             if provider not in PROVIDER_CONFIGS:
-                typer.echo(f"Unknown provider '{provider}'. Skipping LLM setup.")
+                typer.echo(
+                    f"Unknown provider '{provider}'. Skipping LLM setup."
+                )
             else:
                 provider_cfg = PROVIDER_CONFIGS[provider]
                 env_var = provider_cfg["key_env_var"]
 
                 if env_var is None:
                     # ollama — no key needed
-                    typer.echo("Ollama runs locally — no API key needed.")
-                    typer.echo("Make sure ollama is running on localhost:11434")
+                    console.print(
+                        text(
+                            f"[{C_SUCCESS}]{STATUS_OK}[/] Ollama runs locally "
+                            f"— no API key needed.\n"
+                            f"  [{C_DIM}]Make sure ollama is running on "
+                            f"localhost:11434[/]"
+                        )
+                    )
                 else:
                     key_val = typer.prompt(
                         f"API key for {provider} ({env_var})",
@@ -439,9 +513,12 @@ def init(
                         except RuntimeError as e:
                             typer.echo(str(e), err=True)
                             raise typer.Exit(code=1)
-                        typer.echo("Key stored in OS keyring.")
-                        typer.echo(
-                            f"Fallback for CI/headless: export {env_var}=..."
+                        console.print(
+                            text(
+                                f"[{C_SUCCESS}]{STATUS_OK}[/] Key stored in "
+                                f"OS keyring.\n"
+                                f"  [{C_DIM}]Fallback: export {env_var}=...[/]"
+                            )
                         )
 
                 default_model = ""  # user must choose
@@ -460,26 +537,131 @@ def init(
     # has empty log_dirs (preserves user overrides on subsequent runs).
     _populate_session_defaults(global_cfg)
 
+    # Compute tick total for progress bar.
+    # Pipeline calls advance() per sub-step — count actual work items,
+    # not abstract phases, so the bar tracks real progress.
+    phase_cfg = load_config(repo_path=str(cwd), project=project)
+    tick_total = 0
+
+    if effective_repo and not no_scan:
+        if deep:
+            tick_total += 2  # _run_codebase_scan: I/O + LLM (2 ticks)
+        try:
+            md_count = sum(
+                1 for _ in Path(effective_repo).rglob("*.md")
+                if ".mementic" not in _.parts and "node_modules" not in _.parts
+            )
+            md_count = max(md_count, 1)
+            if deep:
+                # LLM mode: pipeline advances per batch (~10 files per batch)
+                tick_total += max(1, (md_count + 9) // 10)
+            else:
+                # Deterministic: pipeline advances per file
+                tick_total += md_count
+        except (OSError, ValueError):
+            tick_total += 10 if deep else 5
+    tick_total += len(phase_cfg.sources.adr_dirs)
+    tick_total += len(phase_cfg.sources.opencode_instructions)
+    tick_total += len(phase_cfg.sources.claude_instructions)
+    tick_total += len(phase_cfg.sources.cursor_instructions)
+    tick_total += len(phase_cfg.sources.windsurf_instructions)
+    has_src = bool(
+        phase_cfg.sources.adr_dirs
+        or phase_cfg.sources.opencode_instructions
+        or phase_cfg.sources.claude_instructions
+        or phase_cfg.sources.cursor_instructions
+        or phase_cfg.sources.windsurf_instructions
+    )
+    if has_src or (effective_repo and not no_scan):
+        tick_total += 1  # backfill edges
+    if project_db_path and effective_repo:
+        tick_total += 1  # track repo in project_sources
+    tick_total = max(tick_total, 1)  # avoid indeterminate bar
+
+    # Warn on re-init when the graph already contains data.
+    if project_db_path:
+        db_path = str(Path(project_db_path).expanduser())
+        if Path(db_path).exists():
+            try:
+                import sqlite3
+                conn = sqlite3.connect(db_path)
+                cur = conn.execute(
+                    "SELECT COUNT(*) FROM decisions UNION ALL "
+                    "SELECT COUNT(*) FROM constraints"
+                )
+                rows = cur.fetchall()
+                conn.close()
+                d_count = rows[0][0] if len(rows) > 0 else 0
+                c_count = rows[1][0] if len(rows) > 1 else 0
+            except Exception:
+                d_count = c_count = 0
+
+            if d_count > 0 or c_count > 0:
+                console.print(
+                    panel(
+                        text(
+                            f"Graph already contains {d_count} decision(s), "
+                            f"{c_count} constraint(s).\n"
+                            f"[{C_DIM}]Re-initializing will re-scan sources. "
+                            f"Existing entries will not be overwritten.[/]"
+                        ),
+                        title="Re-initialize?",
+                        border_style=C_WARN,
+                    )
+                )
+                if sys.stdin.isatty():
+                    if not typer.confirm(
+                        "Continue?",
+                        default=False,
+                    ):
+                        typer.echo("Init cancelled.")
+                        raise typer.Exit(code=0)
+                # Non-interactive mode: proceed silently (CI/automation)
+
+    if not deep:
+        console.print(
+            panel(
+                text(
+                    f"Running deterministic init (fast, no LLM).\n"
+                    f"[{C_DIM}]Use --deep for full LLM extraction "
+                    f"(requires API key).[/]"
+                ),
+                title="Note",
+                border_style=C_WARN,
+            )
+        )
+
     # Run init — pipeline reads global config (no config_path)
     try:
-        graph, all_usage = run_init(
-            repo_path=effective_repo,
-            no_scan=no_scan,
-            db_path=project_db_path,
-            project=project,
-        )
+        with make_progress() as progress:
+            task_id = progress.add_task(
+                "Initializing knowledge graph...",
+                total=tick_total,
+            )
+            advance = make_step_tracker(progress, task_id, preamble="")
+
+            graph, all_usage = run_init(
+                repo_path=effective_repo,
+                no_scan=no_scan,
+                db_path=project_db_path,
+                project=project,
+                advance=advance,
+                deep=deep,
+            )
     except RuntimeError as e:
-        typer.echo(str(e), err=True)
+        err_console.print(
+            panel(text(str(e)), title="Error", border_style=C_FAIL)
+        )
         raise typer.Exit(code=1)
 
     # Load config for source counts in post-bootstrap output
-    cfg = load_config(repo_path=str(cwd), project=project)
+    cfg = phase_cfg
     stats = graph.stats()
-    typer.echo()
-    typer.echo("Mementic initialized")
-    typer.echo()
 
-    # Source counts
+    # Post-bootstrap summary
+    from mementic.health import check_health
+    items = check_health(graph, repo_path=cwd)
+
     adr_count = len(cfg.sources.adr_dirs)
     instr_count = (
         len(cfg.sources.opencode_instructions)
@@ -488,38 +670,79 @@ def init(
         + len(cfg.sources.windsurf_instructions)
     )
     entity_count = stats.get("entities", 0)
-    typer.echo(
-        f"  Sources      ADR: {adr_count}    "
-        f"Instructions: {instr_count}    "
-        f"Codebase: {entity_count} entities"
-    )
-    typer.echo(
-        f"  Graph        {stats.get('decisions', 0)} decisions, "
-        f"{stats.get('constraints', 0)} constraints, "
-        f"{entity_count} entities, "
-        f"{stats.get('edges', 0)} edges"
-    )
-    typer.echo()
 
-    # Health checklist
+    # Post-bootstrap summary
     from mementic.health import check_health
+
     items = check_health(graph, repo_path=cwd)
-    typer.echo("  Status")
+
+    adr_count = len(cfg.sources.adr_dirs)
+    instr_count = (
+        len(cfg.sources.opencode_instructions)
+        + len(cfg.sources.claude_instructions)
+        + len(cfg.sources.cursor_instructions)
+        + len(cfg.sources.windsurf_instructions)
+    )
+    entity_count = stats.get("entities", 0)
+
+    # Sources summary
+    src_table = kv_table()
+    src_table.add_column("Label", style="bold", width=20)
+    src_table.add_column("Value", style=C_DIM)
+    src_table.add_row("ADR", str(adr_count))
+    src_table.add_row("Instructions", str(instr_count))
+    src_table.add_row("Codebase entities", str(entity_count))
+
+    # Graph summary
+    g_table = kv_table()
+    g_table.add_column("Label", style="bold", width=20)
+    g_table.add_column("Value", style=C_DIM)
+    g_table.add_row("Decisions", str(stats.get("decisions", 0)))
+    g_table.add_row("Constraints", str(stats.get("constraints", 0)))
+    g_table.add_row("Entities", str(entity_count))
+    g_table.add_row("Edges", str(stats.get("edges", 0)))
+
+    # Health table
+    health_table = table(show_header=False, show_edge=False, padding=(0, 1))
+    health_table.add_column("Status", width=7)
+    health_table.add_column("Check", style="bold")
+    health_table.add_column("Hint", style=C_DIM)
+    ok_count = 0
     for item in items:
-        marker = "[OK]" if item.status == "ok" else "[FAIL]"
-        if item.hint:
-            typer.echo(f"    {marker:<6} {item.label:<10} {item.hint}")
+        if item.status == "ok":
+            health_table.add_row(
+                f"[{C_SUCCESS}]{STATUS_OK}[/]", item.label, item.hint or ""
+            )
+            ok_count += 1
         else:
-            typer.echo(f"    {marker:<6} {item.label}")
-    typer.echo()
-    typer.echo("  Next: mementic capture --agent opencode")
+            health_table.add_row(
+                f"[{C_FAIL}]{STATUS_FAIL}[/]", item.label, item.hint or ""
+            )
+
+    console.print(
+        panel(
+            text(f"[{C_HEADER} bold]Sources[/]"),
+            src_table,
+            rule(),
+            text(f"[{C_HEADER} bold]Graph[/]"),
+            g_table,
+            rule(),
+            text(f"[{C_HEADER} bold]Status ({ok_count}/{len(items)})[/]"),
+            health_table,
+            rule(),
+            text(f"[{C_DIM} italic]Next: mementic capture[/]"),
+            title="Mementic initialized",
+        )
+    )
 
     # Enforcement injection check
+    from mementic.inject import detect_agents, has_enforcement, inject_enforcement
+
     agents_md_path = cwd / "AGENTS.md"
     if not has_enforcement(agents_md_path):
         detected = detect_agents(cwd)
         if detected:
-            typer.echo()
+            console.print()
             if sys.stdin.isatty():
                 inject_ok = typer.confirm(
                     "No enforcement instructions found. Add to AGENTS.md?",
@@ -527,28 +750,38 @@ def init(
                 )
                 if inject_ok:
                     result = inject_enforcement(agents_md_path)
-                    typer.echo(f"  {result}")
+                    console.print(text(f"  [{C_SUCCESS}]{result}[/]"))
                 else:
-                    typer.echo(
-                        "  Warning: Without enforcement, mementic operates as CLI-only."
-                    )
-                    typer.echo(
-                        "  Agents won't automatically query the graph."
-                        " Run 'mementic inject' later."
+                    console.print(
+                        text(
+                            f"  [{C_WARN}]Warning: Without enforcement, "
+                            f"mementic operates as CLI-only.[/]\n"
+                            f"  [{C_DIM}]Agents won't automatically query "
+                            f"the graph. Run 'mementic init' to retry.[/]"
+                        )
                     )
             else:
-                typer.echo(
-                    "  No enforcement instructions found."
-                    " Run 'mementic inject' to add them."
+                console.print(
+                    text(
+                        f"  [{C_DIM}]No enforcement instructions found. "
+                        f"Run 'mementic init' to add them.[/]"
+                    )
                 )
 
     # Quality notice for deterministic mode
     post_cfg = load_global_config()
     if not post_cfg.llm.get_api_key():
-        typer.echo()
-        typer.echo("  Note  Running without LLM API key — deterministic extraction only.")
-        typer.echo(f"        Graph quality is reduced. Set a provider key in {GLOBAL_CONFIG_DISPLAY_PATH}")
-        typer.echo("        for richer extraction, or continue as-is (inline proposals work regardless).")
+        console.print(
+            panel(
+                text(
+                    f"Running without LLM API key — deterministic extraction only.\n"
+                    f"[{C_DIM}]Graph quality is reduced. Set a provider key "
+                    f"for richer extraction.[/]"
+                ),
+                title="Note",
+                border_style=C_WARN,
+            )
+        )
 
     # Log extraction costs to metrics (project database only)
     if all_usage and graph._conn is not None:
@@ -611,7 +844,9 @@ def capture(
             raise typer.Exit(code=1)
         session = detected
         detected_agent = provider.agent_name
-        typer.echo(f"[{detected_agent}] Using session: {session}")
+        console.print(
+            text(f"[{C_ID}]{detected_agent}[/] [{C_DIM}]session: {session}[/]")
+        )
     elif agent:
         # Explicit agent, possibly with explicit session path
         provider, resolved = registry.detect(agent=agent, session_path=session)
@@ -623,17 +858,21 @@ def capture(
             raise typer.Exit(code=1)
         session = resolved
         detected_agent = agent
-        typer.echo(f"[{detected_agent}] Using session: {session}")
+        console.print(
+            text(f"[{C_ID}]{detected_agent}[/] [{C_DIM}]session: {session}[/]")
+        )
     elif session:
         # Explicit session path, detect which provider can read it
         provider, _ = registry.detect(session_path=session)
         detected_agent = provider.agent_name
-        typer.echo(f"[{detected_agent}] Using session: {session}")
+        console.print(
+            text(f"[{C_ID}]{detected_agent}[/] [{C_DIM}]session: {session}[/]")
+        )
     else:
         typer.echo("No session found. Provide --session PATH.", err=True)
         raise typer.Exit(code=1)
 
-    session_text = Path(session).read_text()
+    session_text = Path(session).read_text(encoding="utf-8", errors="replace")
 
     # Load or create graph — needed for checkpoint query
     is_project = False
@@ -678,17 +917,22 @@ def capture(
         # Check if there are new commits since last capture
         try:
             head_result = subprocess.run(
-                ["git", "rev-parse", "HEAD"], capture_output=True, text=True
+                ["git", "rev-parse", "HEAD"], capture_output=True, text=True,
+                encoding="utf-8",
             )
         except FileNotFoundError:
             head_result = subprocess.CompletedProcess(args=[], returncode=1, stdout="")
         if head_result.returncode == 0 and checkpoint.strip() == head_result.stdout.strip():
-            typer.echo("No new commits since last capture.")
+            console.print(
+                text(f"[{C_DIM}]No new commits since last capture.[/]")
+            )
             git_diff = ""
         else:
             git_diff, rc = _run_git_diff(checkpoint)
             if rc == 1:
-                typer.echo("git not found. Proceeding without diff.", err=True)
+                console.print(
+                    text(f"[{C_WARN}]git not found. Proceeding without diff.[/]")
+                )
                 git_diff = ""
             elif rc == 128:
                 typer.echo("Not a git repository. Skipping diff.", err=True)
@@ -696,7 +940,9 @@ def capture(
             elif rc == 0:
                 got_diff = True
                 if not git_diff.strip():
-                    typer.echo("No changes since last capture.")
+                    console.print(
+                        text(f"[{C_DIM}]No changes since last capture.[/]")
+                    )
             else:
                 typer.echo(
                     "Warning: git diff failed. Proceeding without diff.",
@@ -706,7 +952,9 @@ def capture(
     else:
         git_diff, rc = _run_git_diff("HEAD~1")
         if rc == 1:
-            typer.echo("git not found. Proceeding without diff.", err=True)
+            console.print(
+                text(f"[{C_WARN}]git not found. Proceeding without diff.[/]")
+            )
             git_diff = ""
         elif rc == 128:
             typer.echo("Not a git repository. Skipping diff.", err=True)
@@ -714,7 +962,9 @@ def capture(
         elif rc == 0:
             got_diff = True
             if not git_diff.strip():
-                typer.echo("No changes since last capture.")
+                console.print(
+                    text(f"[{C_DIM}]No changes since last capture.[/]")
+                )
         else:
             typer.echo(
                 "Warning: git diff failed. Proceeding without diff.",
@@ -723,19 +973,24 @@ def capture(
             git_diff = ""
 
     try:
-        extraction, _usage = _extract_session(
-            session_text, git_diff, notes or "", cfg,
-            max_messages=tail, custom_keywords=keyword or None,
-        )
+        with console.status(
+            f"[{C_HEADER}]Extracting architectural decisions...[/]"
+        ):
+            extraction, _usage = _extract_session(
+                session_text, git_diff, notes or "", cfg,
+                max_messages=tail, custom_keywords=keyword or None,
+            )
     except RuntimeError as e:
-        typer.echo(str(e), err=True)
+        err_console.print(
+            panel(text(str(e)), title="Error", border_style=C_FAIL)
+        )
         raise typer.Exit(code=1)
 
     if not extraction.decisions and not extraction.constraints:
-        typer.echo("No architectural decisions or constraints found.")
+        console.print(
+            text(f"[{C_DIM}]No architectural decisions or constraints found.[/]")
+        )
         raise typer.Exit()
-
-    from mementic.format import DECISION_ID_MAX_LENGTH, CONSTRAINT_ID_MAX_LENGTH, slugify
 
     # Replace LLM-generated IDs (dec-001, etc.) with deterministic slugs
     for d in extraction.decisions:
@@ -747,17 +1002,22 @@ def capture(
         graph, extraction.decisions, extraction.constraints
     )
 
-    # Add only NEW and UPDATED decisions (skipped are not added)
+    # Add only NEW and UPDATED decisions (skipped are not added).
+    # Track disposition per decision for output listing.
+    decision_dispositions: dict[str, str] = {}
     for d in extraction.decisions:
         if not graph.has_node(d.id) or d.status == DecisionStatus.ACCEPTED:
             if graph.has_node(d.id):
                 # Rule 3: existing Decision is deprecated; overwrite with accepted
-                # add_decision handles cross-type collision safety (raises ValueError)
+                decision_dispositions[d.id] = "updated"
                 graph.add_decision(d)
             else:
                 # Rule 1: new node
+                decision_dispositions[d.id] = "new"
                 graph.add_decision(d)
-        # Rule 2 (skipped): don't add
+        else:
+            # Rule 2 (skipped): don't add
+            decision_dispositions[d.id] = "skipped"
 
         for entity_path in extraction.affected_entities:
             graph.add_code_entity(
@@ -765,13 +1025,19 @@ def capture(
             )
             graph.link(d.id, entity_path, "affects")
 
+    constraint_dispositions: dict[str, str] = {}
     for c in extraction.constraints:
-        if not graph.has_node(c.id):
+        existing = graph.has_node(c.id)
+        if not existing:
+            constraint_dispositions[c.id] = "new"
             graph.add_constraint(c)
         elif c.status == "active":
             # Updated constraint: existing was deprecated; add_constraint handles update
+            constraint_dispositions[c.id] = "updated"
             graph.add_constraint(c)
-        # Skipped: don't add
+        else:
+            # Skipped: don't add
+            constraint_dispositions[c.id] = "skipped"
 
         for entity_path in c.bound_entities:
             graph.link(c.id, entity_path, "binds_to")
@@ -786,24 +1052,102 @@ def capture(
         graph.save(graph_path)
 
     # F6 — Summary output
-    typer.echo()
-    typer.echo("=" * 50)
-    typer.echo("Capture complete")
-    typer.echo("=" * 50)
-    typer.echo(f"  New:           {counts['new_decisions']} decisions, "
-               f"{counts['new_constraints']} constraints")
-    if counts['updated_decisions'] > 0:
-        typer.echo(f"  Updated:       {counts['updated_decisions']} decisions "
-                    f"(existing deprecated)")
-    if counts['skipped_decisions'] > 0 or counts['skipped_constraints'] > 0:
-        total_skipped = counts['skipped_decisions'] + counts['skipped_constraints']
-        typer.echo(f"  Duplicates:    {total_skipped} skipped")
+    result_table = kv_table()
+    result_table.add_column("", style="bold", width=15)
+    result_table.add_column("", width=60)
+    result_table.add_row(
+        "New",
+        text(
+            f"[{C_SUCCESS}]{counts['new_decisions']} decisions, "
+            f"{counts['new_constraints']} constraints[/]"
+        ),
+    )
+    if counts["updated_decisions"] > 0:
+        result_table.add_row(
+            "Updated",
+            text(
+                f"[{C_SUCCESS}]{counts['updated_decisions']} decisions[/] "
+                f"[{C_DIM}](existing deprecated)[/]"
+            ),
+        )
+    if counts["skipped_decisions"] > 0 or counts["skipped_constraints"] > 0:
+        total_skipped = (
+            counts["skipped_decisions"] + counts["skipped_constraints"]
+        )
+        result_table.add_row(
+            "Skipped",
+            text(f"[{C_WARN}]{total_skipped} duplicates[/]"),
+        )
     if is_project and project_display:
-        typer.echo(f"  Written to project '{project_display}' database")
+        result_table.add_row(
+            "Written",
+            text(f"[{C_DIM}]project '{project_display}' database[/]"),
+        )
     else:
-        typer.echo(f"  Written to {graph_path}")
+        result_table.add_row(
+            "Written", text(f"[{C_DIM}]{graph_path}[/]")
+        )
     if _usage.model == "deterministic":
-        typer.echo("  Mode:        deterministic (no API key — reduced quality)")
+        result_table.add_row(
+            "Mode",
+            text(
+                f"[{C_WARN}]deterministic (no API key — reduced quality)[/]"
+            ),
+        )
+
+    # Build the panel content: summary table + optional lists of what was extracted
+    panel_content: list = [result_table]
+
+    # Decisions list
+    if extraction.decisions:
+        panel_content.append(rule())
+        d_title_text = text(
+            f"Decisions ({len(extraction.decisions)})", style=f"bold {C_HEADER}"
+        )
+        d_table = table(show_header=False, show_edge=False, padding=(0, 1))
+        d_table.add_column("", width=4)
+        d_table.add_column("Title", overflow="fold")
+        d_table.add_column("ID", style=C_DIM, width=40)
+        for d in extraction.decisions:
+            disp = decision_dispositions.get(d.id, "new")
+            if disp == "new":
+                icon = f"[{C_SUCCESS}]{STATUS_OK}[/]"
+                suffix = ""
+            elif disp == "updated":
+                icon = f"[{C_WARN}]{STATUS_DEPRECATED}[/]"
+                suffix = f" [{C_DIM}](updated)[/]"
+            else:
+                icon = f"[{C_DIM}]~[/]"
+                suffix = f" [{C_DIM}](duplicate)[/]"
+            d_table.add_row(icon, f"[bold]{d.title}[/]{suffix}", d.id)
+        panel_content.extend([d_title_text, d_table])
+
+    # Constraints list
+    if extraction.constraints:
+        panel_content.append(rule())
+        c_title_text = text(
+            f"Constraints ({len(extraction.constraints)})",
+            style=f"bold {C_HEADER}",
+        )
+        c_table = table(show_header=False, show_edge=False, padding=(0, 1))
+        c_table.add_column("", width=4)
+        c_table.add_column("Description", overflow="fold")
+        c_table.add_column("ID", style=C_DIM, width=40)
+        for c in extraction.constraints:
+            disp = constraint_dispositions.get(c.id, "new")
+            if disp == "new":
+                icon = f"[{C_SUCCESS}]{STATUS_OK}[/]"
+                suffix = ""
+            elif disp == "updated":
+                icon = f"[{C_WARN}]{STATUS_DEPRECATED}[/]"
+                suffix = f" [{C_DIM}](updated)[/]"
+            else:
+                icon = f"[{C_DIM}]~[/]"
+                suffix = f" [{C_DIM}](duplicate)[/]"
+            c_table.add_row(icon, f"[bold]{c.description}[/]{suffix}", c.id)
+        panel_content.extend([c_title_text, c_table])
+
+    console.print(panel(*panel_content, title="Capture complete"))
 
     # Log capture metrics (project database only)
     if graph._conn is not None:
@@ -825,7 +1169,8 @@ def capture(
     if got_diff:
         try:
             head_result = subprocess.run(
-                ["git", "rev-parse", "HEAD"], capture_output=True, text=True
+                ["git", "rev-parse", "HEAD"], capture_output=True, text=True,
+                encoding="utf-8",
             )
             if head_result.returncode == 0:
                 graph.set_capture_checkpoint(
@@ -835,107 +1180,118 @@ def capture(
             pass  # git not available — skip
 
 
-@app.command()
-def context(
-    keywords: list[str] = typer.Option(
-        ..., "--keyword",
-        help="Keywords for matching. Repeatable. Agent generates 15-25 single-word keywords.",
-    ),
-    project: str | None = typer.Option(
-        None, "--project",
-        help="Target project name",
-    ),
-) -> None:
-    """Load constraints and produce mementic memory ranked by keyword overlap.
+query_app = typer.Typer(help="Search and retrieve from the knowledge graph")
+app.add_typer(query_app, name="query")
 
-    Keyword overlap with constraint/decision descriptions determines
-    relevance ranking.  All items pass through; zero-overlap items
-    sink to the bottom and are omitted if token budget is exceeded.
-    """
+
+@query_app.command()
+def keywords(
+    keywords: list[str] = typer.Argument(..., help="Keywords for matching (e.g. auth login session pydantic)"),
+    project: str | None = typer.Option(None, "--project", help="Target project name"),
+) -> None:
+    """Return ranked context pack of constraints and decisions matched by keywords."""
     graph, _cfg = _resolve_graph(project)
     graph.clean_dead_references()
-
     constraints = graph.get_all_active_constraints()
     decisions = graph.get_all_active_decisions()
-
     output = format_memory_context(
         decisions, constraints,
         max_constraint_tokens=CONTEXT_PACK_DEFAULT_MAX_CONSTRAINT_TOKENS,
         max_decision_tokens=CONTEXT_PACK_DEFAULT_MAX_DECISION_TOKENS,
         keywords=keywords,
     )
-    typer.echo(output)
+    kw_list = ", ".join(keywords)
+    summary = text(
+        f"[{C_DIM}]{len(constraints)} constraints, "
+        f"{len(decisions)} decisions[/]"
+    )
+    console.print(
+        panel(
+            summary,
+            rule(),
+            Markdown(output),
+            title=f"Context pack: {kw_list}",
+        )
+    )
 
 
-@app.command()
-def query(
-    entity: str | None = None,
-    decision: str | None = None,
-    constraint: str | None = None,
-    search: str | None = None,
-    depth: int = 1,
-    project: str | None = typer.Option(
-        None, "--project",
-        help="Target project name",
-    ),
+@query_app.command()
+def file(
+    path: str = typer.Argument(..., help="File path to trace evolution for"),
+    prefix: bool = typer.Option(False, "--prefix", help="Use prefix matching for entity paths"),
+    max_tokens: int = typer.Option(1500, "--max-tokens", help="Maximum token budget for output"),
+    project: str | None = typer.Option(None, "--project", help="Target project name"),
 ) -> None:
-    """Search decisions, constraints, and entities in the graph."""
+    """Show constraints and decisions affecting a specific file."""
     graph, _cfg = _resolve_graph(project)
     graph.clean_dead_references()
+    constraints = graph.get_constraints_for_entities([path], prefix_match=prefix)
+    decisions = graph.get_evolution(path, prefix_match=prefix, annotate_overlap=True)
+    evolution_text = format_evolution(path, decisions, max_tokens=max_tokens)
+    if constraints:
+        evolution_text += "\n\n### Constraints\n"
+        for c in constraints:
+            entities = ", ".join(c.bound_entities) if c.bound_entities else "none"
+            evolution_text += f"- {c.description} (#{c.id}, bound: {entities})\n"
+    console.print(
+        panel(Markdown(evolution_text), title=f"File history: {path}")
+    )
 
-    if entity:
-        decisions = graph.get_evolution(entity)
-        constraints = graph.get_constraints_for_entities([entity])
 
-        if depth >= 2:
-            seen_entities: set[str] = {entity}
-            seen_ids = {c.id for c in constraints}
-            for _level in range(depth - 1):
-                next_entities: set[str] = set()
-                for c in constraints:
-                    if c.bound_entities:
-                        next_entities.update(
-                            be for be in c.bound_entities if be not in seen_entities
-                        )
-                if not next_entities:
-                    break
-                seen_entities.update(next_entities)
-                extra = graph.get_constraints_for_entities(list(next_entities))
-                for c in extra:
-                    if c.id not in seen_ids:
-                        constraints.append(c)
-                        seen_ids.add(c.id)
+@query_app.command()
+def search(
+    term: str = typer.Argument(..., help="Search term for titles, rationales, and descriptions"),
+    project: str | None = typer.Option(None, "--project", help="Target project name"),
+) -> None:
+    """Full-text search across decisions and constraints."""
+    graph, _cfg = _resolve_graph(project)
+    all_d = graph.get_all_decisions()
+    all_c = graph.get_all_constraints()
+    t = term.lower()
+    matching_d = [d for d in all_d if t in d.title.lower() or t in d.rationale.lower()]
+    matching_c = [c for c in all_c if t in c.description.lower()]
 
-        typer.echo(f"Evolution for {entity} (depth {depth}):\n")
-        for d in decisions:
-            typer.echo(f"  [{d.id}] {d.title} ({d.created_at})")
-            typer.echo(f"  {d.rationale}\n")
-
-        if constraints:
-            typer.echo("Related constraints:\n")
-            for c in constraints:
-                typer.echo(f"  [{c.id}] {c.description}")
-    elif search:
-        all_d = graph.get_all_decisions()
-        all_c = graph.get_all_constraints()
-        term = search.lower()
-
-        matching_d = [
-            d for d in all_d if term in d.title.lower() or term in d.rationale.lower()
-        ]
-        matching_c = [
-            c for c in all_c if term in c.description.lower()
-        ]
-
-        typer.echo(f"Decisions matching '{search}':")
+    panel_lines: list = []
+    if matching_d:
+        decisions_table = table(show_header=False, show_edge=False, padding=(0, 1))
+        decisions_table.add_column("ID", style=C_ID)
+        decisions_table.add_column("Title")
         for d in matching_d:
-            typer.echo(f"  [{d.id}] {d.title}")
-        typer.echo(f"\nConstraints matching '{search}':")
+            decisions_table.add_row(d.id, d.title)
+        panel_lines.append(
+            text(f"[{C_HEADER} bold]Decisions ({len(matching_d)})[/]")
+        )
+        panel_lines.append(decisions_table)
+    if matching_c:
+        if panel_lines:
+            panel_lines.append(text(""))
+        constraints_table = table(show_header=False, show_edge=False, padding=(0, 1))
+        constraints_table.add_column("ID", style=C_ID)
+        constraints_table.add_column("Description")
         for c in matching_c:
-            typer.echo(f"  [{c.id}] {c.description}")
-    else:
-        stats = graph.stats()
-        typer.echo(f"Graph stats: {stats}")
+            constraints_table.add_row(c.id, c.description)
+        panel_lines.append(
+            text(f"[{C_HEADER} bold]Constraints ({len(matching_c)})[/]")
+        )
+        panel_lines.append(constraints_table)
+    console.print(
+        panel(*panel_lines, title=f'Search: "{term}"')
+    )
+
+
+@query_app.command()
+def stats(
+    project: str | None = typer.Option(None, "--project", help="Target project name"),
+) -> None:
+    """Show graph statistics."""
+    graph, _cfg = _resolve_graph(project)
+    s = graph.stats()
+    stats_table = kv_table()
+    stats_table.add_column("Metric", style="bold", width=20)
+    stats_table.add_column("Value", justify="right")
+    for k, v in s.items():
+        stats_table.add_row(k.title(), str(v))
+    console.print(panel(stats_table, title="Graph statistics"))
 
 
 @app.command()
@@ -958,11 +1314,16 @@ def log(
         if not rows:
             typer.echo("Audit log is empty. Run init or capture first.")
             raise typer.Exit()
+        audit_table = table()
+        audit_table.add_column("Timestamp", style=C_DIM)
+        audit_table.add_column("Action")
+        audit_table.add_column("Rule ID", style=C_ID)
+        audit_table.add_column("Summary")
         for row in rows:
             entity_type = row["entity_type"]
             action = row["action"]
             entity_id = row["entity_id"]
-            timestamp = row["timestamp"]
+            timestamp_val = row["timestamp"]
             details_str: str = row["details"]
             try:
                 details = json.loads(details_str)
@@ -973,14 +1334,34 @@ def log(
             elif isinstance(details, dict) and "description" in details:
                 summary = details["description"]
             elif isinstance(details, dict) and "relation" in details:
-                summary = f"{details.get('source', '')} → {details.get('target', '')} ({details['relation']})"
+                summary = (
+                    f"{details.get('source', '')} -> "
+                    f"{details.get('target', '')} ({details['relation']})"
+                )
             elif isinstance(details, str):
                 summary = details
             else:
                 summary = "-"
-            typer.echo(
-                f"[{timestamp}] {entity_type}/{action} {entity_id} — {summary}"
+            action_style = {
+                "add": C_SUCCESS,
+                "remove": C_FAIL,
+                "deprecate": C_WARN,
+                "update": C_SUCCESS,
+            }.get(action, "")
+            action_text = (
+                f"[{action_style}]{entity_type}/{action}[/]"
+                if action_style
+                else f"{entity_type}/{action}"
             )
+            audit_table.add_row(
+                str(timestamp_val),
+                action_text,
+                entity_id,
+                summary,
+            )
+        console.print(
+            panel(audit_table, title=f"Audit log (last {n})")
+        )
         return
 
     # Fallback: read legacy JSONL audit log
@@ -996,15 +1377,15 @@ def log(
     for line in lines[-n:]:
         entry = json.loads(line)
         typer.echo(f"[{entry['timestamp']}] {entry['action']}: {entry.get('id', '-')}")
-
-
-@app.command()
-def server():
-    """Start the MCP server for agent integration (stdio transport)."""
-    import sys
-    from mementic.server import mcp
-    sys.stderr.write("Mementic MCP server starting (stdio transport)...\n")
-    mcp.run(transport="stdio")
+    console.print(
+        panel(
+            text(
+                f"[{C_DIM}]No SQLite audit log found. "
+                f"Read {len(lines)} legacy entries.[/]"
+            ),
+            title="Audit log",
+        )
+    )
 
 
 @app.command()
@@ -1027,17 +1408,33 @@ def status(
     except (ValueError, OSError):
         repo = Path.cwd()
     items = check_health(graph, repo_path=repo)
-    typer.echo("Mementic status")
+    health_table = table(show_header=False, show_edge=False, padding=(0, 1))
+    health_table.add_column("Status", width=7)
+    health_table.add_column("Check", style="bold")
+    health_table.add_column("Hint", style=C_DIM)
+    ok_count = 0
     for item in items:
-        marker = "[OK]" if item.status == "ok" else "[FAIL]"
-        line = f"  {marker:<6} {item.label}"
-        if item.hint:
-            line += f"  {item.hint}"
-        typer.echo(line)
+        if item.status == "ok":
+            health_table.add_row(
+                f"[{C_SUCCESS}]{STATUS_OK}[/]", item.label, item.hint or ""
+            )
+            ok_count += 1
+        else:
+            health_table.add_row(
+                f"[{C_FAIL}]{STATUS_FAIL}[/]", item.label, item.hint or ""
+            )
+    console.print(
+        panel(
+            health_table,
+            rule(),
+            text(f"[{C_DIM}]{ok_count}/{len(items)} checks passed[/]"),
+            title="Status",
+        )
+    )
 
 
 @app.command()
-def graph(
+def visualize(
     output: str = typer.Option(
         ".mementic/mementic_graph.html", "--output", "-o",
         help="Output HTML file path",
@@ -1055,7 +1452,7 @@ def graph(
         help="Target project name",
     ),
 ) -> None:
-    """Generate an interactive HTML visualization of the knowledge graph.
+    """Render the knowledge graph as an interactive HTML visualization.
 
     Produces a self-contained HTML file with a force-directed graph.
     No server or external dependencies required for viewing.
@@ -1076,15 +1473,19 @@ def graph(
         )
         raise typer.Exit(code=1)
 
-    typer.echo(f"Generating graph visualization ({g.stats()['decisions']} decisions, "
-               f"{g.stats()['constraints']} constraints, "
-               f"{g.stats()['edges']} edges)...")
-
-    html = generate_html_graph(g, filter_type=ft)
-
-    Path(output).parent.mkdir(parents=True, exist_ok=True)
-    Path(output).write_text(html, encoding="utf-8")
-    typer.echo(f"Written to {output} ({len(html):,} bytes)")
+    with console.status("[bold]Generating graph visualization...[/]"):
+        html = generate_html_graph(g, filter_type=ft)
+        Path(output).parent.mkdir(parents=True, exist_ok=True)
+        Path(output).write_text(html, encoding="utf-8")
+    console.print(
+        panel(
+            text(
+                f"[{C_SUCCESS}]{STATUS_OK}[/] Written to {output}  "
+                f"[{C_DIM}]({len(html):,} bytes)[/]"
+            ),
+            title="Graph visualization",
+        )
+    )
 
     if open_browser:
         webbrowser.open(Path(output).resolve().as_uri())
@@ -1093,142 +1494,165 @@ def graph(
 def _status_icon(status: str) -> str:
     """Return a compact status marker for list output."""
     icons = {
-        "accepted": "+",
-        "deprecated": "-",
-        "rejected": "x",
-        "active": "+",
+        "accepted": STATUS_OK,
+        "deprecated": STATUS_DEPRECATED,
+        "rejected": STATUS_FAIL,
+        "active": STATUS_OK,
     }
     return icons.get(status, " ")
 
 
-@app.command(name="list")
-def list_cmd(
-    entity_type: str = typer.Argument(
-        "decisions",
-        help="Type to list: decisions, constraints, or entities",
-    ),
+list_app = typer.Typer(help="Browse decisions, constraints, and entities")
+app.add_typer(list_app, name="list")
+
+_VALID_STATUSES = {"accepted", "deprecated", "rejected", "active"}
+
+
+def _validate_status(status: str | None) -> None:
+    """Validate --status flag, exit on invalid value."""
+    if status and status not in _VALID_STATUSES:
+        typer.echo(
+            f"Invalid status '{status}'. "
+            f"Valid: {', '.join(sorted(_VALID_STATUSES))}",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+
+@list_app.command()
+def decisions(
+    n: int = typer.Option(20, "-n", help="Show only the last N entries"),
     status: str | None = typer.Option(
         None, "--status",
         help="Filter by status: accepted, deprecated, rejected, active",
     ),
-    n: int = typer.Option(
-        0, "-n",
-        help="Show only the last N entries",
+    project: str | None = typer.Option(
+        None, "--project", help="Target project name",
     ),
+) -> None:
+    """List architectural decisions in a scannable table."""
+    graph, _cfg = _resolve_graph(project)
+    _validate_status(status)
+
+    all_d = graph.get_all_decisions()
+    if status:
+        all_d = [d for d in all_d if d.status == status]
+    if n > 0:
+        all_d = all_d[-n:]
+
+    if not all_d:
+        typer.echo("No decisions found.")
+        raise typer.Exit()
+
+    decision_table = table()
+    decision_table.add_column("", width=3)  # status icon
+    decision_table.add_column("ID", style=C_ID)
+    decision_table.add_column("Date", style=C_DIM)
+    decision_table.add_column("Title", overflow="fold")
+    for d in all_d:
+        icon = _status_icon(d.status)
+        color_map = {
+            STATUS_OK: C_SUCCESS,
+            STATUS_DEPRECATED: C_WARN,
+            STATUS_FAIL: C_FAIL,
+        }
+        color = color_map.get(icon, "")
+        date = d.created_at[:10] if d.created_at else ""
+        decision_table.add_row(f"[{color}]{icon}[/]", d.id, date, d.title)
+    console.print(
+        panel(decision_table, title=f"Decisions ({len(all_d)})")
+    )
+
+
+@list_app.command()
+def constraints(
+    n: int = typer.Option(20, "-n", help="Show only the last N entries"),
+    status: str | None = typer.Option(
+        None, "--status",
+        help="Filter by status: accepted, deprecated, rejected, active",
+    ),
+    project: str | None = typer.Option(
+        None, "--project", help="Target project name",
+    ),
+) -> None:
+    """List constraints in a scannable table."""
+    graph, _cfg = _resolve_graph(project)
+    _validate_status(status)
+
+    all_c = graph.get_all_constraints()
+    if status:
+        all_c = [c for c in all_c if c.status == status]
+    if n > 0:
+        all_c = all_c[-n:]
+
+    if not all_c:
+        typer.echo("No constraints found.")
+        raise typer.Exit()
+
+    constraint_table = table()
+    constraint_table.add_column("", width=3)  # status icon
+    constraint_table.add_column("ID", style=C_ID)
+    constraint_table.add_column("Enforced By", style=C_DIM)
+    constraint_table.add_column("Description", overflow="fold")
+    for c in all_c:
+        icon = _status_icon(c.status)
+        color_map = {
+            STATUS_OK: C_SUCCESS,
+            STATUS_DEPRECATED: C_WARN,
+            STATUS_FAIL: C_FAIL,
+        }
+        color = color_map.get(icon, "")
+        enforced = f"via {c.enforced_by}" if c.enforced_by else ""
+        constraint_table.add_row(
+            f"[{color}]{icon}[/]", c.id, enforced, c.description
+        )
+    console.print(
+        panel(constraint_table, title=f"Constraints ({len(all_c)})")
+    )
+
+
+@list_app.command()
+def entities(
+    n: int = typer.Option(20, "-n", help="Show only the last N entries"),
     stale: bool = typer.Option(
         False, "--stale",
         help="Show only entities referencing files that no longer exist",
     ),
     project: str | None = typer.Option(
-        None, "--project",
-        help="Target project name",
+        None, "--project", help="Target project name",
     ),
 ) -> None:
-    """Browse decisions, constraints, and entities in a scannable table.
-
-    Examples:
-        mementic list decisions
-        mementic list decisions --status accepted
-        mementic list decisions -n 10
-        mementic list constraints
-        mementic list entities --stale
-    """
+    """List code entities in a scannable table."""
     graph, _cfg = _resolve_graph(project)
 
-    entity_type = entity_type.lower()
-    if entity_type not in ("decisions", "constraints", "entities"):
-        typer.echo(
-            f"Invalid type '{entity_type}'. Use: decisions, constraints, entities.",
-            err=True,
-        )
-        raise typer.Exit(code=1)
+    all_e: list[tuple[str, dict[str, Any]]] = []
+    for nid, ntype, payload in graph.iter_nodes():
+        if ntype == "CodeEntity":
+            all_e.append((nid, payload))
 
-    valid_statuses = {"accepted", "deprecated", "rejected", "active"}
-    if status and status not in valid_statuses:
-        typer.echo(
-            f"Invalid status '{status}'. Valid: {', '.join(sorted(valid_statuses))}",
-            err=True,
-        )
-        raise typer.Exit(code=1)
+    if stale:
+        all_e = [
+            (nid, p) for nid, p in all_e
+            if p.get("type") == "file" and not Path(nid).exists()
+        ]
+    if n > 0:
+        all_e = all_e[-n:]
 
-    if entity_type == "decisions":
-        decisions = graph.get_all_decisions()
-        if status:
-            decisions = [d for d in decisions if d.status == status]
-        if n > 0:
-            decisions = decisions[-n:]
+    if not all_e:
+        typer.echo("No entities found.")
+        raise typer.Exit()
 
-        if not decisions:
-            typer.echo("No decisions found.")
-            raise typer.Exit()
-
-        max_id = max((len(d.id) for d in decisions), default=0)
-        max_id = max(max_id, 4)
-        pad = max_id + 2  # space after longest ID
-
-        typer.echo(f"Decisions ({len(decisions)}):")
-        for d in decisions:
-            date = d.created_at[:10] if d.created_at else ""
-            icon = _status_icon(d.status)
-            typer.echo(
-                f"  {icon}  {d.id:<{pad}}  {date}"
-            )
-            typer.echo(f"     {d.title}")
-
-    elif entity_type == "constraints":
-        constraints = graph.get_all_constraints()
-        if status:
-            constraints = [c for c in constraints if c.status == status]
-        if n > 0:
-            constraints = constraints[-n:]
-
-        if not constraints:
-            typer.echo("No constraints found.")
-            raise typer.Exit()
-
-        max_id = max((len(c.id) for c in constraints), default=0)
-        max_id = max(max_id, 4)
-        pad = max_id + 2
-
-        typer.echo(f"Constraints ({len(constraints)}):")
-        for c in constraints:
-            enforced = f"via {c.enforced_by}" if c.enforced_by else ""
-            icon = _status_icon(c.status)
-            typer.echo(
-                f"  {icon}  {c.id:<{pad}}  {enforced}"
-            )
-            typer.echo(f"     {c.description}")
-
-    elif entity_type == "entities":
-        entities: list[tuple[str, dict[str, Any]]] = []
-        for nid, ntype, payload in graph.iter_nodes():
-            if ntype == "CodeEntity":
-                entities.append((nid, payload))
-
-        if stale:
-            entities = [
-                (nid, p) for nid, p in entities
-                if p.get("type") == "file" and not Path(nid).exists()
-            ]
-        elif status:
-            typer.echo("Note: entities don't have statuses. Ignoring --status filter.")
-
-        if n > 0:
-            entities = entities[-n:]
-
-        if not entities:
-            typer.echo("No entities found.")
-            raise typer.Exit()
-
-        max_id = max((len(eid) for eid, _ in entities), default=0)
-        max_id = max(max_id, 4)
-        pad = max_id + 2
-
-        typer.echo(f"Entities ({len(entities)}):")
-        for eid, p in entities:
-            etype = p.get("type", "file")
-            repo = p.get("repo", "-")
-            typer.echo(f"  {eid:<{pad}}  {etype:<10}  {repo}")
+    entity_table = table()
+    entity_table.add_column("Path", style=C_ID, overflow="fold")
+    entity_table.add_column("Type")
+    entity_table.add_column("Repo", style=C_DIM)
+    for eid, p in all_e:
+        etype = p.get("type", "file")
+        repo = p.get("repo", "-")
+        entity_table.add_row(eid, etype, repo)
+    console.print(
+        panel(entity_table, title=f"Entities ({len(all_e)})")
+    )
 
 
 @app.command()
@@ -1270,8 +1694,8 @@ def metrics(
                     adrs = scan_adr_dir(adr_source.path)
                     for adr in adrs:
                         try:
-                            text = Path(adr.path).read_text(encoding="utf-8")
-                            source_tokens += count_tokens(text)
+                            adr_text = Path(adr.path).read_text(encoding="utf-8")
+                            source_tokens += count_tokens(adr_text)
                             source_file_count += 1
                         except Exception:  # noqa: S110
                             pass
@@ -1301,13 +1725,19 @@ def metrics(
         cp_avg: float = summary["memory_context_avg_tokens"]
 
         extraction_total = init_tokens + capture_tokens
-        capture_avg = capture_tokens / capture_calls if capture_calls > 0 else 0.0
+        capture_avg = (
+            capture_tokens / capture_calls if capture_calls > 0 else 0.0
+        )
 
         compression_ratio = (
-            (init_tokens / source_tokens * 100) if source_tokens > 0 else None
+            (init_tokens / source_tokens * 100)
+            if source_tokens > 0
+            else None
         )
         graph_compression = (
-            (extraction_total / source_tokens * 100) if source_tokens > 0 else None
+            (extraction_total / source_tokens * 100)
+            if source_tokens > 0
+            else None
         )
         pack_vs_source = (
             (cp_avg / source_tokens * 100)
@@ -1329,61 +1759,92 @@ def metrics(
                 return "--"
             return f"{v:.1f}%"
 
-        def _section(header: str) -> None:
-            typer.echo(f"{header:<30}{'Count':>8}     {'Tokens':>12}")
-
-        def _row(label: str, count: str, tokens: str) -> None:
-            typer.echo(f"  {label:<28}{count:>8}     {tokens:>12}")
-
-        def _ref_row(label: str, value: str) -> None:
-            typer.echo(f"  {label:<28}  {value}")
-
-        sep = "=" * 56
-        typer.echo(sep)
-        typer.echo("                  MEMENTIC TOKEN USAGE")
-        typer.echo(sep)
-        typer.echo()
-
         # Section 1: Setup (one-time)
-        _section("Setup (one-time)")
+        setup_table = table()
+        setup_table.add_column("", style="bold", width=30)
+        setup_table.add_column("Count", justify="right", width=10)
+        setup_table.add_column("Tokens", justify="right", width=15)
         sc = _n(source_file_count) if source_available else "--"
         st = _n(source_tokens) if source_available else "--"
-        _row("Source material", sc, st)
-        _row("Init extraction", _n(init_calls), _n(init_tokens))
-        _row("Compression ratio", "", _p(compression_ratio))
-        typer.echo()
+        setup_table.add_row("Source material", sc, st)
+        setup_table.add_row(
+            "Init extraction", _n(init_calls), _n(init_tokens)
+        )
+        setup_table.add_row("Compression ratio", "", _p(compression_ratio))
 
         # Section 2: Capture (recurring)
-        _section("Capture (recurring)")
-        _row("Sessions", _n(capture_calls), _n(capture_tokens))
+        capture_table = table()
+        capture_table.add_column("", style="bold", width=30)
+        capture_table.add_column("Count", justify="right", width=10)
+        capture_table.add_column("Tokens", justify="right", width=15)
+        capture_table.add_row(
+            "Sessions", _n(capture_calls), _n(capture_tokens)
+        )
         ca = _t(capture_avg) if capture_calls > 0 else "--"
-        _row("Avg per session", "", ca)
-        typer.echo()
+        capture_table.add_row("Avg per session", "", ca)
 
         # Section 3: Context Packs
-        _section("Context Packs")
-        _row("Queries", _n(cp_queries), _n(cp_total))
+        cp_table = table()
+        cp_table.add_column("", style="bold", width=30)
+        cp_table.add_column("Count", justify="right", width=10)
+        cp_table.add_column("Tokens", justify="right", width=15)
+        cp_table.add_row("Queries", _n(cp_queries), _n(cp_total))
         qa = _t(cp_avg) if cp_queries > 0 else "--"
-        _row("Avg per pack", "", qa)
-        typer.echo()
+        cp_table.add_row("Avg per pack", "", qa)
 
         # Section 4: Reference
-        typer.echo("Reference")
+        ref_table = kv_table()
+        ref_table.add_column("", style="bold", width=35)
+        ref_table.add_column("", style=C_DIM, width=55)
         gc = _p(graph_compression)
-        gc_detail = f"({_n(extraction_total)} / {_n(source_tokens)})" if source_available else ""
-        _ref_row("Graph compression", f"{gc}  {gc_detail}".rstrip())
+        gc_detail = (
+            f"({_n(extraction_total)} / {_n(source_tokens)})"
+            if source_available
+            else ""
+        )
+        ref_table.add_row(
+            "Graph compression", f"{gc}  {gc_detail}".rstrip()
+        )
         pv = _p(pack_vs_source)
         pv_detail = (
             f"({_t(cp_avg)} / {_n(source_tokens)})"
             if source_available and cp_queries > 0
             else ""
         )
-        _ref_row("Pack vs source", f"{pv}  {pv_detail}".rstrip())
-        ea = _t(extraction_amortized) if extraction_amortized is not None else "--"
-        ea_detail = (
-            f"({_n(extraction_total)} / {cp_queries})" if cp_queries > 0 else ""
+        ref_table.add_row(
+            "Pack vs source", f"{pv}  {pv_detail}".rstrip()
         )
-        _ref_row("Extraction amortized", f"{ea}  tokens/query {ea_detail}".rstrip())
+        ea = (
+            _t(extraction_amortized)
+            if extraction_amortized is not None
+            else "--"
+        )
+        ea_detail = (
+            f"({_n(extraction_total)} / {cp_queries})"
+            if cp_queries > 0
+            else ""
+        )
+        ref_table.add_row(
+            "Extraction amortized",
+            f"{ea}  tokens/query {ea_detail}".rstrip(),
+        )
+
+        console.print(
+            panel(
+                text(f"[{C_HEADER} bold]Setup (one-time)[/]"),
+                setup_table,
+                rule(),
+                text(f"[{C_HEADER} bold]Capture (recurring)[/]"),
+                capture_table,
+                rule(),
+                text(f"[{C_HEADER} bold]Context Packs[/]"),
+                cp_table,
+                rule(),
+                text(f"[{C_HEADER} bold]Reference[/]"),
+                ref_table,
+                title="Token usage",
+            )
+        )
 
     if reset:
         if typer.confirm("Delete all metrics?"):
@@ -1412,12 +1873,26 @@ def deprecate(
     graph, cfg = _resolve_graph(project)
 
     result = graph.deprecate_entity(id, reason)
-    graph.save(cfg.output.graph_path)
+    _save_graph_cli(graph, cfg)
 
     if result["status"] == "deprecated":
-        typer.echo(result["message"])
+        console.print(
+            panel(
+                text(
+                    f"Rule ID: [{C_ID}]{id}[/]\n"
+                    f"Reason: [{C_DIM}]{reason or '—'}[/]"
+                ),
+                title="Deprecated",
+            )
+        )
     elif result["status"] == "already_deprecated":
-        typer.echo(result["message"])
+        console.print(
+            panel(
+                text(f"Rule [{C_ID}]{id}[/] is already deprecated."),
+                title="Already deprecated",
+                border_style=C_WARN,
+            )
+        )
         raise typer.Exit()
     elif result["status"] == "wrong_type":
         typer.echo(result["message"], err=True)
@@ -1427,162 +1902,96 @@ def deprecate(
         raise typer.Exit(code=1)
 
 
-@app.command()
-def session_cleanup(
-    feature_description: str = typer.Argument(
-        ..., help="Description of the feature/task just completed",
-    ),
-    deprecated_ids: list[str] | None = typer.Option(
-        None, "--deprecate", "-d",
-        help="Decision or constraint IDs to deprecate (repeatable)",
-    ),
-    reason: str = typer.Option(
-        "", "--reason", "-r",
-        help="Reason for deprecation (applied to all deprecated IDs)",
-    ),
-    project: str | None = typer.Option(
-        None, "--project",
-        help="Target project name",
-    ),
+add_app = typer.Typer(help="Add decisions and constraints to the graph")
+app.add_typer(add_app, name="add")
+
+
+@add_app.command()
+def decision(
+    title: str = typer.Argument(..., help="Short title for the decision"),
+    rationale: str = typer.Option(..., "--rationale", "-r", help="Justification for the decision"),
+    entities: list[str] | None = typer.Option(None, "--entity", "-e", help="Affected file paths (repeatable)"),
+    rejected: list[str] | None = typer.Option(None, "--rejected", help="Rejected alternatives (repeatable)"),
+    project: str | None = typer.Option(None, "--project", help="Target project name"),
 ) -> None:
-    """Clean up mementic context after recording decisions/constraints.
-
-    Deprecates superseded entities, cleans dead references, and reports
-    graph state. Use after recording inline proposals during a session.
-    """
+    """Record a new architectural decision."""
     graph, cfg = _resolve_graph(project)
-    deprecated: list[str] = []
-    already: list[str] = []
-    not_found: list[str] = []
-
-    for entity_id in (deprecated_ids or []):
-        result = graph.deprecate_entity(entity_id, reason)
-        if result["status"] == "deprecated":
-            deprecated.append(entity_id)
-        elif result["status"] == "already_deprecated":
-            already.append(entity_id)
-        else:
-            not_found.append(entity_id)
-
-    # Write deprecations before cleanup
-    graph.save(cfg.output.graph_path)
-
-    # Clean dead references
-    graph.clean_dead_references()
-    graph.save(cfg.output.graph_path)
-
-    # Count active
-    active_constraints = len(graph.get_all_active_constraints())
-    active_decisions = len(graph.get_all_active_decisions())
-
-    parts: list[str] = [
-        f"session-cleanup: '{feature_description}'"
-    ]
-    if deprecated:
-        parts.append(f"deprecated {', '.join(deprecated)}")
-    if already:
-        parts.append(f"(already deprecated: {', '.join(already)})")
-    if not_found:
-        parts.append(f"(not found: {', '.join(not_found)})")
-    parts.append(
-        f"{active_decisions + active_constraints} active "
-        f"({active_decisions} decisions, {active_constraints} constraints)"
+    now = timestamp()
+    d = Decision(
+        id=slugify(title, max_length=DECISION_ID_MAX_LENGTH),
+        title=title,
+        rationale=rationale,
+        rejected_alternatives=rejected or [],
+        affected_entities=entities or [],
+        source="cli",
+        status=DecisionStatus.ACCEPTED,
+        created_at=now,
+        modified_at=now,
+        repo=resolve_repo_name(detect_repo_path()),
+    )
+    graph.add_decision(d)
+    for ep in (entities or []):
+        clean = re.sub(r"::[A-Za-z_]\w*$", "", ep)
+        clean = re.sub(r":[A-Za-z_]\w*$", "", clean)
+        e = CodeEntity(id=clean, type=EntityType.FILE, repo=d.repo)
+        graph.add_code_entity(e)
+        graph.link(d.id, clean, "affects")
+    _save_graph_cli(graph, cfg)
+    console.print(
+        panel(
+            text(
+                f"Title:  [{C_HEADER}]{title}[/]\n"
+                f"ID:     [{C_ID}]{d.id}[/]\n"
+                f"Status: [{C_SUCCESS}]accepted[/]"
+            ),
+            title="Decision added",
+        )
     )
 
-    typer.echo(" — ".join(parts))
 
-
-@app.command()
-def inject(
-    agent: str | None = typer.Option(
-        None, "--agent",
-        help="Target agent (opencode, claude-code, cursor, windsurf). Auto-detects if omitted.",
-    ),
-    dry_run: bool = typer.Option(
-        False, "--dry-run",
-        help="Show what would be written without modifying files.",
-    ),
+@add_app.command()
+def constraint(
+    description: str = typer.Argument(..., help="Constraint description"),
+    entities: list[str] = typer.Option(..., "--entity", "-e", help="Bound entity paths (repeatable, required)"),
+    decision_id: str | None = typer.Option(None, "--decision-id", "-d", help="Enforcing decision ID"),
+    rule_id: str | None = typer.Option(None, "--id", help="Explicit rule ID (auto-generated if omitted)"),
+    project: str | None = typer.Option(None, "--project", help="Target project name"),
 ) -> None:
-    """Inject mementic enforcement instructions into AGENTS.md.
-
-    Auto-detects agents in the repo and writes the enforcement block.
-    For non-OpenCode agents, offers to write pointer files and register
-    the MCP server.
-    """
-    cwd = Path(detect_repo_path())
-    agents_md = cwd / "AGENTS.md"
-
-    if agent:
-        agents = [agent]
-        valid_agents = set(_AGENT_MARKERS.values())
-        if agent not in valid_agents:
-            typer.echo(
-                f"Unknown agent '{agent}'. Valid: {', '.join(sorted(valid_agents))}",
-                err=True,
-            )
-            raise typer.Exit(code=1)
-    else:
-        agents = detect_agents(cwd)
-        if not agents:
-            typer.echo("No agents detected. Looking for .opencode/, .claude/, .cursor/, .windsurf/ directories.")
-            typer.echo("Run 'mementic inject --agent opencode' to inject manually.")
-            raise typer.Exit(code=1)
-
-    # Inject enforcement block
-    result = inject_enforcement(agents_md, dry_run=dry_run)
-    typer.echo(result)
-
-    if "already exists" in result and not dry_run:
-        typer.echo("To re-inject, remove the existing block from AGENTS.md first.")
-        raise typer.Exit()
-
-    # For non-OpenCode agents, offer pointer files
-    for ag in agents:
-        rules_file = get_rules_file(ag)
-        if rules_file and not dry_run:
-            rules_path = cwd / rules_file
-            if not rules_path.exists():
-                if sys.stdin.isatty():
-                    create_pointer = typer.confirm(
-                        f"Create {rules_file} with pointer to AGENTS.md?",
-                        default=True,
-                    )
-                    if create_pointer:
-                        rules_path.write_text(
-                            "See AGENTS.md for mementic enforcement instructions.\n",
-                            encoding="utf-8",
-                        )
-                        typer.echo(f"  Created {rules_file}")
-
-    # Offer to register MCP server
-    for ag in agents:
-        mcp_config = get_mcp_config_file(ag)
-        if mcp_config and not dry_run:
-            config_path = cwd / mcp_config
-            if not config_path.exists():
-                if sys.stdin.isatty():
-                    create_config = typer.confirm(
-                        f"Create {mcp_config} with mementic MCP server?",
-                        default=True,
-                    )
-                    if create_config:
-                        config_path.parent.mkdir(parents=True, exist_ok=True)
-                        mcp_entry = {
-                            "mcpServers": {
-                                "mementic": {
-                                    "command": "uv",
-                                    "args": ["run", "mementic", "server"],
-                                }
-                            }
-                        }
-                        config_path.write_text(
-                            json.dumps(mcp_entry, indent=2) + "\n",
-                            encoding="utf-8",
-                        )
-                        typer.echo(f"  Created {mcp_config}")
-
-    if dry_run:
-        typer.echo("\n(dry run — no files modified)")
+    """Record a new constraint."""
+    graph, cfg = _resolve_graph(project)
+    now = timestamp()
+    cid = slugify(rule_id, max_length=CONSTRAINT_ID_MAX_LENGTH) if rule_id else slugify(description, max_length=CONSTRAINT_ID_MAX_LENGTH)
+    c = Constraint(
+        id=cid,
+        description=description,
+        bound_entities=entities,
+        enforced_by=decision_id or "",
+        source="cli",
+        status="active",
+        created_at=now,
+        repo=resolve_repo_name(detect_repo_path()),
+    )
+    graph.add_constraint(c)
+    for ep in entities:
+        clean = re.sub(r"::[A-Za-z_]\w*$", "", ep)
+        clean = re.sub(r":[A-Za-z_]\w*$", "", clean)
+        e = CodeEntity(id=clean, type=EntityType.FILE, repo=c.repo)
+        graph.add_code_entity(e)
+        graph.link(c.id, clean, "binds_to")
+    _save_graph_cli(graph, cfg)
+    bound_list = ", ".join(entities[:5])
+    if len(entities) > 5:
+        bound_list += f" +{len(entities) - 5} more"
+    console.print(
+        panel(
+            text(
+                f"ID:       [{C_ID}]{c.id}[/]\n"
+                f"Bound to: [{C_PATH}]{bound_list}[/]\n"
+                f"Desc:     [{C_DIM}]{description}[/]"
+            ),
+            title="Constraint added",
+        )
+    )
 
 
 project_app = typer.Typer(help="Manage Mementic projects")
@@ -1613,9 +2022,14 @@ def create(
         db_path=f"~/.mementic/projects/{name}.mementic.db",
     )
     save_global_config(config)
-    typer.echo(
-        f"Created project '{name}'. "
-        f"Database will be created on first mementic init."
+    console.print(
+        panel(
+            text(
+                f"Project [{C_ID}]{name}[/] created.\n"
+                f"[{C_DIM}]Database will be created on first mementic init.[/]"
+            ),
+            title="Project created",
+        )
     )
 
 
@@ -1629,11 +2043,20 @@ def list_projects() -> None:
         raise typer.Exit()
 
     default = config.default_project
+    proj_table = table()
+    proj_table.add_column("Default", width=2)
+    proj_table.add_column("Name", style="bold")
+    proj_table.add_column("Repos")
+    proj_table.add_column("Description", style=C_DIM)
     for proj_name, proj_entry in config.projects.items():
-        marker = "*" if proj_name == default else " "
-        repo_count = len(proj_entry.repos)
-        desc = f"    {proj_entry.description}" if proj_entry.description else ""
-        typer.echo(f"{marker} {proj_name:<20} ({repo_count} repos){desc}")
+        marker = f"[{C_SUCCESS}]*[/]" if proj_name == default else " "
+        proj_table.add_row(
+            marker,
+            proj_name,
+            str(len(proj_entry.repos)),
+            proj_entry.description or "",
+        )
+    console.print(panel(proj_table, title="Projects"))
 
 
 @project_app.command()
@@ -1653,7 +2076,12 @@ def set_default(
 
     config.default_project = name
     save_global_config(config)
-    typer.echo(f"Default project set to '{name}'.")
+    console.print(
+        panel(
+            text(f"Default project: [{C_ID}]{name}[/]"),
+            title="Default set",
+        )
+    )
 
 
 @project_app.command()
@@ -1699,7 +2127,9 @@ def delete(
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=1)
 
-    typer.echo(msg)
+    console.print(
+        panel(text(f"[{C_SUCCESS}]{msg}[/]"), title="Project deleted")
+    )
 
 
 @project_app.command()
@@ -1724,124 +2154,33 @@ def info(
     proj = config.projects[target]
     is_default = target == config.default_project
 
-    typer.echo(f"Project:   {target}{'  (default)' if is_default else ''}")
-    typer.echo(f"DB path:   {proj.db_path}")
+    info_table = kv_table()
+    info_table.add_column("", style="bold", width=15)
+    info_table.add_column("", style=C_DIM)
+    info_table.add_row("DB path", str(proj.db_path))
     if proj.description:
-        typer.echo(f"Description: {proj.description}")
-    typer.echo(f"Repos ({len(proj.repos)}):")
+        info_table.add_row("Description", proj.description)
+    info_table.add_row("Repos", str(len(proj.repos)))
 
-    if not proj.repos:
-        typer.echo("  (none)")
-    else:
+    console.print(
+        panel(
+            info_table,
+            title=f"Project: {target}{' (default)' if is_default else ''}",
+        )
+    )
+
+    # Also show individual repos
+    if proj.repos:
+        repo_lines = []
         for repo_path, repo_entry in proj.repos.items():
-            label = f"  [{repo_entry.label}]" if repo_entry.label else ""
-            typer.echo(f"  {repo_path}{label}")
-
-
-# ---------------------------------------------------------------------------
-# Lint helpers
-# ---------------------------------------------------------------------------
-
-_FIX_DESCRIPTIONS: dict[str, str] = {
-    "stale-entity": "remove stale entity node",
-    "status-inconsistency": "deprecate active constraint referencing deprecated decision",
-    "orphaned-entity": "remove orphaned entity node",
-    "orphaned-constraint": "clear invalid enforced_by reference",
-}
-
-
-def _fmt_fix_description(finding: LintFinding) -> str:
-    """Return a human-readable description of what --fix will do for a finding."""
-    base = _FIX_DESCRIPTIONS.get(finding.rule, "unknown action")
-    if finding.node_id:
-        base += f" ({finding.node_id})"
-    return base
-
-
-@app.command()
-def lint(
-    fix: bool = typer.Option(
-        False, "--fix", help="Auto-remediate fixable findings",
-    ),
-    json_output: bool = typer.Option(
-        False, "--json", help="Output findings as JSON (machine-readable)",
-    ),
-    project: str | None = typer.Option(
-        None, "--project", help="Target project name",
-    ),
-) -> None:
-    """Check graph health with deterministic lint rules.
-
-    Runs all 5 lint rules against the knowledge graph with zero API cost.
-    Use --fix to auto-remediate fixable findings in-place.
-    Use --json for machine-readable output.
-    """
-    graph, _cfg = _resolve_graph(project)
-    graph.clean_dead_references()
-
-    result = lint_graph(graph)
-
-    if fix:
-        counts = lint_fix(graph, result)
-        result = lint_graph(graph)  # re-lint to reflect fixes
-
-    if json_output:
-        findings_dicts: list[dict[str, Any]] = []
-        for f in result.findings:
-            findings_dicts.append({
-                "rule": f.rule,
-                "severity": f.severity,
-                "message": f.message,
-                "node_id": f.node_id,
-                "fixable": f.fixable,
-                "fix_description": _fmt_fix_description(f),
-                "related_id": f.related_id or None,
-            })
-        typer.echo(json.dumps(findings_dicts, indent=2))
-    else:
-        if not result.findings:
-            typer.echo("Graph is healthy - no issues found.")
-        else:
-            _SEVERITY_PREFIX: dict[str, str] = {
-                "error": "[ERROR]",
-                "warning": "[WARN] ",
-                "info": "[INFO] ",
-            }
-            for finding in result.findings:
-                prefix = _SEVERITY_PREFIX.get(finding.severity, "[?]    ")
-                line = (
-                    f"  {prefix} [{finding.rule}] {finding.message}"
-                )
-                if finding.fixable:
-                    line += f"\n       --fix would: {_fmt_fix_description(finding)}"
-                typer.echo(line)
-                typer.echo()
-
-            parts = [
-                f"{result.error_count} errors",
-                f"{result.warning_count} warnings",
-                f"{result.info_count} info",
-            ]
-            extras: list[str] = []
-            if result.fixable_count:
-                extras.append(f"{result.fixable_count} fixable")
-            if result.needs_review_count:
-                extras.append(f"{result.needs_review_count} need review")
-            summary = ", ".join(parts)
-            if extras:
-                summary += f" ({', '.join(extras)})"
-            typer.echo(summary)
-
-        if fix:
-            typer.echo(
-                f"\nFixed: {counts['total']} issues "
-                f"(removed: {counts['removed']}, "
-                f"deprecated: {counts['deprecated']}, "
-                f"cleared: {counts['cleared']})"
+            label = f" [{repo_entry.label}]" if repo_entry.label else ""
+            repo_lines.append(f"[{C_PATH}]{repo_path}{label}[/]")
+        console.print(
+            panel(
+                *[text(line) for line in repo_lines],
+                title="Registered repos",
             )
-
-    if result.error_count > 0:
-        raise typer.Exit(code=1)
+        )
 
 
 if __name__ == "__main__":

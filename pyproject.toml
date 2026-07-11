@@ -8,9 +8,11 @@ dependencies = [
     "mcp>=1.0",
     "openai>=1.0",
     "pyvis>=0.3",
+    "rich>=13.0",
     "tiktoken>=0.5",
     "typer>=0.9",
     "keyring>=25.7.0",
+    "json5>=0.9",
 ]
 
 [project.scripts]

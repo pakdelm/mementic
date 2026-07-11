@@ -81,14 +81,14 @@ populates the knowledge graph.
 
 ```bash
 mementic status
-mementic query --search "auth"
-mementic query --entity src/auth/handler.py
+mementic query search auth
+mementic query file src/auth/handler.py
 ```
 
 ### 3. Load context before tasks
 
 ```bash
-mementic context --keyword auth --keyword rate --keyword limit --keyword security
+mementic query keywords auth rate limit security
 ```
 
 Outputs a mementic memory with constraints and decisions ranked by keyword overlap.
@@ -163,11 +163,11 @@ Register the MCP server in `opencode.json`:
 ```
 
 The agent automatically discovers these MCP tools:
-- `get_task_context` — load constraints and decisions for a task (call after every user message)
+- `get_rules` — load constraints and decisions for a task (call after every user message)
 - `record_decision` — record architectural decisions
 - `record_constraint` — record new constraints
-- `deprecate_rule` — retire outdated decisions or constraints
-- `get_entity_history` — trace decision history of a code entity
+- `deprecate` — retire outdated decisions or constraints
+- `get_file_history` — trace decision/constraint history of a code file
 
 OpenCode custom commands are also available in the TUI:
 - `/mementic-context <task>` — load constraints before working
@@ -186,7 +186,7 @@ This project uses Mementic as its architectural memory layer. These rules apply
 to every task, every session.
 
 **Token discipline — primary vs. secondary sources:**
-1. **Primary (always):** the mementic memory from `mementic_get_task_context`.
+1. **Primary (always):** the mementic memory from `mementic_get_rules`.
    It is the compressed index — a fraction of the token cost of reading raw
    ADRs. Read it first, every time.
 2. **Secondary (only when needed):** raw ADR and instruction files on disk.
@@ -200,8 +200,8 @@ context window):
    Generate 15-25 single-word keywords that capture the task's domain
    (e.g., for "fix authentication bug" → ["auth", "token", "security",
    "password", "hashing", "argon2", "login", "session"]).
-2. Call `mementic_get_task_context(keywords=[...])` with those keywords.
-3. Call `mementic_get_entity_history` for each file being modified.
+2. Call `mementic_get_rules(keywords=[...])` with those keywords.
+3. Call `mementic_get_file_history` for each file being modified.
 4. Validate your plan against every returned constraint. Do NOT write code
    that violates an active constraint.
 5. Only read raw ADR or instruction files if the mementic memory leaves ambiguity
@@ -227,18 +227,20 @@ no manual review step.
 |---|---|
 | `mementic init [--repo PATH] [--no-scan] [--interactive] [--key] [--project NAME]` | Initialize graph from configured sources |
 | `mementic capture [--session PATH] [--notes TEXT] [--tail N] [-k KEYWORD]` | Extract decisions from session (auto-resolves: new/skip/update) |
-| `mementic context --keyword KEYWORD [...] [--project NAME]` | Generate mementic memory with constraints/decisions ranked by keyword overlap |
-| `mementic query [--entity PATH] [--search TERM] [--depth N]` | Search graph |
-| `mementic list [decisions\|constraints\|entities] [--status S] [-n N] [--stale]` | Browse graph in scannable format |
-| `mementic lint [--fix] [--json] [--project NAME]` | Check graph health with deterministic lint rules |
+| `mementic query keywords KEYWORD [KEYWORD ...] [--project NAME]` | Return ranked context pack of constraints and decisions matched by keywords |
+| `mementic query file PATH [--prefix] [--max-tokens N]` | Show constraints and decisions affecting a specific file |
+| `mementic query search TERM` | Full-text search across decisions and constraints |
+| `mementic query stats` | Show graph statistics (entity/decision/constraint counts) |
+| `mementic add decision TITLE -r RATIONALE [-e PATH] [--rejected ALT]` | Record a new architectural decision |
+| `mementic add constraint DESCRIPTION -e PATH [-d DECISION_ID]` | Record a new constraint |
+| `mementic list decisions [-n N] [--status S] [--project NAME]` | List recent architectural decisions |
+| `mementic list constraints [-n N] [--status S] [--project NAME]` | List recent constraints |
+| `mementic list entities [-n N] [--stale] [--project NAME]` | List code entities |
 | `mementic deprecate <id> [--reason TEXT]` | Retire a decision or constraint (don't edit history) |
-| `mementic graph [-o PATH] [-O] [--filter TYPE]` | Generate interactive HTML visualization |
+| `mementic visualize [-o PATH] [-O] [--filter TYPE]` | Generate interactive HTML visualization |
 | `mementic metrics [--json] [--reset]` | Show token usage metrics |
 | `mementic status` | Show health checklist (config, API key, graph, session provider) |
-| `mementic log` | Show recent graph mutations |
-| `mementic server` | Start MCP server (stdio) |
-| `mementic session-cleanup <feature_description> [-d ID] [--reason TEXT] [--project NAME]` | Deprecate entities and clean references after a session |
-| `mementic inject [--agent NAME] [--dry-run]` | Inject enforcement instructions into AGENTS.md |
+| `mementic log [-n N]` | Show recent graph mutations |
 | `mementic project create <name> [--description TEXT]` | Create a new project |
 | `mementic project list` | List all configured projects |
 | `mementic project set-default <name>` | Set the default project |

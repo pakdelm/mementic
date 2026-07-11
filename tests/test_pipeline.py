@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Literal
 from unittest.mock import patch
 
 import pytest
@@ -255,9 +254,8 @@ _SOURCE_MAP = {
 def _configure_repo(
     repo_path: str,
     sources: dict[str, list[str]] | None = None,
-    extraction_mode: Literal["auto", "deterministic", "llm"] = "deterministic",
 ) -> None:
-    """Set sources and extraction_mode on the registered repo in the global config.
+    """Set sources on the registered repo in the global config.
 
     Sources are attached to the RepoEntry whose path resolves to ``repo_path``.
     The global config is loaded, mutated, and saved in place. This relies on
@@ -267,10 +265,8 @@ def _configure_repo(
     Args:
         repo_path: Absolute path to the registered repo.
         sources: Optional mapping of source-type name -> list of dir paths.
-        extraction_mode: ``"deterministic"``, ``"llm"``, or ``"auto"``.
     """
     global_cfg = load_global_config()
-    global_cfg.llm.extraction_mode = extraction_mode
 
     sources_obj = Sources()
     if sources:
@@ -903,8 +899,7 @@ class TestRunInitWithCursor:
         _configure_repo(
             repo_path,
             sources={"cursor_instructions": [str(cursor_dir)]},
-            extraction_mode="llm",
-        )
+            )
         _enable_llm_mode(monkeypatch)
 
         monkeypatch.setattr(
@@ -915,7 +910,7 @@ class TestRunInitWithCursor:
             ),
         )
 
-        _gs, all_usage = run_init(repo_path=repo_path)
+        _gs, all_usage = run_init(repo_path=repo_path, deep=True)
 
         assert len(all_usage) == 1
         assert all_usage[0].model == "test-model"
@@ -972,8 +967,7 @@ class TestRunInitWithWindsurf:
         _configure_repo(
             repo_path,
             sources={"windsurf_instructions": [str(windsurf_dir)]},
-            extraction_mode="llm",
-        )
+            )
         _enable_llm_mode(monkeypatch)
 
         monkeypatch.setattr(
@@ -984,7 +978,7 @@ class TestRunInitWithWindsurf:
             ),
         )
 
-        _gs, all_usage = run_init(repo_path=repo_path)
+        _gs, all_usage = run_init(repo_path=repo_path, deep=True)
 
         assert len(all_usage) == 1
         assert all_usage[0].model == "test-model"
@@ -1065,7 +1059,7 @@ class TestRunInitWithRepoScan:
         (repo / "src" / "app.py").write_text(
             "import fastapi\nfrom pydantic import BaseModel\n"
         )
-        _configure_repo(repo_path, sources=None, extraction_mode="llm")
+        _configure_repo(repo_path, sources=None)
         _enable_llm_mode(monkeypatch)
 
         mock_result = ExtractionResult(
@@ -1089,7 +1083,7 @@ class TestRunInitWithRepoScan:
             "mementic.pipeline.extract_from_codebase_summary",
             return_value=(mock_result, UsageStats(model="test-model", status="success")),
         ):
-            gs, _all_usage = run_init(repo_path=repo_path)
+            gs, _all_usage = run_init(repo_path=repo_path, deep=True)
 
         decisions = gs.get_all_decisions()
         assert len(decisions) >= 1
@@ -1106,13 +1100,13 @@ class TestRunInitWithRepoScan:
         (repo / "pyproject.toml").write_text("[project]\nname = \"test\"\n")
         (repo / "src").mkdir()
         (repo / "src" / "app.py").write_text("import fastapi\n")
-        _configure_repo(repo_path, sources=None, extraction_mode="llm")
+        _configure_repo(repo_path, sources=None)
         _enable_llm_mode(monkeypatch)
 
         with patch(
             "mementic.pipeline.extract_from_codebase_summary"
         ) as mock_extract:
-            _gs, all_usage = run_init(repo_path=repo_path, no_scan=True)
+            _gs, all_usage = run_init(repo_path=repo_path, no_scan=True, deep=True)
 
         mock_extract.assert_not_called()
         assert len(all_usage) == 0
@@ -1124,7 +1118,7 @@ class TestRunInitWithRepoScan:
     ) -> None:
         """run_init without repo_path does not call the scanner."""
         _config_path, _repo_path = tmp_global_config
-        _configure_repo(_repo_path, sources=None, extraction_mode="llm")
+        _configure_repo(_repo_path, sources=None)
         _enable_llm_mode(monkeypatch)
 
         with patch(
@@ -1147,7 +1141,7 @@ class TestRunInitWithRepoScan:
         returns an empty string and the extraction step is skipped.
         """
         _config_path, repo_path = tmp_global_config
-        _configure_repo(repo_path, sources=None, extraction_mode="llm")
+        _configure_repo(repo_path, sources=None)
         _enable_llm_mode(monkeypatch)
 
         with patch(

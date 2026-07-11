@@ -180,7 +180,7 @@ class UsageStore:
                 extraction_capture_calls += 1
                 extraction_capture_tokens += e.total_tokens
 
-            if e.operation == "get_task_context":
+            if e.operation in ("get_task_context", "get_rules"):
                 memory_context_queries += 1
                 memory_context_total_tokens += e.total_tokens
 

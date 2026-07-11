@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import re
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from mementic.config import MementicConfig, load_config, load_global_config
 from mementic.extraction import (
@@ -76,17 +77,18 @@ def _ingest_result(
     repo_path: str | None = None,
 ) -> None:
     """Add extracted decisions, constraints, and entities to the graph."""
+    repo_name = resolve_repo_name(repo_path) if repo_path else ""
     for d in result.decisions:
-        d.repo = resolve_repo_name(repo_path) if repo_path else ""
+        d.repo = repo_name
         _add_decision_dedup(graph, d)
         for entity_path in result.affected_entities:
             eid = _entity_id(repo_path, entity_path)
             graph.add_code_entity(
-                CodeEntity(id=eid, type=EntityType.FILE, repo=resolve_repo_name(repo_path) if repo_path else "")
+                CodeEntity(id=eid, type=EntityType.FILE, repo=repo_name)
             )
             graph.link(d.id, eid, "affects")
     for c in result.constraints:
-        c.repo = resolve_repo_name(repo_path) if repo_path else ""
+        c.repo = repo_name
         if _add_constraint_dedup(graph, c):
             _ensure_code_entities(graph, c, source_path, result, repo_path=repo_path)
     for edge in result.edges_to_create:
@@ -98,6 +100,7 @@ def _ensure_code_entities(
     repo_path: str | None = None,
 ) -> None:
     """Ensure CodeEntity nodes exist for bound entities, falling back to source path."""
+    repo_name = resolve_repo_name(repo_path) if repo_path else ""
     entities = list(constraint.bound_entities)
     if not entities:
         entities = find_file_paths(constraint.description)
@@ -106,19 +109,20 @@ def _ensure_code_entities(
     for entity_path in entities:
         eid = _entity_id(repo_path, entity_path)
         graph.add_code_entity(
-            CodeEntity(id=eid, type=EntityType.FILE, repo=resolve_repo_name(repo_path) if repo_path else "")
+            CodeEntity(id=eid, type=EntityType.FILE, repo=repo_name)
         )
         graph.link(constraint.id, eid, "binds_to")
     for entity_path in result.affected_entities:
         eid = _entity_id(repo_path, entity_path)
         graph.add_code_entity(
-            CodeEntity(id=eid, type=EntityType.FILE, repo=resolve_repo_name(repo_path) if repo_path else "")
+            CodeEntity(id=eid, type=EntityType.FILE, repo=repo_name)
         )
         graph.link(constraint.id, eid, "binds_to")
 
 
 def _backfill_edges(graph: GraphStore, repo_path: str | None = None) -> int:
     """Ensure all constraints have entity links. Returns number of constraints fixed."""
+    repo_name = resolve_repo_name(repo_path) if repo_path else ""
     count = 0
     for node_id, node_type, payload in graph.iter_nodes():
         if node_type != "Constraint":
@@ -130,7 +134,7 @@ def _backfill_edges(graph: GraphStore, repo_path: str | None = None) -> int:
             graph, constraint,
             payload.get("source", "unknown"),
             ExtractionResult(),
-            repo_path=resolve_repo_name(repo_path) if repo_path else "",
+            repo_path=repo_name,
         )
         count += 1
     return count
@@ -140,6 +144,7 @@ def _backfill_decision_edges(
     graph: GraphStore, repo_path: str | None = None
 ) -> int:
     """Ensure all decisions have entity links. Returns number of decisions fixed."""
+    repo_name = resolve_repo_name(repo_path) if repo_path else ""
     count = 0
     for node_id, node_type, payload in graph.iter_nodes():
         if node_type != "Decision":
@@ -159,7 +164,7 @@ def _backfill_decision_edges(
         for entity_path in paths:
             eid = _entity_id(repo_path, entity_path)
             graph.add_code_entity(
-                CodeEntity(id=eid, type=EntityType.FILE, repo=resolve_repo_name(repo_path) if repo_path else "")
+                CodeEntity(id=eid, type=EntityType.FILE, repo=repo_name)
             )
             graph.link(node_id, eid, "affects")
         count += 1
@@ -172,13 +177,13 @@ def _zero_usage() -> UsageStats:
 
 
 def _should_use_llm(cfg: MementicConfig) -> bool:
-    """Check if LLM extraction should be attempted based on mode and key presence."""
-    mode = cfg.llm.extraction_mode
-    if mode == "deterministic":
+    """Check if LLM extraction should be attempted.
+
+    Returns True when an API key is available AND deterministic mode has not
+    been forced via the ``_force_deterministic`` attribute set by ``run_init``.
+    """
+    if getattr(cfg, "_force_deterministic", False):
         return False
-    if mode == "llm":
-        return True
-    # auto: use LLM only if key is present
     return cfg.llm.get_api_key() is not None
 
 
@@ -191,9 +196,8 @@ def _extract_markdown(
     try:
         return extract_from_freeform(content, source_label, cfg.llm)
     except Exception:
-        if cfg.llm.extraction_mode == "llm":
-            raise
         sys.stderr.write("LLM unavailable, falling back to deterministic.\n")
+        sys.stderr.flush()
         return extract_from_markdown(content, source_label), _zero_usage()
 
 
@@ -214,8 +218,6 @@ def _extract_consequences(
     try:
         return extract_from_adr_consequences(consequences_text, cfg.llm)
     except Exception:
-        if cfg.llm.extraction_mode == "llm":
-            raise
         sys.stderr.write("LLM unavailable, falling back to deterministic.\n")
         return (
             extract_constraints_from_consequences(
@@ -249,8 +251,6 @@ def _extract_session(
             custom_keywords=custom_keywords,
         )
     except Exception:
-        if cfg.llm.extraction_mode == "llm":
-            raise
         sys.stderr.write("LLM unavailable, falling back to deterministic.\n")
         result = extract_from_session_deterministic(
             session_log, git_diff, user_notes, max_messages, custom_keywords
@@ -295,7 +295,8 @@ def _resolve_db_path(repo_path: str | None) -> str | None:
 
 
 def _run_codebase_scan(
-    graph: GraphStore, repo_path: str, cfg: MementicConfig, no_scan: bool
+    graph: GraphStore, repo_path: str, cfg: MementicConfig, no_scan: bool,
+    advance: Callable[[str, int], None] | None = None,
 ) -> list[UsageStats]:
     """Phase 1: scan codebase structure for architectural patterns (Spec 12a).
 
@@ -304,29 +305,115 @@ def _run_codebase_scan(
     if no_scan or not _should_use_llm(cfg):
         return []
 
+    if advance:
+        advance("Scanning codebase structure...", 1)
+
     summary = scan_codebase_structure(repo_path)
     if not summary.strip():
         return []
 
+    sys.stderr.write("Codebase structural scan complete. Analyzing with LLM...\n")
+    sys.stderr.flush()
+
+    if advance:
+        advance("Analyzing structure with LLM...", 1)
+
+    t0 = time.monotonic()
     result, usage = extract_from_codebase_summary(summary, cfg.llm)
+    elapsed = time.monotonic() - t0
+
     if result.decisions:
         sys.stderr.write(
-            f"Codebase scan: detected {len(result.decisions)} "
-            f"potential decision(s) from structural patterns.\n"
+            f"LLM analysis completed in {elapsed:.1f}s — "
+            f"{len(result.decisions)} potential decision(s) detected.\n"
         )
+        sys.stderr.flush()
     _ingest_result(graph, result, source_path="init", repo_path=repo_path)
     return [usage]
 
 
+# Characters per batch — ~10K tokens at 4 chars/token, well below max_tokens=16384.
+_MD_BATCH_CHARS = 40_000
+
+
+def _build_md_batches(
+    md_files: list[tuple[str, str]], max_chars: int
+) -> list[list[tuple[str, str]]]:
+    """Split markdown files into batches that fit within ``max_chars``.
+
+    Each batch contains complete files — a file is never split across batches.
+    """
+    batches: list[list[tuple[str, str]]] = []
+    current_batch: list[tuple[str, str]] = []
+    current_chars = 0
+
+    for relpath, content in md_files:
+        file_chars = len(relpath) + len(content) + 20  # padding for "### File: ..."
+        if current_batch and current_chars + file_chars > max_chars:
+            batches.append(current_batch)
+            current_batch = []
+            current_chars = 0
+        current_batch.append((relpath, content))
+        current_chars += file_chars
+
+    if current_batch:
+        batches.append(current_batch)
+    return batches
+
+
 def _run_markdown_scan(
-    graph: GraphStore, repo_path: str, cfg: MementicConfig
+    graph: GraphStore, repo_path: str, cfg: MementicConfig,
+    advance: Callable[[str, int], None] | None = None,
 ) -> list[UsageStats]:
-    """Phase 0: scan repo-wide markdown files for decisions (Spec 15)."""
+    """Phase 0: scan repo-wide markdown files for decisions (Spec 15).
+
+    In LLM mode, files are batched into token-budget groups — one API call
+    per batch instead of one per file.  Deterministic mode processes per-file
+    since there is no API cost.
+    """
     usage_list: list[UsageStats] = []
-    for md_relpath, md_content in collect_markdown_files(repo_path):
-        result, usage = _extract_markdown(md_content, md_relpath, cfg)
+    md_files = collect_markdown_files(repo_path)
+    if not md_files:
+        return usage_list
+
+    if not _should_use_llm(cfg):
+        total = len(md_files)
+        for idx, (md_relpath, md_content) in enumerate(md_files, 1):
+            result, usage = _extract_markdown(md_content, md_relpath, cfg)
+            usage_list.append(usage)
+            _ingest_result(graph, result, source_path=md_relpath, repo_path=repo_path)
+            if advance:
+                advance(f"Markdown file {idx}/{total}", 1)
+        return usage_list
+
+    # LLM mode: batch files to reduce API calls
+    batches = _build_md_batches(md_files, _MD_BATCH_CHARS)
+    sys.stderr.write(
+        f"Markdown scan: processing {len(md_files)} file(s) "
+        f"in {len(batches)} batch(es)...\n"
+    )
+    sys.stderr.flush()
+    t0 = time.monotonic()
+    for batch_idx, batch in enumerate(batches, 1):
+        if advance:
+            advance(f"Markdown batch {batch_idx}/{len(batches)}", 1)
+        batch_content = "\n\n".join(
+            f"### File: {relpath}\n{content}" for relpath, content in batch
+        )
+        result, usage = extract_from_freeform(
+            batch_content, f"markdown-scan-batch-{batch_idx}", cfg.llm
+        )
         usage_list.append(usage)
-        _ingest_result(graph, result, source_path=md_relpath, repo_path=repo_path)
+        _ingest_result(
+            graph, result, source_path="markdown-scan", repo_path=repo_path
+        )
+
+    elapsed = time.monotonic() - t0
+    sys.stderr.write(
+        f"Markdown scan: processed {len(md_files)} file(s) in {elapsed:.1f}s\n"
+    )
+    sys.stderr.flush()
+
     return usage_list
 
 
@@ -340,6 +427,7 @@ def _ingest_adr_source(
     """
     if not Path(adr_dir_path).is_dir():
         sys.stderr.write(f"Warning: Source '{adr_dir_path}' not found. Skipping.\n")
+        sys.stderr.flush()
         return []
 
     usage_list: list[UsageStats] = []
@@ -390,6 +478,7 @@ def _ingest_instruction_source(
     """
     if not Path(source_path).is_dir():
         sys.stderr.write(f"Warning: Source '{source_path}' not found. Skipping.\n")
+        sys.stderr.flush()
         return []
 
     usage_list: list[UsageStats] = []
@@ -405,8 +494,14 @@ def run_init(
     no_scan: bool = False,
     db_path: str | None = None,
     project: str | None = None,
+    advance: Callable[[str, int], None] | None = None,
+    deep: bool = False,
 ) -> tuple[GraphStore, list[UsageStats]]:
     """Initialize the knowledge graph from all configured sources.
+
+    By default, extraction runs deterministically (regex-based, near-instant).
+    Pass ``deep=True`` to enable full LLM-powered extraction for maximum
+    quality seed decisions (requires an API key).
 
     When ``repo_path`` is provided (or CWD is auto-detected as a codebase),
     a deterministic structural scan runs first to detect architectural
@@ -424,12 +519,17 @@ def run_init(
         no_scan: If True, skip the codebase structural scan.
         db_path: Optional path to a SQLite database for persistent storage.
         project: Optional project name to scope the loaded configuration.
+        deep: If True, use LLM extraction for all phases (requires API key).
+            Default is deterministic (fast, no API calls).
 
     Returns:
         A tuple of (GraphStore, list[UsageStats]) — usage stats from all
         LLM extraction calls made during init.
     """
     cfg = load_config(repo_path=repo_path, project=project)
+
+    if not deep:
+        cfg._force_deterministic = True  # type: ignore[attr-defined]
 
     # Resolve db_path from project config when not explicitly provided.
     # Avoids falling back to the deprecated .mementic/graph.json path.
@@ -441,46 +541,79 @@ def run_init(
     graph = GraphStore(db_path=db_path) if db_path else GraphStore()
     all_usage: list[UsageStats] = []
 
-    # Phase 1: Codebase structural scan (Spec 12a) — cold-start killer.
-    if repo_path:
-        all_usage.extend(_run_codebase_scan(graph, repo_path, cfg, no_scan))
+    # Batch all ingestion into a single SQLite transaction — without this,
+    # every add_decision / add_constraint / add_code_entity / link call
+    # triggers a full DELETE + re-INSERT of the entire graph to SQLite,
+    # making init O(n^2) in the number of extracted items (~13 min for
+    # 33 files on this project).
+    with graph.batch():
+        # Phase 1: Codebase structural scan (Spec 12a) — cold-start killer.
+        if repo_path:
+            all_usage.extend(
+                _run_codebase_scan(graph, repo_path, cfg, no_scan, advance=advance)
+            )
 
-    # Phase 0: Repo-wide markdown scan (Spec 15) — deterministic-friendly.
-    if repo_path:
-        all_usage.extend(_run_markdown_scan(graph, repo_path, cfg))
+        # Phase 0: Repo-wide markdown scan (Spec 15) — deterministic-friendly.
+        if repo_path:
+            all_usage.extend(_run_markdown_scan(graph, repo_path, cfg, advance=advance))
 
-    # ADR sources
-    for adr_source in cfg.sources.adr_dirs:
-        all_usage.extend(_ingest_adr_source(graph, adr_source.path, cfg, repo_path))
+        # ADR sources
+        for adr_source in cfg.sources.adr_dirs:
+            if advance:
+                advance("Ingesting ADR sources...", 1)
+            all_usage.extend(
+                _ingest_adr_source(graph, adr_source.path, cfg, repo_path)
+            )
 
-    # Instruction sources
-    for oc_src in cfg.sources.opencode_instructions:
-        all_usage.extend(_ingest_instruction_source(graph, oc_src.path, cfg, repo_path))
-    for cl_src in cfg.sources.claude_instructions:
-        all_usage.extend(_ingest_instruction_source(graph, cl_src.path, cfg, repo_path))
-    for cu_src in cfg.sources.cursor_instructions:
-        all_usage.extend(_ingest_instruction_source(graph, cu_src.path, cfg, repo_path))
-    for ws_src in cfg.sources.windsurf_instructions:
-        all_usage.extend(_ingest_instruction_source(graph, ws_src.path, cfg, repo_path))
+        # Instruction sources
+        for oc_src in cfg.sources.opencode_instructions:
+            if advance:
+                advance("Ingesting OpenCode instructions...", 1)
+            all_usage.extend(
+                _ingest_instruction_source(graph, oc_src.path, cfg, repo_path)
+            )
+        for cl_src in cfg.sources.claude_instructions:
+            if advance:
+                advance("Ingesting Claude instructions...", 1)
+            all_usage.extend(
+                _ingest_instruction_source(graph, cl_src.path, cfg, repo_path)
+            )
+        for cu_src in cfg.sources.cursor_instructions:
+            if advance:
+                advance("Ingesting Cursor instructions...", 1)
+            all_usage.extend(
+                _ingest_instruction_source(graph, cu_src.path, cfg, repo_path)
+            )
+        for ws_src in cfg.sources.windsurf_instructions:
+            if advance:
+                advance("Ingesting Windsurf instructions...", 1)
+            all_usage.extend(
+                _ingest_instruction_source(graph, ws_src.path, cfg, repo_path)
+            )
 
-    # Backfill edges + persist
-    has_sources = bool(
-        cfg.sources.adr_dirs
-        or cfg.sources.opencode_instructions
-        or cfg.sources.claude_instructions
-        or cfg.sources.cursor_instructions
-        or cfg.sources.windsurf_instructions
-    )
-    if has_sources or (repo_path and not no_scan):
-        _backfill_edges(graph, repo_path=repo_path)
-        _backfill_decision_edges(graph, repo_path=repo_path)
-        if db_path is None:
-            # Legacy: save to graph.json (last resort when no SQLite config)
-            Path(cfg.output.graph_path).parent.mkdir(parents=True, exist_ok=True)
-            graph.save(cfg.output.graph_path)
+        # Backfill edges + persist
+        has_sources = bool(
+            cfg.sources.adr_dirs
+            or cfg.sources.opencode_instructions
+            or cfg.sources.claude_instructions
+            or cfg.sources.cursor_instructions
+            or cfg.sources.windsurf_instructions
+        )
+        if has_sources or (repo_path and not no_scan):
+            if advance:
+                advance("Backfilling entity edges...", 1)
+            _backfill_edges(graph, repo_path=repo_path)
+            _backfill_decision_edges(graph, repo_path=repo_path)
+            if db_path is None:
+                # Legacy: save to graph.json (last resort when no SQLite config)
+                Path(cfg.output.graph_path).parent.mkdir(parents=True, exist_ok=True)
+                graph.save(cfg.output.graph_path)
 
-    # Track repo in project_sources for multi-repo awareness
+    # Track repo in project_sources for multi-repo awareness (outside batch
+    # since it writes directly to _conn, not through GraphStore mutation methods).
     if db_path and repo_path and graph._conn is not None:
+        if advance:
+            advance("Tracking repo...", 1)
         graph._conn.execute(
             "INSERT OR REPLACE INTO project_sources (repo, ingested_at) "
             "VALUES (?, ?)",

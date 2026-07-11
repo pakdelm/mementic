@@ -54,6 +54,7 @@ _IGNORED_DIRS: frozenset[str] = frozenset({
     ".venv",
     ".mypy_cache",
     ".pytest_cache",
+    ".ruff_cache",
     "dist",
     "build",
     ".eggs",
@@ -65,6 +66,10 @@ _IGNORED_DIRS: frozenset[str] = frozenset({
 # Dot-directories that are architecturally relevant and should NOT be skipped
 _ARCH_DOT_DIRS: frozenset[str] = frozenset({
     ".github",
+    ".opencode",
+    ".claude",
+    ".cursor",
+    ".windsurf",
 })
 
 # Filename patterns that signal architectural relevance (case-insensitive match)
@@ -82,17 +87,6 @@ _ARCH_SIGNAL_PATTERNS: tuple[str, ...] = (
     "changelog",
 )
 
-# Config files to read verbatim
-_CONFIG_FILES: tuple[str, ...] = (
-    "pyproject.toml",
-    ".env.example",
-    "Dockerfile",
-    "docker-compose.yml",
-    "docker-compose.yaml",
-    ".pre-commit-config.yaml",
-    "Makefile",
-)
-
 _MAX_DIR_DEPTH = 4
 _PER_MD_FILE_CAP = 2000  # tight — LLM path in scan_codebase_structure
 _TOTAL_MD_BUDGET = 5000  # tight — LLM path in scan_codebase_structure
@@ -104,7 +98,9 @@ def _is_ignored_dir(name: str) -> bool:
     """Check if directory name should be skipped.
 
     The root directory (``.``) is never ignored. Architecturally relevant
-    dot-directories (``.github``) are also not ignored.
+    dot-directories (``.github``, ``.opencode``, ``.claude``, ``.cursor``,
+    ``.windsurf``) are scanned. All other directories starting with ``.``
+    are skipped.
     """
     if name == ".":
         return False
@@ -157,53 +153,6 @@ def _extract_python_imports(filepath: str) -> list[str]:
         if top_level not in _STDLIB_MODULES:
             imports.append(module)
     return imports
-
-
-def _read_config_files(repo_path: str) -> dict[str, str]:
-    """Read recognized config files from repo root.
-
-    Args:
-        repo_path: Path to the repository root.
-
-    Returns:
-        A dict mapping filename to content for found config files.
-    """
-    configs: dict[str, str] = {}
-    for fname in _CONFIG_FILES:
-        fpath = os.path.join(repo_path, fname)
-        if not os.path.isfile(fpath):
-            continue
-        try:
-            with open(fpath, encoding="utf-8", errors="replace") as f:
-                content = f.read()
-        except OSError:
-            continue
-        # For pyproject.toml, only include project + tool sections
-        if fname == "pyproject.toml":
-            lines = content.split("\n")
-            keep_lines: list[str] = []
-            in_section = False
-            skip_section = False
-            for line in lines:
-                if line.startswith("[project]") or line.startswith("[project."):
-                    in_section = True
-                    skip_section = False
-                elif line.startswith("[tool"):
-                    in_section = True
-                    skip_section = False
-                elif line.startswith("[build-system]"):
-                    in_section = True
-                    skip_section = True
-                elif line.startswith("[") and not line.startswith("[[tool"):
-                    in_section = False
-                    skip_section = False
-                if in_section and not skip_section:
-                    keep_lines.append(line)
-                elif not in_section:
-                    keep_lines.append(line)
-            content = "\n".join(keep_lines)
-        configs[fname] = content
-    return configs
 
 
 def _md_signal_score(filename: str) -> int:
@@ -413,16 +362,7 @@ def scan_codebase_structure(repo_path: str) -> str:
         parts.extend(tree_lines)
         parts.append("")
 
-    # 2. Configuration files
-    configs = _read_config_files(repo_path)
-    if configs:
-        parts.append("## Configuration\n")
-        for fname, content in configs.items():
-            parts.append(f"{fname}:")
-            parts.append(content)
-            parts.append("")
-
-    # 3. Markdown files
+    # 2. Markdown files
     adr_sections, content_sections = _format_md_sections(_md_files)
     if adr_sections:
         parts.append("## ADR Files (auto-detected by format)\n")
@@ -435,7 +375,7 @@ def scan_codebase_structure(repo_path: str) -> str:
             parts.append(section)
             parts.append("")
 
-    # 4. Import graph
+    # 3. Import graph
     import_lines = _format_import_graph(_import_graph)
     if import_lines:
         parts.append("## Import Graph\n")

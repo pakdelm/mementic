@@ -270,7 +270,7 @@ def _configure_condition(condition: str) -> None:
         agents = re.sub(
             r"\*\*Proposing decisions/constraints.*",
             "**BENCHMARK MODE** -- do NOT call mementic_record_decision,\n"
-            "mementic_record_constraint, or mementic_review_context.\n"
+            "mementic_record_constraint, or mementic_review_session.\n"
             "These are disabled for benchmark measurement.\n",
             agents,
             flags=re.DOTALL,
