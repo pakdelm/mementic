@@ -35,17 +35,17 @@ def test_load_template_contains_heading() -> None:
     assert _ENFORCEMENT_HEADING in template
 
 
-def test_load_template_contains_tool_names() -> None:
-    """The template references all five mementic MCP tool names."""
+def test_load_template_contains_cli_commands() -> None:
+    """The template references all mementic CLI commands."""
     template = load_template()
-    for tool in (
-        "mementic_get_rules",
-        "mementic_record_decision",
-        "mementic_record_constraint",
-        "mementic_deprecate",
-        "mementic_get_file_history",
+    for command in (
+        "query keywords",
+        "add decision",
+        "add constraint",
+        "deprecate",
+        "query file",
     ):
-        assert tool in template, f"Template missing reference to {tool}"
+        assert command in template, f"Template missing reference to {command}"
 
 
 # ---------------------------------------------------------------------------

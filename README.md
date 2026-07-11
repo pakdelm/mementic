@@ -5,7 +5,7 @@ Semantic memory layer for engineering teams and AI coding agents.
 Mementic ingests architectural decisions (ADRs), constraints, and project
 conventions from repositories and agent instruction files into a structured
 knowledge graph. Agents (OpenCode, Claude Code, Cursor, Windsurf) query it
-via MCP tools to inherit the team's architectural context in every session.
+via CLI commands to inherit the team's architectural context in every session.
 
 ## Install
 
@@ -92,7 +92,7 @@ mementic query keywords auth rate limit security
 ```
 
 Outputs a mementic memory with constraints and decisions ranked by keyword overlap.
-Agents generate 15-25 single-word keywords per task for best results.
+Agents generate 5-12 narrow, single-word technical keywords per task for best results.
 
 ### 4. Capture decisions after tasks
 
@@ -146,32 +146,26 @@ mementic project info platform
 The `--project` flag is only required when a repo belongs to multiple
 projects (rare). See `mementic project --help` for all subcommands.
 
-## Agent integration (OpenCode)
+## Agent integration
 
-Register the MCP server in `opencode.json`:
+`mementic init` automatically detects your agent (OpenCode, Claude Code,
+Cursor, or Windsurf) and injects enforcement instructions into `AGENTS.md`.
+No per-harness configuration files needed — it works the same across all
+agents.
 
-```json
-{
-  "mcp": {
-    "mementic": {
-      "type": "local",
-      "command": ["mementic", "server"],
-      "enabled": true
-    }
-  }
-}
-```
+Agents invoke mementic as CLI commands:
 
-The agent automatically discovers these MCP tools:
-- `get_rules` — load constraints and decisions for a task (call after every user message)
-- `record_decision` — record architectural decisions
-- `record_constraint` — record new constraints
-- `deprecate` — retire outdated decisions or constraints
-- `get_file_history` — trace decision/constraint history of a code file
+| Agent action | CLI command |
+|---|---|
+| Load context before every task | `mementic query keywords kw1 kw2 ...` |
+| Trace file history | `mementic query file path/to/file.py` |
+| Record architectural decisions | `mementic add decision TITLE --rationale "..."` |
+| Record new constraints | `mementic add constraint DESC -e PATH` |
+| Retire outdated rules | `mementic deprecate ID1 ID2 ... -r "reason"` |
+| Capture session decisions | `mementic capture` (user-triggered only) |
 
-OpenCode custom commands are also available in the TUI:
-- `/mementic-context <task>` — load constraints before working
-- `/mementic-capture` — record session decisions
+All commands support `--json` for programmatic output and `--project NAME`
+for multi-project setups.
 
 
 ## Agent enforcement
@@ -186,7 +180,7 @@ This project uses Mementic as its architectural memory layer. These rules apply
 to every task, every session.
 
 **Token discipline — primary vs. secondary sources:**
-1. **Primary (always):** the mementic memory from `mementic_get_rules`.
+1. **Primary (always):** the mementic memory from `mementic query keywords`.
    It is the compressed index — a fraction of the token cost of reading raw
    ADRs. Read it first, every time.
 2. **Secondary (only when needed):** raw ADR and instruction files on disk.
@@ -197,11 +191,12 @@ to every task, every session.
 **After EVERY user message** (not just "before a task" — each message is a new
 context window):
 1. Think about the task: what domains, concepts, and concerns are relevant?
-   Generate 15-25 single-word keywords that capture the task's domain
-   (e.g., for "fix authentication bug" → ["auth", "token", "security",
-   "password", "hashing", "argon2", "login", "session"]).
-2. Call `mementic_get_rules(keywords=[...])` with those keywords.
-3. Call `mementic_get_file_history` for each file being modified.
+   Generate 5-12 narrow, single-word technical keywords
+   (e.g., for "fix authentication bug" → ["argon2", "token", "login",
+   "session"] — skip "security", "password", "hashing" because they match too
+   many items).
+2. Run `mementic query keywords kw1 kw2 ...` with those keywords.
+3. Run `mementic query file <path>` for each file being modified.
 4. Validate your plan against every returned constraint. Do NOT write code
    that violates an active constraint.
 5. Only read raw ADR or instruction files if the mementic memory leaves ambiguity
@@ -212,9 +207,10 @@ calls, just SQLite reads). Architectural constraints can change between messages
 Assuming previous context is still valid is how violations happen.
 
 **After architecturally significant changes:**
-1. Call `mementic_record_decision` with title, rationale, rejected
-   alternatives, and affected entities.
-2. Call `mementic_record_constraint` for any new rules.
+1. Run `mementic add decision TITLE --rationale "..."` with title, rationale,
+   rejected alternatives, and affected entities.
+2. Run `mementic add constraint DESC -e PATH` for any new rules.
+3. Run `mementic deprecate ID1 ID2 ...` to retire any rules the new ones supersede.
 
 **After the task:**
 Run `mementic capture` in the terminal. Decisions are auto-resolved —
@@ -227,8 +223,8 @@ no manual review step.
 |---|---|
 | `mementic init [--repo PATH] [--no-scan] [--interactive] [--key] [--project NAME]` | Initialize graph from configured sources |
 | `mementic capture [--session PATH] [--notes TEXT] [--tail N] [-k KEYWORD]` | Extract decisions from session (auto-resolves: new/skip/update) |
-| `mementic query keywords KEYWORD [KEYWORD ...] [--project NAME]` | Return ranked context pack of constraints and decisions matched by keywords |
-| `mementic query file PATH [--prefix] [--max-tokens N]` | Show constraints and decisions affecting a specific file |
+| `mementic query keywords KEYWORD [KEYWORD ...] [--json] [--project NAME]` | Return ranked context pack of constraints and decisions matched by keywords |
+| `mementic query file PATH [--prefix] [--max-tokens N] [--json]` | Show constraints and decisions affecting a specific file |
 | `mementic query search TERM` | Full-text search across decisions and constraints |
 | `mementic query stats` | Show graph statistics (entity/decision/constraint counts) |
 | `mementic add decision TITLE -r RATIONALE [-e PATH] [--rejected ALT]` | Record a new architectural decision |
@@ -236,7 +232,7 @@ no manual review step.
 | `mementic list decisions [-n N] [--status S] [--project NAME]` | List recent architectural decisions |
 | `mementic list constraints [-n N] [--status S] [--project NAME]` | List recent constraints |
 | `mementic list entities [-n N] [--stale] [--project NAME]` | List code entities |
-| `mementic deprecate <id> [--reason TEXT]` | Retire a decision or constraint (don't edit history) |
+| `mementic deprecate <id> [<id> ...] [--reason TEXT]` | Retire decisions or constraints (accepts multiple IDs) |
 | `mementic status` | Show health checklist (config, API key, graph, session provider) |
 | `mementic log [-n N]` | Show recent graph mutations |
 | `mementic project create <name> [--description TEXT]` | Create a new project |
@@ -248,7 +244,7 @@ no manual review step.
 ## Why Mementic
 
 We ran two real implementation tasks in OpenCode sessions — without mementic
-vs. with keyword-ranked context packs via MCP. Both conditions passed the same
+vs. with keyword-ranked context packs via CLI. Both conditions passed the same
 tests + lint + typecheck. The graph held 330 decisions, 215 constraints, and
 113 code entities at measurement time.
 
@@ -287,73 +283,11 @@ architectural rules apply to this change?"
 
 Numbers are from mementic's own codebase.
 
-### Reproduce
-
-```bash
-python scripts/opencode_benchmark.py              # 2 runs per task per condition
-python scripts/opencode_benchmark.py --runs 3     # more statistical robustness
-python scripts/opencode_benchmark.py --tasks add-stale-flag   # single task
-```
-
-The runner manages git state and OpenCode config; you run OpenCode when prompted.
-
-## Measuring token efficiency
-
-Mementic tracks its own costs so you can answer: *does the LLM spend on mementic pay for itself through agent context savings?*
-
-### Check your token spend
-
-```bash
-mementic metrics
-```
-
-Shows lifetime usage across all operations:
-
-```
-Token Usage Since Inception
-───────────────────────────────────────────────────
-  LLM calls made:      42
-  Input tokens sent:   128,450
-  Output tokens:        18,320
-  Total tokens:        146,770
-
-Breakdown by Activity
-───────────────────────────────────────────────────
-  mementic init         18 calls    101,300 tokens    (one-time setup cost)
-  mementic capture      24 calls     45,470 tokens    (per-session extraction)
-```
-
-Use `--json` for machine-readable output and `--reset` to clear the log and
-start fresh.
-
-### How it works
-
-| Concept | What it means |
-|---|---|
-| **Extraction cost** | LLM tokens spent running `init` and `capture` |
-| **Context pack** | The subset of decisions and constraints mementic returns for a specific task |
-
-Metrics are stored in the project's SQLite database (the `extraction_log`
-table). Legacy fallback to `.mementic/metrics.jsonl` when no project is
-configured.
-
-### Quick token count
-
-The `count_tokens()` utility is available programmatically:
-
-```python
-from mementic.format import count_tokens
-print(count_tokens("how many tokens is this?"))
-```
-
-Uses `tiktoken` (accurate) if installed, falls back to `len(text) // 4`
-(~95% accurate for English).
-
 ## Development
 
 ```bash
 uv sync                           # install dependencies
-uv run pytest                    # run tests (parallel)
+uv run pytest                     # run tests (parallel)
 uv run ruff check .               # lint
 uv run mypy .                     # type check
 ```

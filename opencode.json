@@ -15,11 +15,6 @@
     }
   },
   "mcp": {
-    "mementic": {
-      "type": "local",
-      "command": ["uv", "run", "python", "-m", "mementic"],
-      "enabled": true
-    },
     "github": {
       "type": "remote",
       "url": "https://api.githubcopilot.com/mcp/",

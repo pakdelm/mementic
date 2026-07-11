@@ -28,6 +28,7 @@ from mementic.console import (
     make_step_tracker,
     panel,
     rule,
+    sanitize,
     table,
     text,
 )
@@ -654,19 +655,6 @@ def init(
 
     # Post-bootstrap summary
     from mementic.health import check_health
-    items = check_health(graph, repo_path=cwd)
-
-    adr_count = len(cfg.sources.adr_dirs)
-    instr_count = (
-        len(cfg.sources.opencode_instructions)
-        + len(cfg.sources.claude_instructions)
-        + len(cfg.sources.cursor_instructions)
-        + len(cfg.sources.windsurf_instructions)
-    )
-    entity_count = stats.get("entities", 0)
-
-    # Post-bootstrap summary
-    from mementic.health import check_health
 
     items = check_health(graph, repo_path=cwd)
 
@@ -1139,6 +1127,7 @@ app.add_typer(query_app, name="query")
 @query_app.command()
 def keywords(
     keywords: list[str] = typer.Argument(..., help="Keywords for matching (e.g. auth login session pydantic)"),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
     project: str | None = typer.Option(None, "--project", help="Target project name"),
 ) -> None:
     """Return ranked context pack of constraints and decisions matched by keywords."""
@@ -1146,6 +1135,18 @@ def keywords(
     graph.clean_dead_references()
     constraints = graph.get_all_active_constraints()
     decisions = graph.get_all_active_decisions()
+
+    if json_output:
+        from mementic.format import format_context_pack_json
+        result = format_context_pack_json(
+            decisions, constraints,
+            max_constraint_tokens=CONTEXT_PACK_DEFAULT_MAX_CONSTRAINT_TOKENS,
+            max_decision_tokens=CONTEXT_PACK_DEFAULT_MAX_DECISION_TOKENS,
+            keywords=keywords,
+        )
+        typer.echo(json.dumps(result, indent=2, default=str))
+        return
+
     output = format_memory_context(
         decisions, constraints,
         max_constraint_tokens=CONTEXT_PACK_DEFAULT_MAX_CONSTRAINT_TOKENS,
@@ -1161,7 +1162,7 @@ def keywords(
         panel(
             summary,
             rule(),
-            Markdown(output),
+            Markdown(sanitize(output)),
             title=f"Context pack: {kw_list}",
         )
     )
@@ -1172,6 +1173,7 @@ def file(
     path: str = typer.Argument(..., help="File path to trace evolution for"),
     prefix: bool = typer.Option(False, "--prefix", help="Use prefix matching for entity paths"),
     max_tokens: int = typer.Option(1500, "--max-tokens", help="Maximum token budget for output"),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
     project: str | None = typer.Option(None, "--project", help="Target project name"),
 ) -> None:
     """Show constraints and decisions affecting a specific file."""
@@ -1179,6 +1181,13 @@ def file(
     graph.clean_dead_references()
     constraints = graph.get_constraints_for_entities([path], prefix_match=prefix)
     decisions = graph.get_evolution(path, prefix_match=prefix, annotate_overlap=True)
+
+    if json_output:
+        from mementic.format import format_file_history_json
+        result = format_file_history_json(path, decisions, constraints)
+        typer.echo(json.dumps(result, indent=2, default=str))
+        return
+
     evolution_text = format_evolution(path, decisions, max_tokens=max_tokens)
     if constraints:
         evolution_text += "\n\n### Constraints\n"
@@ -1186,7 +1195,7 @@ def file(
             entities = ", ".join(c.bound_entities) if c.bound_entities else "none"
             evolution_text += f"- {c.description} (#{c.id}, bound: {entities})\n"
     console.print(
-        panel(Markdown(evolution_text), title=f"File history: {path}")
+        panel(Markdown(sanitize(evolution_text)), title=f"File history: {path}")
     )
 
 
@@ -1259,13 +1268,8 @@ def log(
     """Show recent graph mutations from the audit log."""
     graph, _cfg = _resolve_graph(project)
 
-    if graph._conn is not None:
-        rows = graph._conn.execute(
-            "SELECT * FROM audit_log ORDER BY id DESC LIMIT ?", (n,)
-        ).fetchall()
-        if not rows:
-            typer.echo("Audit log is empty. Run init or capture first.")
-            raise typer.Exit()
+    rows = graph.get_audit_entries(limit=n)
+    if rows:
         audit_table = table()
         audit_table.add_column("Timestamp", style=C_DIM)
         audit_table.add_column("Action")
@@ -1316,7 +1320,7 @@ def log(
         )
         return
 
-    # Fallback: read legacy JSONL audit log
+    # Fallback: no SQLite project database attached — try legacy JSONL
     audit_path = Path(".mementic/audit.jsonl")
     if not audit_path.exists():
         typer.echo("No audit log found. Run init or capture first.")
@@ -1551,7 +1555,7 @@ def entities(
 
 @app.command()
 def deprecate(
-    id: str = typer.Argument(..., help="Decision or constraint ID to deprecate"),
+    ids: list[str] = typer.Argument(..., help="Decision or constraint IDs to deprecate"),
     reason: str = typer.Option(
         "", "--reason", "-r",
         help="Reason for deprecation",
@@ -1561,41 +1565,55 @@ def deprecate(
         help="Target project name",
     ),
 ) -> None:
-    """Mark a decision or constraint as deprecated.
+    """Mark one or more decisions or constraints as deprecated.
 
-    Appends a deprecation note and writes an audit entry.
-    The entity remains in the graph for history but is excluded
-    from mementic memory.
+    Appends a deprecation note and writes audit entries.
+    Deprecated entities remain in the graph for history but are
+    excluded from mementic memory.
     """
     graph, cfg = _resolve_graph(project)
 
-    result = graph.deprecate_entity(id, reason)
+    deprecated = 0
+    already = 0
+    errors = 0
+
+    for id_ in ids:
+        result = graph.deprecate_entity(id_, reason)
+
+        if result["status"] == "deprecated":
+            deprecated += 1
+        elif result["status"] == "already_deprecated":
+            already += 1
+        elif result["status"] == "wrong_type":
+            typer.echo(result["message"], err=True)
+            errors += 1
+        else:
+            typer.echo(result["message"], err=True)
+            errors += 1
+
     _save_graph_cli(graph, cfg)
 
-    if result["status"] == "deprecated":
-        console.print(
-            panel(
-                text(
-                    f"Rule ID: [{C_ID}]{id}[/]\n"
-                    f"Reason: [{C_DIM}]{reason or '—'}[/]"
-                ),
-                title="Deprecated",
-            )
+    parts: list[str] = []
+    if deprecated:
+        parts.append(f"[{C_SUCCESS}]{deprecated} deprecated[/]")
+    if already:
+        parts.append(f"[{C_WARN}]{already} already deprecated[/]")
+    if errors:
+        parts.append(f"[{C_FAIL}]{errors} errors[/]")
+    if reason:
+        parts.append(f"[{C_DIM}]reason: {reason}[/]")
+
+    console.print(
+        panel(
+            text(
+                ", ".join(parts)
+                + f"\n[{C_DIM}]IDs: {', '.join(ids)}[/]"
+            ),
+            title="Deprecated",
         )
-    elif result["status"] == "already_deprecated":
-        console.print(
-            panel(
-                text(f"Rule [{C_ID}]{id}[/] is already deprecated."),
-                title="Already deprecated",
-                border_style=C_WARN,
-            )
-        )
-        raise typer.Exit()
-    elif result["status"] == "wrong_type":
-        typer.echo(result["message"], err=True)
-        raise typer.Exit(code=1)
-    else:
-        typer.echo(result["message"], err=True)
+    )
+
+    if errors:
         raise typer.Exit(code=1)
 
 

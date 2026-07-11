@@ -1438,3 +1438,316 @@ class TestLogCommand:
         output = result.stdout + result.stderr
         assert "empty" in output.lower() or "no audit" in output.lower()
 
+
+# ── JSON output modes ───────────────────────────────────────────────
+
+
+class TestQueryKeywordsJson:
+    """Tests for `mementic query keywords --json` output."""
+    
+    def test_query_keywords_json_output(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """query keywords --json returns JSON with summary, constraints, decisions."""
+        from mementic.graph import GraphStore
+        from mementic.models import (
+            CodeEntity,
+            Constraint,
+            Decision,
+            DecisionStatus,
+            EntityType,
+        )
+        
+        graph = GraphStore(db_path=None)
+        
+        d = Decision(
+            id="use-jwt",
+            title="Use JWT Auth",
+            rationale="Token-based authentication for API endpoints",
+            source="cli",
+            status=DecisionStatus.ACCEPTED,
+            created_at="2024-01-01T00:00:00Z",
+            modified_at="2024-01-01T00:00:00Z",
+            affected_entities=["src/auth.py"],
+        )
+        c = Constraint(
+            id="c-stateless",
+            description="Services must be stateless",
+            bound_entities=["src/auth.py"],
+            enforced_by="use-jwt",
+            source="cli",
+            status="active",
+            created_at="2024-01-01T00:00:00Z",
+        )
+        e = CodeEntity(id="src/auth.py", type=EntityType.FILE, repo="my-repo")
+        
+        graph.add_decision(d)
+        graph.add_constraint(c)
+        graph.add_code_entity(e)
+        
+        mock_cfg = MagicMock()
+        with patch("mementic.cli._resolve_graph", return_value=(graph, mock_cfg)):
+            result = runner.invoke(app, ["query", "keywords", "auth", "--json"])
+        
+        assert result.exit_code == 0, f"stderr: {result.stderr}"
+        data = json.loads(result.stdout)
+        
+        assert "summary" in data
+        assert "constraints" in data
+        assert "decisions" in data
+        
+        # Constraint fields
+        for c_data in data["constraints"]:
+            assert "id" in c_data
+            assert "description" in c_data
+            assert "entities" in c_data
+            assert "status" in c_data
+        
+        # Decision fields
+        for d_data in data["decisions"]:
+            assert "id" in d_data
+            assert "title" in d_data
+            assert "rationale" in d_data
+            assert "entities" in d_data
+            assert "status" in d_data
+    
+    def test_query_keywords_json_shape_with_matches(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """query keywords --json returns matched items when keywords overlap."""
+        from mementic.graph import GraphStore
+        from mementic.models import (
+            CodeEntity,
+            Constraint,
+            Decision,
+            DecisionStatus,
+            EntityType,
+        )
+        
+        graph = GraphStore(db_path=None)
+        
+        d = Decision(
+            id="use-jwt",
+            title="Use JWT Auth",
+            rationale="Token-based authentication for APIs",
+            source="cli",
+            status=DecisionStatus.ACCEPTED,
+            created_at="2024-01-01T00:00:00Z",
+            modified_at="2024-01-01T00:00:00Z",
+        )
+        c = Constraint(
+            id="c-stateless",
+            description="All services must be stateless",
+            bound_entities=["src/services.py"],
+            enforced_by="use-jwt",
+            source="cli",
+            status="active",
+            created_at="2024-01-01T00:00:00Z",
+        )
+        e = CodeEntity(id="src/services.py", type=EntityType.FILE, repo="my-repo")
+        
+        graph.add_decision(d)
+        graph.add_constraint(c)
+        graph.add_code_entity(e)
+        
+        mock_cfg = MagicMock()
+        with patch("mementic.cli._resolve_graph", return_value=(graph, mock_cfg)):
+            result = runner.invoke(app, ["query", "keywords", "auth", "--json"])
+        
+        assert result.exit_code == 0
+        data = json.loads(result.stdout)
+        
+        assert isinstance(data["summary"], str)
+        assert isinstance(data["constraints"], list)
+        assert isinstance(data["decisions"], list)
+        # "auth" keyword should match the decision with "Token-based authentication"
+        assert len(data["decisions"]) >= 1
+        assert data["decisions"][0]["id"] == "use-jwt"
+
+
+class TestQueryFileJson:
+    """Tests for `mementic query file --json` output."""
+    
+    def test_query_file_json_output(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """query file --json returns JSON with summary, file, decisions, constraints."""
+        from mementic.graph import GraphStore
+        from mementic.models import (
+            CodeEntity,
+            Constraint,
+            Decision,
+            DecisionStatus,
+            EntityType,
+        )
+        
+        graph = GraphStore(db_path=None)
+        
+        d = Decision(
+            id="use-jwt",
+            title="Use JWT Auth",
+            rationale="Token-based authentication for API endpoints",
+            source="cli",
+            status=DecisionStatus.ACCEPTED,
+            created_at="2024-01-01T00:00:00Z",
+            modified_at="2024-01-01T00:00:00Z",
+        )
+        c = Constraint(
+            id="c-stateless",
+            description="Services must be stateless",
+            bound_entities=["src/auth.py"],
+            enforced_by="use-jwt",
+            source="cli",
+            status="active",
+            created_at="2024-01-01T00:00:00Z",
+        )
+        e = CodeEntity(id="src/auth.py", type=EntityType.FILE, repo="my-repo")
+        
+        graph.add_decision(d)
+        graph.add_constraint(c)
+        graph.add_code_entity(e)
+        graph.link("use-jwt", "c-stateless", "enforces")
+        graph.link("use-jwt", "src/auth.py", "affects")
+        
+        mock_cfg = MagicMock()
+        with patch("mementic.cli._resolve_graph", return_value=(graph, mock_cfg)):
+            result = runner.invoke(app, ["query", "file", "src/auth.py", "--json"])
+        
+        assert result.exit_code == 0, f"stderr: {result.stderr}"
+        data = json.loads(result.stdout)
+        
+        assert "summary" in data
+        assert "file" in data
+        assert "decisions" in data
+        assert "constraints" in data
+        assert data["file"] == "src/auth.py"
+        assert isinstance(data["summary"], str)
+    
+    def test_query_file_json_includes_file_path(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """query file --json includes the queried file path in output."""
+        from mementic.graph import GraphStore
+        from mementic.models import (
+            CodeEntity,
+            Constraint,
+            Decision,
+            DecisionStatus,
+            EntityType,
+        )
+        
+        graph = GraphStore(db_path=None)
+        
+        d = Decision(
+            id="use-async",
+            title="Use Async I/O",
+            rationale="Async everywhere",
+            source="cli",
+            status=DecisionStatus.ACCEPTED,
+            created_at="2024-01-01T00:00:00Z",
+            modified_at="2024-01-01T00:00:00Z",
+        )
+        c = Constraint(
+            id="c-async",
+            description="All I/O must be async",
+            bound_entities=["src/io.py"],
+            enforced_by="use-async",
+            source="cli",
+            status="active",
+            created_at="2024-01-01T00:00:00Z",
+        )
+        e = CodeEntity(id="src/io.py", type=EntityType.FILE, repo="my-repo")
+        
+        graph.add_decision(d)
+        graph.add_constraint(c)
+        graph.add_code_entity(e)
+        graph.link("use-async", "c-async", "enforces")
+        graph.link("c-async", "src/io.py", "binds")
+        
+        mock_cfg = MagicMock()
+        with patch("mementic.cli._resolve_graph", return_value=(graph, mock_cfg)):
+            result = runner.invoke(app, ["query", "file", "src/io.py", "--json"])
+        
+        assert result.exit_code == 0
+        data = json.loads(result.stdout)
+        assert data["file"] == "src/io.py"
+
+
+class TestDeprecateMultiId:
+    """Tests for `mementic deprecate` with multiple IDs."""
+    
+    def test_deprecate_multiple_ids(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """deprecate with multiple IDs deprecates all and reports count."""
+        from mementic.graph import GraphStore
+        from mementic.models import Decision, DecisionStatus
+        
+        graph = GraphStore(db_path=None)
+        
+        d1 = Decision(
+            id="dec-1",
+            title="Decision 1",
+            rationale="First decision",
+            source="cli",
+            status=DecisionStatus.ACCEPTED,
+            created_at="2024-01-01T00:00:00Z",
+            modified_at="2024-01-01T00:00:00Z",
+        )
+        d2 = Decision(
+            id="dec-2",
+            title="Decision 2",
+            rationale="Second decision",
+            source="cli",
+            status=DecisionStatus.ACCEPTED,
+            created_at="2024-01-01T00:00:00Z",
+            modified_at="2024-01-01T00:00:00Z",
+        )
+        
+        graph.add_decision(d1)
+        graph.add_decision(d2)
+        
+        mock_cfg = MagicMock()
+        (tmp_path / ".mementic").mkdir(parents=True, exist_ok=True)
+        mock_cfg.output.graph_path = str(tmp_path / ".mementic" / "graph.json")
+        
+        with patch("mementic.cli._resolve_graph", return_value=(graph, mock_cfg)):
+            result = runner.invoke(app, ["deprecate", "dec-1", "dec-2"])
+        
+        assert result.exit_code == 0
+        output = _strip_ansi(result.stdout)
+        assert "2 deprecated" in output
+    
+    def test_deprecate_mixed_valid_and_invalid(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """deprecate with mixed valid/invalid IDs reports count for each."""
+        from mementic.graph import GraphStore
+        from mementic.models import Decision, DecisionStatus
+        
+        graph = GraphStore(db_path=None)
+        
+        d = Decision(
+            id="dec-valid",
+            title="Valid Decision",
+            rationale="A valid decision",
+            source="cli",
+            status=DecisionStatus.ACCEPTED,
+            created_at="2024-01-01T00:00:00Z",
+            modified_at="2024-01-01T00:00:00Z",
+        )
+        
+        graph.add_decision(d)
+        
+        mock_cfg = MagicMock()
+        (tmp_path / ".mementic").mkdir(parents=True, exist_ok=True)
+        mock_cfg.output.graph_path = str(tmp_path / ".mementic" / "graph.json")
+        
+        with patch("mementic.cli._resolve_graph", return_value=(graph, mock_cfg)):
+            result = runner.invoke(app, ["deprecate", "dec-valid", "nonexistent"])
+        
+        assert result.exit_code == 1  # errors → exit code 1
+        output = _strip_ansi(result.stdout)
+        assert "1 deprecated" in output
+        assert "1 errors" in output
+
