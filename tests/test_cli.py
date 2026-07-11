@@ -1446,86 +1446,25 @@ class TestLogCommand:
         assert "empty" in output.lower() or "no audit" in output.lower()
 
 
-# ── Metrics command tests (Spec 13, Tasks 2.2 / 2.3) ─────────────
+class TestUsageCommand:
+    """Tests for mementic usage command."""
 
+    def _write_metrics_jsonl(self, path: Path, entries: list[dict]) -> Path:
+        """Write a metrics.jsonl file and return the file path."""
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            for entry in entries:
+                f.write(json.dumps(entry) + "\n")
+        return path
 
-def _write_metrics_jsonl(path: Path, entries: list[dict]) -> None:
-    """Write a metrics.jsonl file from a list of MetricsEntry-like dicts."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        for entry in entries:
-            f.write(json.dumps(entry) + "\n")
-
-
-def _write_source_files(base: Path, adr_count: int = 2, instr_count: int = 2) -> None:
-    """Create source ADR and instruction markdown files for token counting."""
-    adr_dir = base / "docs" / "adr"
-    adr_dir.mkdir(parents=True)
-    for i in range(1, adr_count + 1):
-        (adr_dir / f"{i:04d}-test-adr.md").write_text(
-            f"# ADR-{i:04d}: Test Decision {i}\n\n"
-            f"## Status\n\nAccepted\n\n"
-            f"## Context\n\nThis is a test ADR document with some content.\n\n"
-            f"## Decision\n\nWe will use Python for everything.\n\n"
-            f"## Consequences\n\nMore Python code.\n\n"
-        )
-
-    instr_dir = base / "docs" / "instructions"
-    instr_dir.mkdir(parents=True)
-    for i in range(1, instr_count + 1):
-        (instr_dir / f"style{i}.md").write_text(
-            f"# Instruction {i}\n\n"
-            f"This is a test instruction file with guidelines for agents.\n"
-        )
-
-
-class TestMetricsCommand:
-    """Tests for mementic metrics command (four-section tabular output)."""
-
-    def _setup_metrics_and_config(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-        entries: list[dict] | None = None,
-        with_sources: bool = True,
-    ) -> Path:
-        """Set up metrics.jsonl, config, and optional source dirs. Returns cwd."""
-        old_cwd = os.getcwd()
-        os.chdir(tmp_path)
-
-        # Write metrics data
-        if entries is not None:
-            _write_metrics_jsonl(tmp_path / ".mementic" / "metrics.jsonl", entries)
-
-        # Write config
-        config = {
-            "output": {"graph_path": str(tmp_path / ".mementic" / "graph.json")},
-            "sources": {
-                "adr_dirs": [{"path": str(tmp_path / "docs" / "adr")}],
-                "opencode_instructions": [{"path": str(tmp_path / "docs" / "instructions")}],
-            },
-        }
-        (tmp_path / ".mementic.json").write_text(json.dumps(config))
-
-        # Ensure no global config (fallback to JSON mode)
-        empty_config_dir = tmp_path / ".empty_mementic"
-        empty_config_dir.mkdir(parents=True, exist_ok=True)
-        monkeypatch.setattr(
-            "mementic.config.get_global_config_path",
-            lambda: empty_config_dir / "config.json",
-        )
-
-        if with_sources:
-            _write_source_files(tmp_path)
-
-        return Path(old_cwd)
-
-    def test_metrics_json_output(
+    def test_usage_json_output(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """mementic metrics --json returns summary dict without dead fields."""
+        """mementic usage --json returns summary dict."""
         entries = [
             {
                 "timestamp": "2024-01-01T00:00:00Z",
-                "operation": "init_adr",
+                "operation": "init",
                 "source_label": "deepseek-chat",
                 "input_tokens": 1000,
                 "output_tokens": 500,
@@ -1544,44 +1483,32 @@ class TestMetricsCommand:
                 "status": "success",
             },
         ]
+        self._write_metrics_jsonl(
+            tmp_path / ".mementic" / "metrics.jsonl", entries
+        )
+
+        old_cwd = os.getcwd()
         try:
-            self._setup_metrics_and_config(tmp_path, monkeypatch, entries=entries)
-            result = runner.invoke(app, ["metrics", "--json"])
+            os.chdir(tmp_path)
+            result = runner.invoke(app, ["usage", "--json"])
         finally:
-            os.chdir(Path.cwd() if "old_cwd" not in dir() else tmp_path)
+            os.chdir(old_cwd)
 
         assert result.exit_code == 0
         data = json.loads(result.stdout)
+        assert data["total_calls"] == 2
+        assert data["total_tokens"] == 2700
+        assert "init" in data["by_operation"]
+        assert "capture" in data["by_operation"]
 
-        # Verify honest summary fields exist
-        assert "extraction_init_calls" in data
-        assert "extraction_init_tokens" in data
-        assert "extraction_capture_calls" in data
-        assert "extraction_capture_tokens" in data
-        assert "memory_context_queries" in data
-        assert "memory_context_total_tokens" in data
-        assert "memory_context_avg_tokens" in data
-
-        # Dead fields must NOT be present
-        assert "breakeven_ratio" not in data
-        assert "extraction_per_query" not in data
-        assert "memory_context_per_query" not in data
-
-        # Verify values
-        assert data["extraction_init_calls"] == 1
-        assert data["extraction_init_tokens"] == 1500
-        assert data["extraction_capture_calls"] == 1
-        assert data["extraction_capture_tokens"] == 1200
-        assert data["extraction_total_tokens"] == 2700
-
-    def test_metrics_tabular_format(
+    def test_usage_tabular_format(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """mementic metrics renders four-section tabular output."""
+        """mementic usage renders a table with per-operation breakdown."""
         entries = [
             {
                 "timestamp": "2024-01-01T00:00:00Z",
-                "operation": "init_adr",
+                "operation": "init",
                 "source_label": "deepseek-chat",
                 "input_tokens": 10000,
                 "output_tokens": 4200,
@@ -1601,142 +1528,50 @@ class TestMetricsCommand:
             },
             {
                 "timestamp": "2024-01-01T00:00:02Z",
-                "operation": "capture",
-                "source_label": "opencode:session2",
-                "input_tokens": 3000,
-                "output_tokens": 1600,
-                "total_tokens": 4600,
-                "model": "deepseek-chat",
-                "status": "success",
-            },
-            {
-                "timestamp": "2024-01-01T00:00:03Z",
                 "operation": "get_rules",
                 "source_label": "get_rules",
-                "input_tokens": 500,
-                "output_tokens": 180,
+                "input_tokens": 0,
+                "output_tokens": 0,
                 "total_tokens": 680,
-                "model": "deepseek-chat",
+                "model": "",
                 "status": "success",
             },
         ]
+        self._write_metrics_jsonl(
+            tmp_path / ".mementic" / "metrics.jsonl", entries
+        )
+
+        old_cwd = os.getcwd()
         try:
-            self._setup_metrics_and_config(tmp_path, monkeypatch, entries=entries)
-            result = runner.invoke(app, ["metrics"])
+            os.chdir(tmp_path)
+            result = runner.invoke(app, ["usage"])
         finally:
-            os.chdir(os.getcwd())
+            os.chdir(old_cwd)
 
         assert result.exit_code == 0
         output = _strip_ansi(result.stdout)
 
-        # Header — Panel title
-        assert "Token usage" in output
-
-        # Section 1: Setup (one-time)
-        assert "Setup (one-time)" in output
-        assert "Source material" in output
-        assert "Init extraction" in output
-        assert "Compression ratio" in output
-        # Init extraction: 1 call, 14,200 tokens
-        assert "1" in output
+        assert "init" in output
+        assert "capture" in output
+        assert "get_rules" in output
         assert "14,200" in output
-
-        # Section 2: Capture (recurring)
-        assert "Capture (recurring)" in output
-        assert "Sessions" in output
-        assert "Avg per session" in output
-        # 2 capture calls, 9,200 tokens
-        assert "9,200" in output
-
-        # Section 3: Context Packs
-        assert "Context Packs" in output
-        assert "Queries" in output
-        assert "Avg per pack" in output
+        assert "4,600" in output
         assert "680" in output
 
-        # Section 4: Reference
-        assert "Reference" in output
-        assert "Graph compression" in output
-        assert "Pack vs source" in output
-        assert "Extraction amortized" in output
+        assert "Total" in output
+        assert "19,480" in output
 
-        # No dead sections
-        assert "Breakeven" not in output
-        assert "overhead ratio" not in output
-        assert "Token Economics" not in output
-
-    def test_metrics_empty_data(
+    def test_usage_empty_data(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """mementic metrics with empty metrics shows -- for missing data."""
+        """mementic usage with no data shows a clear message."""
+        old_cwd = os.getcwd()
         try:
-            self._setup_metrics_and_config(
-                tmp_path, monkeypatch, entries=[], with_sources=False
-            )
-            result = runner.invoke(app, ["metrics"])
+            os.chdir(tmp_path)
+            result = runner.invoke(app, ["usage"])
         finally:
-            os.chdir(os.getcwd())
+            os.chdir(old_cwd)
 
         assert result.exit_code == 0
         output = _strip_ansi(result.stdout)
-
-        # Header still present — Panel title
-        assert "Token usage" in output
-        assert "Setup (one-time)" in output
-        assert "Capture (recurring)" in output
-        assert "Context Packs" in output
-        assert "Reference" in output
-
-        # Source material shows -- when no source dirs
-        assert "--" in output
-
-        # No crash from division by zero
-        assert "ZeroDivisionError" not in output
-
-    def test_metrics_source_material_count(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """mementic metrics counts source material tokens from disk."""
-        try:
-            self._setup_metrics_and_config(tmp_path, monkeypatch, entries=[])
-            result = runner.invoke(app, ["metrics"])
-        finally:
-            os.chdir(os.getcwd())
-
-        assert result.exit_code == 0
-        output = _strip_ansi(result.stdout)
-
-        # Source material should show a count > 0 (we created 4 source files)
-        assert "Source material" in output
-        # The row should NOT show "--" for source material
-        # Check that a number appears on the Source material line
-        lines = output.split("\n")
-        source_line = next(
-            (line for line in lines if "Source material" in line), ""
-        )
-        # Should contain digits in the Count column area
-        assert source_line != ""
-
-    def test_metrics_json_no_dead_fields(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """mementic metrics --json does not include breakeven or per-query fields."""
-        try:
-            self._setup_metrics_and_config(tmp_path, monkeypatch, entries=[])
-            result = runner.invoke(app, ["metrics", "--json"])
-        finally:
-            os.chdir(os.getcwd())
-
-        assert result.exit_code == 0
-        data = json.loads(result.stdout)
-
-        # These dead fields from old breakeven analysis must be absent
-        dead_fields = [
-            "breakeven_ratio",
-            "extraction_per_query",
-            "memory_context_per_query",
-            "memory_context_avg_constraints",
-            "memory_context_avg_decisions",
-        ]
-        for field in dead_fields:
-            assert field not in data, f"Dead field '{field}' leaked into JSON output"
+        assert "No token usage recorded" in output

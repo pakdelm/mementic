@@ -237,7 +237,7 @@ no manual review step.
 | `mementic list constraints [-n N] [--status S] [--project NAME]` | List recent constraints |
 | `mementic list entities [-n N] [--stale] [--project NAME]` | List code entities |
 | `mementic deprecate <id> [--reason TEXT]` | Retire a decision or constraint (don't edit history) |
-| `mementic metrics [--json] [--reset]` | Show token usage metrics |
+| `mementic usage [--json] [--project NAME]` | Show token usage metrics |
 | `mementic status` | Show health checklist (config, API key, graph, session provider) |
 | `mementic log [-n N]` | Show recent graph mutations |
 | `mementic project create <name> [--description TEXT]` | Create a new project |
