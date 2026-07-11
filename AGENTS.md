@@ -5,10 +5,13 @@ This is a Python project.
 ## Mementic Memory (HARD CONSTRAINT — ALWAYS ACTIVE)
 
 This project dogfoods Mementic as its own architectural memory layer. These rules
-are not optional. They apply to **every task, every session, no exceptions.**
-"Task" means ANY user request — including questions, exploration, planning,
-code review, and informational queries. There are no read-only exceptions.
-If you are about to read files or search code, you need context first.
+are mandatory whenever architectural context could affect your work. They apply
+when the task involves **code changes, architectural decisions, file
+modifications, or exploring unfamiliar parts of the codebase.** Skip the
+mementic query for purely conversational messages ("thanks", "looks good"),
+trivial confirmations ("commit and push", "y"), or informational questions
+with no code impact ("what version of Python?"). If you are about to read
+files or search code, you need context first.
 
 The mementic memory replaces reading **ADRs, specs, and instruction files** — it
 tells you WHAT rules exist. It does NOT replace reading the **code you are about
@@ -17,7 +20,7 @@ to the exact function, then read that section. Never batch-read ADRs or specs;
 that is the token waste the graph eliminates.
 
 **After EVERY user message** (not just "before a task" — each message is a new
-context window):
+context window), unless the message falls into the skip categories above:
 1. Think about the task: what domains, concepts, and concerns are relevant?
    Generate 5-12 narrow, single-word technical keywords. Favor specific
    terms (e.g., ``argon2``, ``pydantic``, ``SessionMiddleware``) over
@@ -53,10 +56,10 @@ calls, just SQLite reads). Architectural constraints can change between messages
 is still valid is how violations happen. The cost of re-fetching is near zero;
 the cost of stale context is a violated constraint.
 
-**You may NOT skip these steps by classifying a task as "read-only", "quick",
-or "informational". The mementic memory exists precisely so you don't waste tokens
-reading raw files to understand what rules apply. Skipping it defeats the
-purpose.**
+**When to skip:** The mementic query is for catching architectural constraints
+that affect code decisions. If the user says "thanks", "commit and push", or
+"what Python version?" there is no code decision to constrain — skip it.
+If you're about to read code or make changes, don't skip.
 
 **If the mementic memory fails:** State the error explicitly, fall back to
 targeted reads only (grep first, read specific sections), and report the
