@@ -1433,64 +1433,6 @@ def status(
     )
 
 
-@app.command()
-def visualize(
-    output: str = typer.Option(
-        ".mementic/mementic_graph.html", "--output", "-o",
-        help="Output HTML file path",
-    ),
-    open_browser: bool = typer.Option(
-        False, "--open", "-O",
-        help="Open the generated file in the default browser",
-    ),
-    filter_type: str | None = typer.Option(
-        None, "--filter", "-f",
-        help="Filter nodes by type: decision, constraint, entity",
-    ),
-    project: str | None = typer.Option(
-        None, "--project",
-        help="Target project name",
-    ),
-) -> None:
-    """Render the knowledge graph as an interactive HTML visualization.
-
-    Produces a self-contained HTML file with a force-directed graph.
-    No server or external dependencies required for viewing.
-    """
-    import webbrowser
-
-    from mementic.visualize import generate_html_graph
-
-    g, _cfg = _resolve_graph(project)
-
-    valid_filters = {"decision", "constraint", "entity"}
-    ft = filter_type.lower() if filter_type else None
-    if ft and ft not in valid_filters:
-        typer.echo(
-            f"Invalid filter '{filter_type}'. "
-            f"Valid options: {', '.join(sorted(valid_filters))}",
-            err=True,
-        )
-        raise typer.Exit(code=1)
-
-    with console.status("[bold]Generating graph visualization...[/]"):
-        html = generate_html_graph(g, filter_type=ft)
-        Path(output).parent.mkdir(parents=True, exist_ok=True)
-        Path(output).write_text(html, encoding="utf-8")
-    console.print(
-        panel(
-            text(
-                f"[{C_SUCCESS}]{STATUS_OK}[/] Written to {output}  "
-                f"[{C_DIM}]({len(html):,} bytes)[/]"
-            ),
-            title="Graph visualization",
-        )
-    )
-
-    if open_browser:
-        webbrowser.open(Path(output).resolve().as_uri())
-
-
 def _status_icon(status: str) -> str:
     """Return a compact status marker for list output."""
     icons = {
