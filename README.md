@@ -92,7 +92,7 @@ mementic query keywords auth rate limit security
 ```
 
 Outputs a mementic memory with constraints and decisions ranked by keyword overlap.
-Agents generate 15-25 single-word keywords per task for best results.
+Agents generate 5-12 narrow, single-word technical keywords per task for best results.
 
 ### 4. Capture decisions after tasks
 
@@ -283,73 +283,11 @@ architectural rules apply to this change?"
 
 Numbers are from mementic's own codebase.
 
-### Reproduce
-
-```bash
-python scripts/opencode_benchmark.py              # 2 runs per task per condition
-python scripts/opencode_benchmark.py --runs 3     # more statistical robustness
-python scripts/opencode_benchmark.py --tasks add-stale-flag   # single task
-```
-
-The runner manages git state and OpenCode config; you run OpenCode when prompted.
-
-## Measuring token efficiency
-
-Mementic tracks its own costs so you can answer: *does the LLM spend on mementic pay for itself through agent context savings?*
-
-### Check your token spend
-
-```bash
-mementic metrics
-```
-
-Shows lifetime usage across all operations:
-
-```
-Token Usage Since Inception
-───────────────────────────────────────────────────
-  LLM calls made:      42
-  Input tokens sent:   128,450
-  Output tokens:        18,320
-  Total tokens:        146,770
-
-Breakdown by Activity
-───────────────────────────────────────────────────
-  mementic init         18 calls    101,300 tokens    (one-time setup cost)
-  mementic capture      24 calls     45,470 tokens    (per-session extraction)
-```
-
-Use `--json` for machine-readable output and `--reset` to clear the log and
-start fresh.
-
-### How it works
-
-| Concept | What it means |
-|---|---|
-| **Extraction cost** | LLM tokens spent running `init` and `capture` |
-| **Context pack** | The subset of decisions and constraints mementic returns for a specific task |
-
-Metrics are stored in the project's SQLite database (the `extraction_log`
-table). Legacy fallback to `.mementic/metrics.jsonl` when no project is
-configured.
-
-### Quick token count
-
-The `count_tokens()` utility is available programmatically:
-
-```python
-from mementic.format import count_tokens
-print(count_tokens("how many tokens is this?"))
-```
-
-Uses `tiktoken` (accurate) if installed, falls back to `len(text) // 4`
-(~95% accurate for English).
-
 ## Development
 
 ```bash
 uv sync                           # install dependencies
-uv run pytest                    # run tests (parallel)
+uv run pytest                     # run tests (parallel)
 uv run ruff check .               # lint
 uv run mypy .                     # type check
 ```
