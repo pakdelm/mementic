@@ -63,11 +63,9 @@ from mementic.models import (
     Decision,
     DecisionStatus,
     EntityType,
-    MetricsEntry,
 )
 from mementic.pipeline import _extract_session, run_init
 from mementic.conflict import auto_resolve_capture
-from mementic.metrics import UsageStore
 if TYPE_CHECKING:
     from mementic.config import MementicConfig  # noqa: F401
 
@@ -636,7 +634,7 @@ def init(
             )
             advance = make_step_tracker(progress, task_id, preamble="")
 
-            graph, all_usage = run_init(
+            graph = run_init(
                 repo_path=effective_repo,
                 no_scan=no_scan,
                 db_path=project_db_path,
@@ -776,25 +774,8 @@ def init(
                 ),
                 title="Note",
                 border_style=C_WARN,
-            )
         )
-
-    # Log extraction costs to metrics (project database only)
-    if all_usage and graph._conn is not None:
-        store = UsageStore(conn=graph._conn)
-        for usage in all_usage:
-            if usage.total_tokens > 0 or usage.status != "success":
-                entry = MetricsEntry(
-                    timestamp=timestamp(),
-                    operation="init",
-                    source_label=usage.model,
-                    input_tokens=usage.input_tokens,
-                    output_tokens=usage.output_tokens,
-                    total_tokens=usage.total_tokens,
-                    model=usage.model,
-                    status=usage.status,
-                )
-                store.append(entry)
+    )
 
 
 @app.command()
@@ -972,7 +953,7 @@ def capture(
         with console.status(
             f"[{C_HEADER}]Extracting architectural decisions...[/]"
         ):
-            extraction, _usage = _extract_session(
+            extraction = _extract_session(
                 session_text, git_diff, notes or "", cfg,
                 max_messages=tail, custom_keywords=keyword or None,
             )
@@ -1083,14 +1064,6 @@ def capture(
         result_table.add_row(
             "Written", text(f"[{C_DIM}]{graph_path}[/]")
         )
-    if _usage.model == "deterministic":
-        result_table.add_row(
-            "Mode",
-            text(
-                f"[{C_WARN}]deterministic (no API key — reduced quality)[/]"
-            ),
-        )
-
     # Build the panel content: summary table + optional lists of what was extracted
     panel_content: list = [result_table]
 
@@ -1144,23 +1117,6 @@ def capture(
         panel_content.extend([c_title_text, c_table])
 
     console.print(panel(*panel_content, title="Capture complete"))
-
-    # Log capture metrics (project database only)
-    if graph._conn is not None:
-        metrics_store = UsageStore(conn=graph._conn)
-    else:
-        metrics_store = UsageStore(path=".mementic/metrics.jsonl")  # legacy fallback
-    entry = MetricsEntry(
-        timestamp=timestamp(),
-        operation="capture",
-        source_label=f"{detected_agent}:{session}" if detected_agent else (session or "auto-detected"),
-        input_tokens=_usage.input_tokens,
-        output_tokens=_usage.output_tokens,
-        total_tokens=_usage.total_tokens,
-        model=_usage.model,
-        status=_usage.status,
-    )
-    metrics_store.append(entry)
 
     if got_diff:
         try:
@@ -1591,87 +1547,6 @@ def entities(
     console.print(
         panel(entity_table, title=f"Entities ({len(all_e)})")
     )
-
-
-@app.command()
-def usage(
-    json_output: bool = typer.Option(
-        False, "--json", help="Output as JSON"
-    ),
-    project: str | None = typer.Option(
-        None, "--project",
-        help="Target project name",
-    ),
-) -> None:
-    """Display token usage across all mementic operations."""
-    try:
-        graph, _cfg = _resolve_graph(project)
-        store = UsageStore(conn=graph._conn) if graph._conn else UsageStore()
-    except typer.Exit:
-        if project is not None:
-            raise
-        store = UsageStore()
-
-    entries = store.read_all()
-
-    if not entries:
-        console.print(panel(
-            text(
-                f"[{C_DIM}]No token usage recorded.[/] "
-                "Run mementic init and capture to start tracking."
-            ),
-            title="Token usage",
-        ))
-        return
-
-    if json_output:
-        summary = store.summary()
-        typer.echo(json.dumps(summary, indent=2, default=str))
-        return
-
-    ops: dict[str, dict[str, int]] = {}
-    total_calls = 0
-    total_input = 0
-    total_output = 0
-    total_all = 0
-
-    for entry in entries:
-        op = ops.setdefault(entry.operation, {
-            "calls": 0, "input": 0, "output": 0, "total": 0,
-        })
-        op["calls"] += 1
-        op["input"] += entry.input_tokens
-        op["output"] += entry.output_tokens
-        op["total"] += entry.total_tokens
-        total_calls += 1
-        total_input += entry.input_tokens
-        total_output += entry.output_tokens
-        total_all += entry.total_tokens
-
-    def _n(v: int) -> str:
-        return f"{v:,}"
-
-    t = table()
-    t.add_column("Operation", style="bold")
-    t.add_column("Calls", justify="right")
-    t.add_column("Input", justify="right")
-    t.add_column("Output", justify="right")
-    t.add_column("Total", justify="right")
-
-    for op_name in sorted(ops.keys()):
-        op = ops[op_name]
-        t.add_row(
-            op_name, _n(op["calls"]), _n(op["input"]),
-            _n(op["output"]), _n(op["total"]),
-        )
-
-    t.add_section()
-    t.add_row(
-        f"[{C_HEADER}]Total[/]", _n(total_calls), _n(total_input),
-        _n(total_output), _n(total_all),
-    )
-
-    console.print(panel(t, title="Token usage"))
 
 
 @app.command()

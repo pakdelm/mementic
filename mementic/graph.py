@@ -160,18 +160,6 @@ class GraphStore:
                     ingested_at TEXT NOT NULL
                 );
 
-                CREATE TABLE IF NOT EXISTS extraction_log (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    operation TEXT NOT NULL,
-                    source_label TEXT DEFAULT '',
-                    input_tokens INTEGER DEFAULT 0,
-                    output_tokens INTEGER DEFAULT 0,
-                    total_tokens INTEGER DEFAULT 0,
-                    model TEXT DEFAULT '',
-                    status TEXT DEFAULT 'success',
-                    timestamp TEXT NOT NULL
-                );
-
                 CREATE INDEX IF NOT EXISTS idx_decisions_repo
                     ON decisions(repo);
                 CREATE INDEX IF NOT EXISTS idx_decisions_status
@@ -182,8 +170,6 @@ class GraphStore:
                     ON edges(source_id);
                 CREATE INDEX IF NOT EXISTS idx_edges_target
                     ON edges(target_id);
-                CREATE INDEX IF NOT EXISTS idx_extraction_op
-                    ON extraction_log(operation);
 
                 PRAGMA user_version = 1;
             """)

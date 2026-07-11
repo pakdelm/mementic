@@ -413,7 +413,7 @@ class TestConfigCorruption:
 
         # Should not raise — warns and continues. no_scan skips the codebase
         # LLM scan so the test stays deterministic without an API key.
-        graph, usage = run_init(repo_path=repo_path, no_scan=True)
+        graph = run_init(repo_path=repo_path, no_scan=True)
 
         captured = capsys.readouterr()
         stderr_output = captured.err

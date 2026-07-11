@@ -127,7 +127,7 @@ class TestInitAutoBootstrap:
             instr_dir.mkdir(parents=True)
             (instr_dir / "style.md").write_text("# Style")
 
-            with patch("mementic.cli.run_init", return_value=(_make_mock_graph(), [])):
+            with patch("mementic.cli.run_init", return_value=_make_mock_graph()):
                 result = runner.invoke(app, ["init"])
 
             assert result.exit_code == 0
@@ -147,7 +147,7 @@ class TestInitAutoBootstrap:
         try:
             os.chdir(tmp_path)
 
-            with patch("mementic.cli.run_init", return_value=(_make_mock_graph(), [])):
+            with patch("mementic.cli.run_init", return_value=_make_mock_graph()):
                 result = runner.invoke(app, ["init"])
 
             assert result.exit_code == 0
@@ -197,7 +197,7 @@ class TestInitAutoBootstrap:
             )
             save_global_config(global_cfg)
 
-            with patch("mementic.cli.run_init", return_value=(_make_mock_graph(), [])):
+            with patch("mementic.cli.run_init", return_value=_make_mock_graph()):
                 result = runner.invoke(app, ["init"])
 
             assert result.exit_code == 0
@@ -236,7 +236,7 @@ class TestInitInteractive:
             os.chdir(tmp_path)
             self._enable_tty(monkeypatch)
 
-            with patch("mementic.cli.run_init", return_value=(_make_mock_graph(), [])), \
+            with patch("mementic.cli.run_init", return_value=_make_mock_graph()), \
                  patch("mementic.cli.typer.confirm", return_value=True), \
                  patch(
                      "mementic.cli.typer.prompt",
@@ -262,7 +262,7 @@ class TestInitInteractive:
             self._enable_tty(monkeypatch)
 
             # Mock prompt to return default values (empty input → defaults)
-            with patch("mementic.cli.run_init", return_value=(_make_mock_graph(), [])), \
+            with patch("mementic.cli.run_init", return_value=_make_mock_graph()), \
                  patch("mementic.cli.typer.confirm", return_value=True), \
                  patch(
                      "mementic.cli.typer.prompt",
@@ -288,7 +288,7 @@ class TestInitInteractive:
             # CliRunner stdin is not a TTY by default — prompt is skipped
             monkeypatch.setattr("sys.stdin.isatty", lambda: False)
 
-            with patch("mementic.cli.run_init", return_value=(_make_mock_graph(), [])):
+            with patch("mementic.cli.run_init", return_value=_make_mock_graph()):
                 result = runner.invoke(app, ["init"])
 
             assert result.exit_code == 0
@@ -367,11 +367,11 @@ class TestCaptureGitErrorMessage:
         session_file = tmp_path / "session.log"
         session_file.write_text("Fake agent session log content.\n")
 
-        from mementic.models import ExtractionResult, UsageStats
+        from mementic.models import ExtractionResult
 
         with patch(
             "mementic.cli._extract_session",
-            return_value=(ExtractionResult(), UsageStats(model="test", status="success")),
+            return_value=ExtractionResult(),
         ):
             result = runner.invoke(
                 app, ["capture", "--session", str(session_file)],
@@ -400,7 +400,7 @@ class TestCaptureAutoAccept:
         session_file = tmp_path / "session.log"
         session_file.write_text("Agent session about adding auth.\n")
 
-        from mementic.models import Decision, DecisionStatus, ExtractionResult, UsageStats
+        from mementic.models import Decision, DecisionStatus, ExtractionResult
 
         mock_result = ExtractionResult(
             decisions=[
@@ -416,11 +416,10 @@ class TestCaptureAutoAccept:
             ],
             affected_entities=["src/auth.py"],
         )
-        mock_usage = UsageStats(model="test-model", status="success")
 
         with patch(
             "mementic.cli._extract_session",
-            return_value=(mock_result, mock_usage),
+            return_value=mock_result,
         ), patch(
             "mementic.cli._run_git_diff", return_value=("", 0),
         ):
@@ -461,7 +460,7 @@ class TestCaptureAutoAccept:
         session_file = tmp_path / "session.log"
         session_file.write_text("Session about JWT auth updates.\n")
 
-        from mementic.models import Decision, DecisionStatus, ExtractionResult, UsageStats
+        from mementic.models import Decision, DecisionStatus, ExtractionResult
 
         mock_result = ExtractionResult(
             decisions=[
@@ -477,11 +476,10 @@ class TestCaptureAutoAccept:
             ],
             affected_entities=[],
         )
-        mock_usage = UsageStats(model="test-model", status="success")
 
         with patch(
             "mementic.cli._extract_session",
-            return_value=(mock_result, mock_usage),
+            return_value=mock_result,
         ), patch(
             "mementic.cli._run_git_diff", return_value=("", 0),
         ):
@@ -505,7 +503,7 @@ class TestCaptureAutoAccept:
         session_file = tmp_path / "session.log"
         session_file.write_text("Session log content.\n")
 
-        from mementic.models import Decision, DecisionStatus, ExtractionResult, UsageStats
+        from mementic.models import Decision, DecisionStatus, ExtractionResult
 
         mock_result = ExtractionResult(
             decisions=[
@@ -520,11 +518,10 @@ class TestCaptureAutoAccept:
                 ),
             ],
         )
-        mock_usage = UsageStats(model="test-model", status="success")
 
         with patch(
             "mementic.cli._extract_session",
-            return_value=(mock_result, mock_usage),
+            return_value=mock_result,
         ):
             result = runner.invoke(
                 app, ["capture", "--session", str(session_file)],
@@ -839,7 +836,7 @@ class TestCaptureNoGit:
         session_file = tmp_path / "session.log"
         session_file.write_text("Fake agent session log content.\n")
 
-        from mementic.models import Decision, DecisionStatus, ExtractionResult, UsageStats
+        from mementic.models import Decision, DecisionStatus, ExtractionResult
 
         mock_result = ExtractionResult(
             decisions=[
@@ -854,7 +851,6 @@ class TestCaptureNoGit:
                 ),
             ],
         )
-        mock_usage = UsageStats(model="test", status="success")
 
         mock_registry = MagicMock()
         mock_provider = MagicMock()
@@ -870,7 +866,7 @@ class TestCaptureNoGit:
             "mementic.graph.GraphStore.get_capture_checkpoint", return_value="",
         ), patch(
             "mementic.cli._extract_session",
-            return_value=(mock_result, mock_usage),
+            return_value=mock_result,
         ):
             result = runner.invoke(
                 app, ["capture", "--session", str(session_file)],
@@ -890,7 +886,7 @@ class TestCaptureNoGit:
         session_file = tmp_path / "session.log"
         session_file.write_text("Fake agent session log content.\n")
 
-        from mementic.models import Decision, DecisionStatus, ExtractionResult, UsageStats
+        from mementic.models import Decision, DecisionStatus, ExtractionResult
 
         mock_result = ExtractionResult(
             decisions=[
@@ -905,7 +901,6 @@ class TestCaptureNoGit:
                 ),
             ],
         )
-        mock_usage = UsageStats(model="test", status="success")
 
         mock_registry = MagicMock()
         mock_provider = MagicMock()
@@ -920,7 +915,7 @@ class TestCaptureNoGit:
             "mementic.graph.GraphStore.get_capture_checkpoint", return_value="",
         ), patch(
             "mementic.cli._extract_session",
-            return_value=(mock_result, mock_usage),
+            return_value=mock_result,
         ):
             result = runner.invoke(
                 app, ["capture", "--session", str(session_file)],
@@ -940,7 +935,7 @@ class TestCaptureNoGit:
         session_file = tmp_path / "session.log"
         session_file.write_text("Fake agent session log content.\n")
 
-        from mementic.models import Decision, DecisionStatus, ExtractionResult, UsageStats
+        from mementic.models import Decision, DecisionStatus, ExtractionResult
 
         mock_result = ExtractionResult(
             decisions=[
@@ -955,7 +950,6 @@ class TestCaptureNoGit:
                 ),
             ],
         )
-        mock_usage = UsageStats(model="test", status="success")
 
         mock_registry = MagicMock()
         mock_provider = MagicMock()
@@ -973,7 +967,7 @@ class TestCaptureNoGit:
             ),
         ), patch(
             "mementic.cli._extract_session",
-            return_value=(mock_result, mock_usage),
+            return_value=mock_result,
         ):
             result = runner.invoke(
                 app, ["capture", "--session", str(session_file)],
@@ -993,7 +987,7 @@ class TestCaptureNoGit:
         session_file = tmp_path / "session.log"
         session_file.write_text("Fake agent session log content.\n")
 
-        from mementic.models import Decision, DecisionStatus, ExtractionResult, UsageStats
+        from mementic.models import Decision, DecisionStatus, ExtractionResult
 
         mock_result = ExtractionResult(
             decisions=[
@@ -1008,7 +1002,6 @@ class TestCaptureNoGit:
                 ),
             ],
         )
-        mock_usage = UsageStats(model="test", status="success")
 
         mock_registry = MagicMock()
         mock_provider = MagicMock()
@@ -1028,7 +1021,7 @@ class TestCaptureNoGit:
             "mementic.cli._run_git_diff", return_value=("", 0),
         ), patch(
             "mementic.cli._extract_session",
-            return_value=(mock_result, mock_usage),
+            return_value=mock_result,
         ):
             result = runner.invoke(
                 app, ["capture", "--session", str(session_file)],
@@ -1053,7 +1046,7 @@ class TestInitRepoFlag:
         try:
             os.chdir(tmp_path)
 
-            with patch("mementic.cli.run_init", return_value=(_make_mock_graph(), [])) as mock_run_init:
+            with patch("mementic.cli.run_init", return_value=_make_mock_graph()) as mock_run_init:
                 result = runner.invoke(app, ["init", "--repo", "/some/path"])
 
             assert result.exit_code == 0
@@ -1071,7 +1064,7 @@ class TestInitRepoFlag:
         try:
             os.chdir(tmp_path)
 
-            with patch("mementic.cli.run_init", return_value=(_make_mock_graph(), [])) as mock_run_init:
+            with patch("mementic.cli.run_init", return_value=_make_mock_graph()) as mock_run_init:
                 result = runner.invoke(app, ["init", "--no-scan"])
 
             assert result.exit_code == 0
@@ -1445,133 +1438,3 @@ class TestLogCommand:
         output = result.stdout + result.stderr
         assert "empty" in output.lower() or "no audit" in output.lower()
 
-
-class TestUsageCommand:
-    """Tests for mementic usage command."""
-
-    def _write_metrics_jsonl(self, path: Path, entries: list[dict]) -> Path:
-        """Write a metrics.jsonl file and return the file path."""
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with open(path, "w", encoding="utf-8") as f:
-            for entry in entries:
-                f.write(json.dumps(entry) + "\n")
-        return path
-
-    def test_usage_json_output(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """mementic usage --json returns summary dict."""
-        entries = [
-            {
-                "timestamp": "2024-01-01T00:00:00Z",
-                "operation": "init",
-                "source_label": "deepseek-chat",
-                "input_tokens": 1000,
-                "output_tokens": 500,
-                "total_tokens": 1500,
-                "model": "deepseek-chat",
-                "status": "success",
-            },
-            {
-                "timestamp": "2024-01-01T00:00:01Z",
-                "operation": "capture",
-                "source_label": "opencode:session",
-                "input_tokens": 800,
-                "output_tokens": 400,
-                "total_tokens": 1200,
-                "model": "deepseek-chat",
-                "status": "success",
-            },
-        ]
-        self._write_metrics_jsonl(
-            tmp_path / ".mementic" / "metrics.jsonl", entries
-        )
-
-        old_cwd = os.getcwd()
-        try:
-            os.chdir(tmp_path)
-            result = runner.invoke(app, ["usage", "--json"])
-        finally:
-            os.chdir(old_cwd)
-
-        assert result.exit_code == 0
-        data = json.loads(result.stdout)
-        assert data["total_calls"] == 2
-        assert data["total_tokens"] == 2700
-        assert "init" in data["by_operation"]
-        assert "capture" in data["by_operation"]
-
-    def test_usage_tabular_format(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """mementic usage renders a table with per-operation breakdown."""
-        entries = [
-            {
-                "timestamp": "2024-01-01T00:00:00Z",
-                "operation": "init",
-                "source_label": "deepseek-chat",
-                "input_tokens": 10000,
-                "output_tokens": 4200,
-                "total_tokens": 14200,
-                "model": "deepseek-chat",
-                "status": "success",
-            },
-            {
-                "timestamp": "2024-01-01T00:00:01Z",
-                "operation": "capture",
-                "source_label": "opencode:session1",
-                "input_tokens": 3000,
-                "output_tokens": 1600,
-                "total_tokens": 4600,
-                "model": "deepseek-chat",
-                "status": "success",
-            },
-            {
-                "timestamp": "2024-01-01T00:00:02Z",
-                "operation": "get_rules",
-                "source_label": "get_rules",
-                "input_tokens": 0,
-                "output_tokens": 0,
-                "total_tokens": 680,
-                "model": "",
-                "status": "success",
-            },
-        ]
-        self._write_metrics_jsonl(
-            tmp_path / ".mementic" / "metrics.jsonl", entries
-        )
-
-        old_cwd = os.getcwd()
-        try:
-            os.chdir(tmp_path)
-            result = runner.invoke(app, ["usage"])
-        finally:
-            os.chdir(old_cwd)
-
-        assert result.exit_code == 0
-        output = _strip_ansi(result.stdout)
-
-        assert "init" in output
-        assert "capture" in output
-        assert "get_rules" in output
-        assert "14,200" in output
-        assert "4,600" in output
-        assert "680" in output
-
-        assert "Total" in output
-        assert "19,480" in output
-
-    def test_usage_empty_data(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """mementic usage with no data shows a clear message."""
-        old_cwd = os.getcwd()
-        try:
-            os.chdir(tmp_path)
-            result = runner.invoke(app, ["usage"])
-        finally:
-            os.chdir(old_cwd)
-
-        assert result.exit_code == 0
-        output = _strip_ansi(result.stdout)
-        assert "No token usage recorded" in output

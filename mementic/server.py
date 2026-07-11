@@ -11,7 +11,6 @@ from mementic.config import MementicConfig, load_config
 from mementic.format import (
     DECISION_ID_MAX_LENGTH,
     CONSTRAINT_ID_MAX_LENGTH,
-    count_tokens,
     detect_repo_path,
     format_memory_context,
     format_evolution,
@@ -20,14 +19,12 @@ from mementic.format import (
     timestamp,
 )
 from mementic.graph import GraphStore
-from mementic.metrics import UsageStore
 from mementic.models import (
     CodeEntity,
     Constraint,
     Decision,
     DecisionStatus,
     EntityType,
-    MetricsEntry,
 )
 
 _INSTRUCTIONS = """\
@@ -130,21 +127,6 @@ async def get_rules(
         max_decision_tokens=max_tokens,
         keywords=keywords,
     )
-    pack_tokens = count_tokens(pack_text)
-    entry = MetricsEntry(
-        timestamp=timestamp(),
-        operation="get_rules",
-        source_label="get_rules",
-        input_tokens=0,
-        output_tokens=0,
-        total_tokens=pack_tokens,
-        model="",
-        status="success",
-    )
-
-    if graph._conn is not None:
-        metrics_store = UsageStore(conn=graph._conn)
-        metrics_store.append(entry)
 
     kw_summary = ", ".join(keywords)
     summary = (

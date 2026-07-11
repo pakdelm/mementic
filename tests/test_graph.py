@@ -692,7 +692,7 @@ class TestSQLitePersistence:
         }
         expected = {
             "decisions", "constraints", "entities", "edges",
-            "project_sources", "extraction_log", "audit_log",
+            "project_sources", "audit_log",
         }
         assert expected.issubset(tables)
 
