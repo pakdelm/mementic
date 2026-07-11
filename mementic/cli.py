@@ -219,7 +219,7 @@ def _run_git_diff(reference: str) -> tuple[str, int]:
 
 def _save_graph_cli(graph: GraphStore, cfg: "MementicConfig") -> None:
     """Save graph to disk only when using legacy JSON mode (not SQLite)."""
-    if graph._db_path is not None:
+    if graph.is_persistent:
         return
     graph.save(cfg.output.graph_path)
 
@@ -1923,7 +1923,7 @@ def decision(
         rationale=rationale,
         rejected_alternatives=rejected or [],
         affected_entities=entities or [],
-        source="mcp",
+        source="cli",
         status=DecisionStatus.ACCEPTED,
         created_at=now,
         modified_at=now,
@@ -1966,7 +1966,7 @@ def constraint(
         description=description,
         bound_entities=entities,
         enforced_by=decision_id or "",
-        source="mcp",
+        source="cli",
         status="active",
         created_at=now,
         repo=resolve_repo_name(detect_repo_path()),

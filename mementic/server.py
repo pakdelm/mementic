@@ -86,7 +86,7 @@ def _load_graph(project: str | None = None) -> tuple[GraphStore, MementicConfig]
 
 def _save_graph(graph: GraphStore, cfg: MementicConfig) -> None:
     """Save the graph — no-op in project mode (auto-persisted to SQLite)."""
-    if graph._db_path is not None:
+    if graph.is_persistent:
         return
     graph.save(cfg.output.graph_path)
 

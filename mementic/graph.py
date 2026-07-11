@@ -55,6 +55,11 @@ class GraphStore:
             self._db_path = Path(db_path)
             self._ensure_db()
 
+    @property
+    def is_persistent(self) -> bool:
+        """Return True if the graph is backed by a persistent SQLite database."""
+        return self._db_path is not None
+
     def close(self) -> None:
         """Close the SQLite connection if open. Safe to call multiple times."""
         if self._conn is not None:

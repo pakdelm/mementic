@@ -117,9 +117,9 @@ def text(markup: str, **kwargs: Any) -> _Text:
 # Status / icon helpers
 # ---------------------------------------------------------------------------
 
-STATUS_OK: str = "\u2713"  # ✓
-STATUS_FAIL: str = "\u2717"  # ✗
-STATUS_DEPRECATED: str = "\u2298"  # ⊘
+STATUS_OK: str = "[OK]"
+STATUS_FAIL: str = "[FAIL]"
+STATUS_DEPRECATED: str = "[DEPR]"
 STATUS_STALE: str = "~"
 
 

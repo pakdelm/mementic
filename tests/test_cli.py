@@ -325,7 +325,7 @@ class TestGraphCorruptMessage:
         # Status command handles graph load failures gracefully
         assert result.exit_code == 0
         output = result.stdout + result.stderr
-        assert "\u2717" in output  # STATUS_FAIL icon
+        assert "[FAIL]" in output  # STATUS_FAIL icon
         assert "Graph" in output
 
     def test_graph_missing_shows_init_message(
@@ -346,7 +346,7 @@ class TestGraphCorruptMessage:
         # Status command handles graph load failures gracefully
         assert result.exit_code == 0
         output = result.stdout + result.stderr
-        assert "\u2717" in output  # STATUS_FAIL icon
+        assert "[FAIL]" in output  # STATUS_FAIL icon
         assert "Graph" in output
 
 
