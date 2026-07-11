@@ -1551,7 +1551,7 @@ def entities(
 
 @app.command()
 def deprecate(
-    id: str = typer.Argument(..., help="Decision or constraint ID to deprecate"),
+    ids: list[str] = typer.Argument(..., help="Decision or constraint IDs to deprecate"),
     reason: str = typer.Option(
         "", "--reason", "-r",
         help="Reason for deprecation",
@@ -1561,41 +1561,55 @@ def deprecate(
         help="Target project name",
     ),
 ) -> None:
-    """Mark a decision or constraint as deprecated.
+    """Mark one or more decisions or constraints as deprecated.
 
-    Appends a deprecation note and writes an audit entry.
-    The entity remains in the graph for history but is excluded
-    from mementic memory.
+    Appends a deprecation note and writes audit entries.
+    Deprecated entities remain in the graph for history but are
+    excluded from mementic memory.
     """
     graph, cfg = _resolve_graph(project)
 
-    result = graph.deprecate_entity(id, reason)
+    deprecated = 0
+    already = 0
+    errors = 0
+
+    for id_ in ids:
+        result = graph.deprecate_entity(id_, reason)
+
+        if result["status"] == "deprecated":
+            deprecated += 1
+        elif result["status"] == "already_deprecated":
+            already += 1
+        elif result["status"] == "wrong_type":
+            typer.echo(result["message"], err=True)
+            errors += 1
+        else:
+            typer.echo(result["message"], err=True)
+            errors += 1
+
     _save_graph_cli(graph, cfg)
 
-    if result["status"] == "deprecated":
-        console.print(
-            panel(
-                text(
-                    f"Rule ID: [{C_ID}]{id}[/]\n"
-                    f"Reason: [{C_DIM}]{reason or '—'}[/]"
-                ),
-                title="Deprecated",
-            )
+    parts: list[str] = []
+    if deprecated:
+        parts.append(f"[{C_SUCCESS}]{deprecated} deprecated[/]")
+    if already:
+        parts.append(f"[{C_WARN}]{already} already deprecated[/]")
+    if errors:
+        parts.append(f"[{C_FAIL}]{errors} errors[/]")
+    if reason:
+        parts.append(f"[{C_DIM}]reason: {reason}[/]")
+
+    console.print(
+        panel(
+            text(
+                ", ".join(parts)
+                + f"\n[{C_DIM}]IDs: {', '.join(ids)}[/]"
+            ),
+            title="Deprecated",
         )
-    elif result["status"] == "already_deprecated":
-        console.print(
-            panel(
-                text(f"Rule [{C_ID}]{id}[/] is already deprecated."),
-                title="Already deprecated",
-                border_style=C_WARN,
-            )
-        )
-        raise typer.Exit()
-    elif result["status"] == "wrong_type":
-        typer.echo(result["message"], err=True)
-        raise typer.Exit(code=1)
-    else:
-        typer.echo(result["message"], err=True)
+    )
+
+    if errors:
         raise typer.Exit(code=1)
 
 
