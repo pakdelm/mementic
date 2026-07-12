@@ -1024,7 +1024,7 @@ class TestInitCommand:
         """init --help shows --provider and --model flags."""
         result = runner.invoke(app, ["init", "--help"])
         assert result.exit_code == 0, f"stderr: {result.stderr}"
-        output = result.stdout
+        output = _strip_ansi(result.stdout)
         assert "--provider" in output
         assert "--model" in output
 
