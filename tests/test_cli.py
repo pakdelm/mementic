@@ -1028,3 +1028,52 @@ class TestInitCommand:
         assert "--provider" in output
         assert "--model" in output
 
+
+class TestInitConfigPreservation:
+    """Regression tests for the init config rewrite (PR #40 review findings)."""
+
+    def test_init_preserves_sessions_on_provider_change(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """init --provider must not drop existing sessions overrides."""
+        monkeypatch.chdir(tmp_path)
+        config_path = tmp_path / ".mementic" / "config.json"
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        config_path.write_text(
+            json.dumps(
+                {
+                    "llm": {"provider": "deepseek", "model": "deepseek-v4-pro"},
+                    "sessions": {"opencode": {"log_dirs": ["/mnt/nfs/shared"]}},
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        result = runner.invoke(app, ["init", "--provider", "openrouter", "--no-scan"])
+        assert result.exit_code == 0, f"stderr: {result.stderr}"
+
+        from mementic.config import load_local_config
+
+        cfg = load_local_config()
+        assert cfg is not None
+        assert cfg.llm.provider == "openrouter"
+        assert cfg.sessions is not None
+        assert cfg.sessions.opencode.log_dirs == ["/mnt/nfs/shared"]
+
+    def test_init_invalid_provider_exits_cleanly(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """An unknown --provider must exit with code 1, not a traceback."""
+        monkeypatch.chdir(tmp_path)
+        result = runner.invoke(
+            app, ["init", "--provider", "bogusprovider", "--no-scan"]
+        )
+        assert result.exit_code == 1, f"stderr: {result.stderr}"
+        # A raw Pydantic ValidationError (a ValueError subclass) would be
+        # propagated as result.exception. After the fix it is caught and
+        # converted to a clean typer.Exit (SystemExit), so the exception must
+        # not be a ValueError.
+        assert not isinstance(result.exception, ValueError), (
+            f"Invalid provider raised an uncaught ValidationError: {result.exception}"
+        )
+

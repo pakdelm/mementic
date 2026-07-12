@@ -205,12 +205,14 @@ no manual review step.
 | `mementic capture [--agent X] [--session PATH] [--keyword X]` | Extract decisions from session (auto-resolves: new/skip/update) |
 | `mementic query keywords <kw...> [--json]` | Return ranked context pack of constraints and decisions matched by keywords |
 | `mementic query file <path> [--json]` | Show constraints and decisions affecting a specific file |
+| `mementic query search <term>` | Full-text search across decision titles, rationales, and constraint descriptions |
+| `mementic query stats` | Show graph statistics (decisions, constraints, entities, edges) |
 | `mementic add decision <title> --rationale TEXT [-e PATH]` | Record a new architectural decision |
 | `mementic add constraint <desc> -e PATH` | Record a new constraint |
 | `mementic deprecate <id...> [-r REASON]` | Retire decisions or constraints (accepts multiple IDs) |
 | `mementic status` | Show health checklist (config, API key, graph, session provider) |
 | `mementic list [decisions\|constraints\|entities]` | List decisions, constraints, or entities |
-| `mementic log [--limit N]` | Show recent graph mutations |
+| `mementic log [-n N]` | Show recent graph mutations |
 
 ## Config file reference
 

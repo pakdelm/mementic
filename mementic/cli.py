@@ -220,8 +220,17 @@ def init(
             else:
                 resolved_model = default_model
 
-        llm_cfg = LLMConfig(provider=resolved_provider, model=resolved_model)
-        local_cfg = LocalConfig(llm=llm_cfg)
+        try:
+            llm_cfg = LLMConfig(provider=resolved_provider, model=resolved_model)
+        except ValueError as e:
+            err_console.print(
+                panel(text(str(e)), title="Error", border_style=C_FAIL)
+            )
+            raise typer.Exit(code=1)
+        local_cfg = LocalConfig(
+            llm=llm_cfg,
+            sessions=existing.sessions if existing else None,
+        )
         save_local_config(local_cfg)
         console.print(
             text(f"[{C_SUCCESS}]{STATUS_OK}[/] LLM: {resolved_provider} / {resolved_model}")
