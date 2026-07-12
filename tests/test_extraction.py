@@ -43,7 +43,7 @@ def _mock_client(result: ExtractionResult) -> MagicMock:
 
 class TestExtractFromFreeform:
     def test_returns_extraction_result(self) -> None:
-        config = LLMConfig()
+        config = LLMConfig(provider="deepseek", model="deepseek-chat")
         result = ExtractionResult(
             decisions=[
                 Decision(
@@ -74,7 +74,7 @@ class TestExtractFromFreeform:
         assert output.affected_entities == ["src/main.py"]
 
     def test_returns_decisions_and_constraints(self) -> None:
-        config = LLMConfig()
+        config = LLMConfig(provider="deepseek", model="deepseek-chat")
         decision = Decision(
             id="d-1",
             title="Adopt pydantic",
@@ -114,7 +114,7 @@ class TestExtractFromFreeform:
         assert output.edges_to_create[0].relation == "enforces"
 
     def test_empty_text_returns_empty_result(self) -> None:
-        config = LLMConfig()
+        config = LLMConfig(provider="deepseek", model="deepseek-chat")
         output = extract_from_freeform("", "empty", config)
         assert isinstance(output, ExtractionResult)
         assert output.decisions == []
@@ -123,13 +123,13 @@ class TestExtractFromFreeform:
         assert output.edges_to_create == []
 
     def test_whitespace_only_text_returns_empty_result(self) -> None:
-        config = LLMConfig()
+        config = LLMConfig(provider="deepseek", model="deepseek-chat")
         output = extract_from_freeform("   \n  \t  ", "ws", config)
         assert isinstance(output, ExtractionResult)
         assert output.decisions == []
 
     def test_passes_temperature_and_model(self) -> None:
-        config = LLMConfig(extraction_model="deepseek-v3")
+        config = LLMConfig(provider="deepseek", model="deepseek-v3")
         result = ExtractionResult()
 
         with patch(
@@ -144,7 +144,7 @@ class TestExtractFromFreeform:
         assert call_kwargs["response_format"] == {"type": "json_object"}
 
     def test_none_content_returns_empty_result(self) -> None:
-        config = LLMConfig()
+        config = LLMConfig(provider="deepseek", model="deepseek-chat")
         client = MagicMock()
         choice = MagicMock()
         choice.message.content = None
@@ -160,7 +160,7 @@ class TestExtractFromFreeform:
 
 class TestExtractFromSession:
     def test_returns_extraction_result(self) -> None:
-        config = LLMConfig()
+        config = LLMConfig(provider="deepseek", model="deepseek-chat")
         result = ExtractionResult(
             decisions=[
                 Decision(
@@ -193,19 +193,19 @@ class TestExtractFromSession:
         assert output.decisions[0].title == "Switch to httpx"
 
     def test_empty_inputs_return_empty_result(self) -> None:
-        config = LLMConfig()
+        config = LLMConfig(provider="deepseek", model="deepseek-chat")
         output = extract_from_session("", "", "", config)
         assert output == ExtractionResult()
 
     def test_whitespace_only_inputs_return_empty_result(self) -> None:
-        config = LLMConfig()
+        config = LLMConfig(provider="deepseek", model="deepseek-chat")
         output = extract_from_session("  \n", "  ", "\t", config)
         assert output == ExtractionResult()
 
 
 class TestExtractFromAdrConsequences:
     def test_returns_constraints(self) -> None:
-        config = LLMConfig()
+        config = LLMConfig(provider="deepseek", model="deepseek-chat")
         constraints = [
             Constraint(
                 id="c-adr-1",
@@ -238,17 +238,17 @@ class TestExtractFromAdrConsequences:
         assert output[0].description == "Must not use raw SQL"
 
     def test_empty_text_returns_empty_list(self) -> None:
-        config = LLMConfig()
+        config = LLMConfig(provider="deepseek", model="deepseek-chat")
         output = extract_from_adr_consequences("", config)
         assert output == []
 
     def test_whitespace_only_returns_empty_list(self) -> None:
-        config = LLMConfig()
+        config = LLMConfig(provider="deepseek", model="deepseek-chat")
         output = extract_from_adr_consequences("   \n  ", config)
         assert output == []
 
     def test_none_content_returns_empty_list(self) -> None:
-        config = LLMConfig()
+        config = LLMConfig(provider="deepseek", model="deepseek-chat")
         client = MagicMock()
         choice = MagicMock()
         choice.message.content = None
@@ -262,7 +262,7 @@ class TestExtractFromAdrConsequences:
         assert output == []
 
     def test_no_constraints_in_response(self) -> None:
-        config = LLMConfig()
+        config = LLMConfig(provider="deepseek", model="deepseek-chat")
         client = MagicMock()
         choice = MagicMock()
         choice.message.content = json.dumps({"constraints": []})
@@ -293,14 +293,14 @@ class TestErrorHandling:
         )
 
     def test_freeform_auth_error_returns_empty(self) -> None:
-        config = LLMConfig()
+        config = LLMConfig(provider="deepseek", model="deepseek-chat")
         with patch("mementic.extraction.llm.get_client",
                    return_value=self._make_raising_client(self._make_auth_error())):
             with pytest.raises(RuntimeError, match="Authentication failed"):
                 extract_from_freeform("text", "src", config)
 
     def test_freeform_rate_limit_returns_empty(self) -> None:
-        config = LLMConfig()
+        config = LLMConfig(provider="deepseek", model="deepseek-chat")
         with (patch("mementic.extraction.llm.get_client",
                    return_value=self._make_raising_client(self._make_rate_limit_error())),
               patch("time.sleep", return_value=None)):
@@ -308,7 +308,7 @@ class TestErrorHandling:
         assert output == ExtractionResult()
 
     def test_freeform_timeout_returns_empty(self) -> None:
-        config = LLMConfig()
+        config = LLMConfig(provider="deepseek", model="deepseek-chat")
         with (patch("mementic.extraction.llm.get_client",
                    return_value=self._make_raising_client(APITimeoutError(request=MagicMock()))),
               patch("time.sleep", return_value=None)):
@@ -316,7 +316,7 @@ class TestErrorHandling:
         assert output == ExtractionResult()
 
     def test_freeform_connection_error_returns_empty(self) -> None:
-        config = LLMConfig()
+        config = LLMConfig(provider="deepseek", model="deepseek-chat")
         with (patch("mementic.extraction.llm.get_client",
                    return_value=self._make_raising_client(APIConnectionError(request=MagicMock()))),
               patch("time.sleep", return_value=None)):
@@ -324,7 +324,7 @@ class TestErrorHandling:
         assert output == ExtractionResult()
 
     def test_freeform_api_error_returns_empty(self) -> None:
-        config = LLMConfig()
+        config = LLMConfig(provider="deepseek", model="deepseek-chat")
         with (patch("mementic.extraction.llm.get_client",
                    return_value=self._make_raising_client(
                         APIError("err", request=MagicMock(), body=None))),
@@ -333,7 +333,7 @@ class TestErrorHandling:
         assert output == ExtractionResult()
 
     def test_freeform_json_decode_error_returns_empty(self) -> None:
-        config = LLMConfig()
+        config = LLMConfig(provider="deepseek", model="deepseek-chat")
         client = MagicMock()
         choice = MagicMock()
         choice.message.content = "not valid json"
@@ -345,7 +345,7 @@ class TestErrorHandling:
         assert output == ExtractionResult()
 
     def test_freeform_validation_error_returns_empty(self) -> None:
-        config = LLMConfig()
+        config = LLMConfig(provider="deepseek", model="deepseek-chat")
         client = MagicMock()
         choice = MagicMock()
         choice.message.content = json.dumps({"decisions": "not_a_list"})
@@ -357,14 +357,14 @@ class TestErrorHandling:
         assert output == ExtractionResult()
 
     def test_session_auth_error_returns_empty(self) -> None:
-        config = LLMConfig()
+        config = LLMConfig(provider="deepseek", model="deepseek-chat")
         with patch("mementic.extraction.llm.get_client",
                    return_value=self._make_raising_client(self._make_auth_error())):
             with pytest.raises(RuntimeError, match="Authentication failed"):
                 extract_from_session("log", "diff", "notes", config)
 
     def test_session_rate_limit_returns_empty(self) -> None:
-        config = LLMConfig()
+        config = LLMConfig(provider="deepseek", model="deepseek-chat")
         with (patch("mementic.extraction.llm.get_client",
                    return_value=self._make_raising_client(self._make_rate_limit_error())),
               patch("time.sleep", return_value=None)):
@@ -372,7 +372,7 @@ class TestErrorHandling:
         assert output == ExtractionResult()
 
     def test_session_timeout_returns_empty(self) -> None:
-        config = LLMConfig()
+        config = LLMConfig(provider="deepseek", model="deepseek-chat")
         with (patch("mementic.extraction.llm.get_client",
                    return_value=self._make_raising_client(APITimeoutError(request=MagicMock()))),
               patch("time.sleep", return_value=None)):
@@ -380,7 +380,7 @@ class TestErrorHandling:
         assert output == ExtractionResult()
 
     def test_session_connection_error_returns_empty(self) -> None:
-        config = LLMConfig()
+        config = LLMConfig(provider="deepseek", model="deepseek-chat")
         with (patch("mementic.extraction.llm.get_client",
                    return_value=self._make_raising_client(APIConnectionError(request=MagicMock()))),
               patch("time.sleep", return_value=None)):
@@ -388,7 +388,7 @@ class TestErrorHandling:
         assert output == ExtractionResult()
 
     def test_session_api_error_returns_empty(self) -> None:
-        config = LLMConfig()
+        config = LLMConfig(provider="deepseek", model="deepseek-chat")
         with (patch("mementic.extraction.llm.get_client",
                    return_value=self._make_raising_client(
                         APIError("err", request=MagicMock(), body=None))),
@@ -397,7 +397,7 @@ class TestErrorHandling:
         assert output == ExtractionResult()
 
     def test_session_json_decode_error_returns_empty(self) -> None:
-        config = LLMConfig()
+        config = LLMConfig(provider="deepseek", model="deepseek-chat")
         client = MagicMock()
         choice = MagicMock()
         choice.message.content = "not valid json"
@@ -409,7 +409,7 @@ class TestErrorHandling:
         assert output == ExtractionResult()
 
     def test_session_validation_error_returns_empty(self) -> None:
-        config = LLMConfig()
+        config = LLMConfig(provider="deepseek", model="deepseek-chat")
         client = MagicMock()
         choice = MagicMock()
         choice.message.content = json.dumps({"decisions": "not_a_list"})
@@ -421,14 +421,14 @@ class TestErrorHandling:
         assert output == ExtractionResult()
 
     def test_adr_consequences_auth_error_returns_empty(self) -> None:
-        config = LLMConfig()
+        config = LLMConfig(provider="deepseek", model="deepseek-chat")
         with patch("mementic.extraction.llm.get_client",
                    return_value=self._make_raising_client(self._make_auth_error())):
             with pytest.raises(RuntimeError, match="Authentication failed"):
                 extract_from_adr_consequences("consequences", config)
 
     def test_adr_consequences_rate_limit_returns_empty(self) -> None:
-        config = LLMConfig()
+        config = LLMConfig(provider="deepseek", model="deepseek-chat")
         with (patch("mementic.extraction.llm.get_client",
                    return_value=self._make_raising_client(self._make_rate_limit_error())),
               patch("time.sleep", return_value=None)):
@@ -436,7 +436,7 @@ class TestErrorHandling:
         assert output == []
 
     def test_adr_consequences_timeout_returns_empty(self) -> None:
-        config = LLMConfig()
+        config = LLMConfig(provider="deepseek", model="deepseek-chat")
         with (patch("mementic.extraction.llm.get_client",
                    return_value=self._make_raising_client(APITimeoutError(request=MagicMock()))),
               patch("time.sleep", return_value=None)):
@@ -444,7 +444,7 @@ class TestErrorHandling:
         assert output == []
 
     def test_adr_consequences_connection_error_returns_empty(self) -> None:
-        config = LLMConfig()
+        config = LLMConfig(provider="deepseek", model="deepseek-chat")
         with (patch("mementic.extraction.llm.get_client",
                    return_value=self._make_raising_client(APIConnectionError(request=MagicMock()))),
               patch("time.sleep", return_value=None)):
@@ -452,7 +452,7 @@ class TestErrorHandling:
         assert output == []
 
     def test_adr_consequences_api_error_returns_empty(self) -> None:
-        config = LLMConfig()
+        config = LLMConfig(provider="deepseek", model="deepseek-chat")
         with (patch("mementic.extraction.llm.get_client",
                    return_value=self._make_raising_client(
                         APIError("err", request=MagicMock(), body=None))),
@@ -461,7 +461,7 @@ class TestErrorHandling:
         assert output == []
 
     def test_adr_consequences_json_decode_error_returns_empty(self) -> None:
-        config = LLMConfig()
+        config = LLMConfig(provider="deepseek", model="deepseek-chat")
         client = MagicMock()
         choice = MagicMock()
         choice.message.content = "not json"
@@ -473,7 +473,7 @@ class TestErrorHandling:
         assert output == []
 
     def test_adr_consequences_validation_error_returns_empty(self) -> None:
-        config = LLMConfig()
+        config = LLMConfig(provider="deepseek", model="deepseek-chat")
         client = MagicMock()
         choice = MagicMock()
         choice.message.content = json.dumps({"constraints": "not_a_list"})
@@ -758,7 +758,7 @@ class TestExtractFromSessionTruncation:
 
     def test_extract_uses_windows_when_match(self) -> None:
         """extract_from_session with keyword-rich input uses windows for session_log."""
-        config = LLMConfig()
+        config = LLMConfig(provider="deepseek", model="deepseek-chat")
         # Build session with keyword early on
         lines = []
         for i in range(200):
@@ -788,7 +788,7 @@ class TestExtractFromSessionTruncation:
 
     def test_extract_falls_back_to_tail(self) -> None:
         """extract_from_session with no keywords falls back to tail truncation."""
-        config = LLMConfig()
+        config = LLMConfig(provider="deepseek", model="deepseek-chat")
         log = _build_session(200)
         assert "architecture" not in log.lower()
 
@@ -813,7 +813,7 @@ class TestExtractFromSessionTruncation:
 
     def test_extract_tail_zero_no_match(self) -> None:
         """extract_from_session with max_messages=0 and no keywords passes no session to LLM."""
-        config = LLMConfig()
+        config = LLMConfig(provider="deepseek", model="deepseek-chat")
         log = "Some text without any special terms\n## User\nnothing here\n## Assistant\nno keywords"
 
         result_obj = ExtractionResult()
@@ -835,7 +835,7 @@ class TestExtractFromSessionTruncation:
 
     def test_extract_custom_keyword_creates_windows(self) -> None:
         """extract_from_session with a custom keyword that matches uses windows."""
-        config = LLMConfig()
+        config = LLMConfig(provider="deepseek", model="deepseek-chat")
         log = _build_session(200)
         # Inject a custom keyword that doesn't appear in built-in list
         lines = log.split("\n")
@@ -862,7 +862,7 @@ class TestExtractFromSessionTruncation:
 
     def test_extract_custom_keyword_merges_with_builtin(self) -> None:
         """extract_from_session merges custom keywords with built-in keywords."""
-        config = LLMConfig()
+        config = LLMConfig(provider="deepseek", model="deepseek-chat")
         log = _build_session(200)
         # Inject both a built-in keyword and a custom one
         lines = log.split("\n")
@@ -891,7 +891,7 @@ class TestExtractFromSessionTruncation:
 
     def test_extract_no_custom_keywords_uses_builtin_only(self) -> None:
         """extract_from_session with no custom_keywords falls back to built-in only."""
-        config = LLMConfig()
+        config = LLMConfig(provider="deepseek", model="deepseek-chat")
         log = _build_session(200)
         # Inject only a custom-looking keyword
         lines = log.split("\n")
@@ -1096,7 +1096,7 @@ class TestExtractFromCodebaseSummary:
 
     def test_extracts_decisions_with_proposed_status(self) -> None:
         """LLM-returned decisions are forced to proposed status with codebase source."""
-        config = LLMConfig()
+        config = LLMConfig(provider="deepseek", model="deepseek-chat")
         decision = Decision(
             id="d-fastapi",
             title="Use FastAPI",
@@ -1125,7 +1125,7 @@ class TestExtractFromCodebaseSummary:
 
     def test_empty_summary_returns_empty_result(self) -> None:
         """Empty summary string returns empty ExtractionResult with zero tokens."""
-        config = LLMConfig()
+        config = LLMConfig(provider="deepseek", model="deepseek-chat")
         output = extract_from_codebase_summary("", config)
 
         assert isinstance(output, ExtractionResult)
@@ -1134,7 +1134,7 @@ class TestExtractFromCodebaseSummary:
 
     def test_whitespace_only_summary_returns_empty_result(self) -> None:
         """Whitespace-only summary returns empty ExtractionResult."""
-        config = LLMConfig()
+        config = LLMConfig(provider="deepseek", model="deepseek-chat")
         output = extract_from_codebase_summary("   \n  \t  ", config)
 
         assert isinstance(output, ExtractionResult)
@@ -1143,7 +1143,7 @@ class TestExtractFromCodebaseSummary:
 
     def test_llm_returns_invalid_json(self) -> None:
         """LLM returning invalid JSON is handled gracefully with error status."""
-        config = LLMConfig()
+        config = LLMConfig(provider="deepseek", model="deepseek-chat")
         client = MagicMock()
         choice = MagicMock()
         choice.message.content = "not valid json {{"
@@ -1162,7 +1162,7 @@ class TestExtractFromCodebaseSummary:
 
     def test_llm_returns_validation_error(self) -> None:
         """LLM returning valid JSON but wrong schema is handled gracefully."""
-        config = LLMConfig()
+        config = LLMConfig(provider="deepseek", model="deepseek-chat")
         client = MagicMock()
         choice = MagicMock()
         choice.message.content = '{"decisions": "not_a_list"}'
@@ -1181,7 +1181,7 @@ class TestExtractFromCodebaseSummary:
 
     def test_none_content_returns_empty_result(self) -> None:
         """LLM returning None content is handled gracefully."""
-        config = LLMConfig()
+        config = LLMConfig(provider="deepseek", model="deepseek-chat")
         client = MagicMock()
         choice = MagicMock()
         choice.message.content = None
@@ -1200,7 +1200,7 @@ class TestExtractFromCodebaseSummary:
 
     def test_auth_error_raises(self) -> None:
         """AuthenticationError is re-raised as RuntimeError."""
-        config = LLMConfig()
+        config = LLMConfig(provider="deepseek", model="deepseek-chat")
         auth_err = AuthenticationError(
             message="bad key", response=MagicMock(), body=None
         )
@@ -1213,7 +1213,7 @@ class TestExtractFromCodebaseSummary:
 
     def test_rate_limit_returns_empty(self) -> None:
         """RateLimitError returns empty result with rate_limited status."""
-        config = LLMConfig()
+        config = LLMConfig(provider="deepseek", model="deepseek-chat")
         client = MagicMock()
         client.chat.completions.create.side_effect = RateLimitError(
             message="limit", response=MagicMock(), body=None
@@ -1227,7 +1227,7 @@ class TestExtractFromCodebaseSummary:
 
     def test_timeout_returns_empty(self) -> None:
         """APITimeoutError returns empty result with error status."""
-        config = LLMConfig()
+        config = LLMConfig(provider="deepseek", model="deepseek-chat")
         client = MagicMock()
         client.chat.completions.create.side_effect = APITimeoutError(
             request=MagicMock()
