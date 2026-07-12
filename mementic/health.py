@@ -46,26 +46,11 @@ def check_health(
     """
     items: list[HealthItem] = []
 
-    # 1. Config check (project-aware: global config)
-    from mementic.config import get_global_config_path
-
-    global_config = get_global_config_path()
-    if global_config.exists():
-        items.append(HealthItem(label="Config", status="ok"))
-    else:
-        items.append(
-            HealthItem(
-                label="Config",
-                status="fail",
-                hint="No config found. Run 'mementic init' first.",
-            )
-        )
-
-    # 2. API key check (via keyring → env fallback)
+    # 1. API key check (via keyring → env fallback)
     try:
-        from mementic.config import load_global_config
-        cfg = load_global_config()
-        api_key = cfg.llm.get_api_key()
+        from mementic.config import load_local_config
+        cfg = load_local_config()
+        api_key = cfg.llm.get_api_key() if cfg else None
     except Exception:
         api_key = None
     if api_key:
@@ -81,11 +66,11 @@ def check_health(
             HealthItem(
                 label="API key",
                 status="fail",
-                hint="not set. Mementic runs in deterministic mode with reduced extraction quality. Set a key in ~/.mementic/config.json for full quality, or continue as-is.",
+                hint="not set. Mementic runs in deterministic mode with reduced extraction quality. Set a key in .mementic/config.json for full quality, or continue as-is.",
             )
         )
 
-    # 3. Graph check
+    # 2. Graph check
     if graph is not None:
         stats = graph.stats()
         if stats.get("constraints", 0) > 0 or stats.get("decisions", 0) > 0:
@@ -114,7 +99,7 @@ def check_health(
             )
         )
 
-    # 4. Session provider check
+    # 3. Session provider check
     try:
         from mementic.session import get_registry
 
@@ -146,7 +131,7 @@ def check_health(
             )
         )
 
-    # 5. Enforcement check (AGENTS.md)
+    # 4. Enforcement check (AGENTS.md)
     agents_md = (repo_path or Path.cwd()) / "AGENTS.md"
     if agents_md.exists():
         content = agents_md.read_text(encoding="utf-8")

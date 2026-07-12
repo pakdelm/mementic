@@ -5,10 +5,9 @@ import re
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any, TYPE_CHECKING
+from typing import Any
 
 import typer
-from pydantic import ValidationError
 from rich.markdown import Markdown
 from mementic.console import (
     C_DIM,
@@ -34,16 +33,10 @@ from mementic.console import (
 )
 
 from mementic.config import (
-    PROVIDER_CONFIGS,
-    GLOBAL_CONFIG_DISPLAY_PATH,
-    GlobalConfig,
-    ProjectEntry,
-    RepoEntry,
-    Sources,
-    load_config,
-    load_global_config,
-    resolve_project,
-    save_global_config,
+    LLMConfig,
+    LocalConfig,
+    load_local_config,
+    save_local_config,
 )
 from mementic.format import (
     CONTEXT_PACK_DEFAULT_MAX_CONSTRAINT_TOKENS,
@@ -53,7 +46,6 @@ from mementic.format import (
     detect_repo_path,
     format_evolution,
     format_memory_context,
-    resolve_repo_name,
     slugify,
     timestamp,
 )
@@ -67,8 +59,6 @@ from mementic.models import (
 )
 from mementic.pipeline import _extract_session, run_init
 from mementic.conflict import auto_resolve_capture
-if TYPE_CHECKING:
-    from mementic.config import MementicConfig  # noqa: F401
 
 _CODEBASE_INDICATORS: tuple[str, ...] = (
     "pyproject.toml", "package.json", "go.mod", "Cargo.toml",
@@ -77,121 +67,12 @@ _CODEBASE_INDICATORS: tuple[str, ...] = (
     "Cargo.lock", "mix.exs", "rebar.config",
 )
 
-# Agent name → SessionsConfig field name (hyphenated agent names use
-# underscore field names — Claude Code is "claude-code" but the config
-# field is claude_code via validation_alias).
-_SESSION_PROVIDER_IMPORTS: dict[str, str] = {
-    "opencode": "mementic.session.opencode",
-    "claude-code": "mementic.session.claude_code",
-    "cursor": "mementic.session.cursor",
-    "windsurf": "mementic.session.windsurf",
-}
-_SESSION_FIELD_NAMES: dict[str, str] = {
-    "opencode": "opencode",
-    "claude-code": "claude_code",
-    "cursor": "cursor",
-    "windsurf": "windsurf",
-}
-
-
-def _populate_session_defaults(global_cfg: Any) -> None:
-    """Populate session log_dirs from each provider's platform defaults.
-
-    Only writes when the config currently has empty log_dirs for a given
-    agent — preserves user overrides on subsequent ``mementic init`` runs.
-    """
-    import importlib
-    system = sys.platform  # "win32" / "linux" / "darwin" — matches DEFAULT_*_PATHS keys
-    updated = False
-
-    for agent_name, module_name in _SESSION_PROVIDER_IMPORTS.items():
-        field = _SESSION_FIELD_NAMES.get(agent_name, agent_name.replace("-", "_"))
-        agent_cfg = getattr(global_cfg.sessions, field, None)
-        if agent_cfg is None or agent_cfg.log_dirs:
-            continue  # already has user-configured paths
-
-        try:
-            mod = importlib.import_module(module_name)
-        except ImportError:
-            continue
-
-        # Each provider module exports DEFAULT_*_PATHS: dict[platform, list[str]]
-        for attr_name in dir(mod):
-            if attr_name.startswith("DEFAULT_") and attr_name.endswith("_PATHS"):
-                default_paths = getattr(mod, attr_name, None)
-                if isinstance(default_paths, dict):
-                    paths = default_paths.get(system, default_paths.get("linux", []))
-                    if paths:
-                        agent_cfg.log_dirs = list(paths)
-                        updated = True
-                    break
-
-    if updated:
-        from mementic.config import save_global_config
-        save_global_config(global_cfg)
-
 app = typer.Typer(help="Mementic — semantic memory for engineering teams and AI agents")
 
 
-def _load_graph_safe(graph_path: str) -> GraphStore:
-    """Load graph with distinct error messages for missing vs corrupt files.
-
-    Args:
-        graph_path: Path to the graph JSON file.
-
-    Returns:
-        A loaded GraphStore instance.
-
-    Raises:
-        typer.Exit: With code 1 and a clear message for missing or corrupt graph.
-    """
-    try:
-        return GraphStore.load(graph_path)
-    except FileNotFoundError:
-        typer.echo(
-            "No graph found. Run 'mementic init' first.", err=True
-        )
-        raise typer.Exit(code=1)
-    except (json.JSONDecodeError, TypeError, ValueError, KeyError, ValidationError):
-        typer.echo(
-            f"Graph file at {graph_path} is corrupt. "
-            f"Run 'mementic init' to rebuild.",
-            err=True,
-        )
-        raise typer.Exit(code=1)
-
-
-def _resolve_graph(project: str | None = None) -> tuple[GraphStore, "MementicConfig"]:
-    """Resolve graph for a project or fall back to legacy graph.json.
-
-    Tries to resolve a project from the global config. When no projects are
-    configured (first run, or no ``~/.mementic/config.json`` on disk), falls
-    back to the legacy ``graph.json`` path.
-
-    Args:
-        project: Optional project name from ``--project`` flag.
-
-    Returns:
-        A ``(GraphStore, MementicConfig)`` tuple.
-
-    Raises:
-        typer.Exit: When an explicit ``--project`` is not found.
-    """
-    cfg = load_config(repo_path=detect_repo_path())
-
-    try:
-        proj_name, global_cfg = resolve_project(project)
-        proj_entry = global_cfg.projects[proj_name]
-        db_path = Path(proj_entry.db_path).expanduser()
-        return GraphStore(db_path=db_path), cfg
-    except ValueError as e:
-        if project is not None:
-            # Explicit --project that doesn't exist
-            typer.echo(str(e), err=True)
-            raise typer.Exit(code=1)
-        # No projects configured — fall back to legacy graph.json
-
-    return _load_graph_safe(cfg.output.graph_path), cfg
+def _resolve_graph() -> GraphStore:
+    """Open the local knowledge graph at .mementic/graph.db."""
+    return GraphStore(db_path=Path(".mementic/graph.db"))
 
 
 def _run_git_diff(reference: str) -> tuple[str, int]:
@@ -212,406 +93,206 @@ def _run_git_diff(reference: str) -> tuple[str, int]:
         return "", 1
 
 
-def _save_graph_cli(graph: GraphStore, cfg: "MementicConfig") -> None:
-    """Save graph to disk only when using legacy JSON mode (not SQLite)."""
-    if graph.is_persistent:
-        return
-    graph.save(cfg.output.graph_path)
 
 
 @app.command()
 def init(
-    repo: str | None = typer.Option(
-        None, "--repo",
-        help="Path to repository root for codebase structural scan",
+    provider: str | None = typer.Option(
+        None, "--provider",
+        help="LLM provider (deepseek, openai, openrouter, ollama)",
+    ),
+    model: str | None = typer.Option(
+        None, "--model",
+        help="Model name for the provider (provider-specific default if omitted)",
     ),
     no_scan: bool = typer.Option(
         False, "--no-scan",
-        help="Skip codebase structural scan (use configured sources only)",
+        help="Skip codebase structural scan",
     ),
     deep: bool = typer.Option(
         False, "--deep",
-        help="Full LLM-powered extraction (requires API key). "
-             "Without --deep, init runs deterministically in seconds.",
-    ),
-    interactive: bool = typer.Option(
-        False, "--interactive", help="Walk through setup interactively"
-    ),
-    project: str | None = typer.Option(
-        None, "--project",
-        help="Target project name for project-aware init",
+        help="Full LLM-powered extraction (requires API key)",
     ),
     key: bool = typer.Option(
         False, "--key",
-        help="Set or rotate the API key. Opens an interactive prompt to "
-             "select a provider and enter the key (stored in OS keyring).",
+        help="Set or rotate the API key in OS keyring",
     ),
 ) -> None:
-    """Initialize the knowledge graph from configured sources.
+    """Initialize the knowledge graph for this repository.
 
-    Auto-discovers ``./docs/adr/``, ``./docs/instructions/``,
-    ``.cursor/instructions/`` and ``.windsurf/instructions/`` directories
-    and registers the repo in the global config at ``~/.mementic/config.json``.
+    Creates a .mementic/ directory, sets up the LLM provider, scans the
+    codebase, and populates the knowledge graph.
 
-    With --repo, scans the codebase structure for architectural patterns
-    before processing configured sources. Use --no-scan to skip.
+    Provider resolution order:
+    1. --provider flag (explicit)
+    2. Interactive prompt (when stdin is a tty) — always shown so the user
+       can choose, even if env vars are already set
+    3. Environment variable detection — used as a fallback when non-interactive
+       (CI, Docker SBX). Picks the first detected from: OPENROUTER_API_KEY,
+       DEEPSEEK_API_KEY, OPENAI_API_KEY
 
-    API keys are stored in the OS keyring (Windows Credential Locker,
-    macOS Keychain, Linux Secret Service). Use --key to select a provider
-    and set or rotate the key interactively.
+    API keys are stored in the OS keyring. Use --key to set or rotate.
     """
+    import typer as _typer
+    from mementic.format import detect_repo_path
+
     cwd = Path(detect_repo_path())
-    cwd_resolved = str(cwd.resolve())
+    mementic_dir = Path(".mementic")
 
-    try:
-        global_cfg = load_global_config()
-    except ValueError as e:
-        # load_global_config rejects empty projects dicts to catch manual
-        # editing mistakes.  In init() we recover by creating a fresh project.
-        typer.echo(f"Warning: {e}", err=True)
-        global_cfg = GlobalConfig()
+    # --- Resolve LLM config ---
+    existing = load_local_config()
+    llm_cfg = existing.llm if existing else None
 
-    already_registered = False
-    for _proj_name, proj_entry in global_cfg.projects.items():
-        for repo_entry in proj_entry.repos.values():
-            try:
-                if Path(repo_entry.path).resolve() == Path(cwd_resolved):
-                    already_registered = True
-                    break
-            except (OSError, ValueError):
-                continue
-        if already_registered:
-            break
+    if llm_cfg is None or provider or model:
+        # Determine provider
+        resolved_provider = provider
+        if not resolved_provider:
+            # Preserve existing config's provider when only --model is given
+            if llm_cfg is not None:
+                resolved_provider = llm_cfg.provider
+        if not resolved_provider:
+            import os as _os
 
-    if not already_registered:
-        # Register with empty sources — pipeline Phase 0 handles markdown scanning.
-        discovered_sources = Sources()
+            # Detect which env vars are set (informational, for the prompt)
+            env_providers: dict[str, str] = {}
+            if _os.environ.get("OPENROUTER_API_KEY"):
+                env_providers["openrouter"] = "OPENROUTER_API_KEY"
+            if _os.environ.get("DEEPSEEK_API_KEY"):
+                env_providers["deepseek"] = "DEEPSEEK_API_KEY"
+            if _os.environ.get("OPENAI_API_KEY"):
+                env_providers["openai"] = "OPENAI_API_KEY"
 
-        if not any(
-            (
-                discovered_sources.adr_dirs,
-                discovered_sources.opencode_instructions,
-            )
-        ):
-            console.print(
-                text(
-                    f"[{C_WARN}]No pre-configured sources. All markdown "
-                    f"files will be scanned during init.[/]"
+            if sys.stdin.isatty():
+                console.print("\n[bold]Select LLM provider:[/]")
+                for i, (name, env_var) in enumerate(
+                    [("openrouter", "OPENROUTER_API_KEY"),
+                     ("deepseek", "DEEPSEEK_API_KEY"),
+                     ("openai", "OPENAI_API_KEY"),
+                     ("ollama", None)],
+                    start=1,
+                ):
+                    tag = f" [{C_SUCCESS}detected[/]]" if name in env_providers else ""
+                    console.print(f"  [{i}] {name}{tag}")
+                choice = _typer.prompt("Enter number", default="1")
+                provider_map = {"1": "openrouter", "2": "deepseek", "3": "openai", "4": "ollama"}
+                resolved_provider = provider_map.get(choice, "openrouter")
+            elif env_providers:
+                # Non-interactive with env vars: pick the first detected
+                resolved_provider = next(iter(env_providers))
+            else:
+                console.print(
+                    text(f"[{C_FAIL}]No provider specified. "
+                         f"Use --provider or set an API key environment variable "
+                         f"(OPENROUTER_API_KEY, DEEPSEEK_API_KEY, OPENAI_API_KEY).[/]")
                 )
-            )
+                raise _typer.Exit(code=1)
 
-        # Detect codebase-only repos (relax: register with empty sources)
-        has_codebase = any((cwd / ind).is_file() for ind in _CODEBASE_INDICATORS)
+        # Determine model
+        resolved_model = model
+        if not resolved_model:
+            model_defaults: dict[str, str] = {
+                "openrouter": "deepseek/deepseek-v4-pro",
+                "deepseek": "deepseek-v4-pro",
+                "openai": "gpt-4o",
+                "ollama": "llama3",
+            }
+            model_suggestions: dict[str, list[str]] = {
+                "openrouter": [
+                    "deepseek/deepseek-v4-pro",
+                    "deepseek/deepseek-v4-flash",
+                    "openai/gpt-4o",
+                    "anthropic/claude-sonnet-4",
+                ],
+                "deepseek": ["deepseek-v4-pro", "deepseek-v4-flash"],
+                "openai": ["gpt-4o", "gpt-4o-mini", "o3-mini"],
+                "ollama": ["llama3", "codellama", "mistral"],
+            }
+            default_model = model_defaults.get(resolved_provider, "deepseek-v4-pro")
+            if sys.stdin.isatty():
+                suggestions = model_suggestions.get(resolved_provider, [default_model])
+                console.print(f"\n  Popular {resolved_provider} models:")
+                for s in suggestions:
+                    marker = " (default)" if s == default_model else ""
+                    console.print(f"    {s}{marker}")
+                resolved_model = _typer.prompt(
+                    "Model", default=default_model
+                )
+            else:
+                resolved_model = default_model
 
-        if not any(
-            (
-                discovered_sources.adr_dirs,
-                discovered_sources.opencode_instructions,
-                discovered_sources.claude_instructions,
-                discovered_sources.cursor_instructions,
-                discovered_sources.windsurf_instructions,
-            )
-        ) and not has_codebase:
-            typer.echo(
-                "No sources discovered. Graph will start empty — use "
-                "inline proposals during sessions to populate it."
-            )
-
-        if not global_cfg.projects:
-            global_cfg.projects["main"] = ProjectEntry(
-                db_path="~/.mementic/projects/main.mementic.db",
-            )
-            global_cfg.default_project = "main"
-        proj_name = global_cfg.default_project
-        proj_entry = global_cfg.projects[proj_name]
-
-        repo_name = cwd.name
-        proj_entry.repos[cwd_resolved] = RepoEntry(
-            path=cwd_resolved,
-            label=repo_name,
-            sources=discovered_sources,
-        )
-        save_global_config(global_cfg)
+        llm_cfg = LLMConfig(provider=resolved_provider, model=resolved_model)
+        local_cfg = LocalConfig(llm=llm_cfg)
+        save_local_config(local_cfg)
         console.print(
-            text(
-                f"[{C_SUCCESS}]{STATUS_OK}[/] Registered repo "
-                f"'{repo_name}' in project '{proj_name}'."
-            )
+            text(f"[{C_SUCCESS}]{STATUS_OK}[/] LLM: {resolved_provider} / {resolved_model}")
         )
 
-    # Auto-detect repo if not explicitly given
-    effective_repo = repo
-    if effective_repo is None and not no_scan:
+    # --- API key setup ---
+    if key or (
+        llm_cfg.key_env_var is not None
+        and llm_cfg.get_api_key() is None
+        and sys.stdin.isatty()
+    ):
+        if llm_cfg.key_env_var is None:
+            console.print(f"[{C_DIM}]Provider '{llm_cfg.provider}' does not require an API key.[/]")
+        else:
+            console.print(f"\n[bold]API key for {llm_cfg.provider}[/]")
+            console.print("  The key will be stored in your OS keyring.")
+            console.print(f"  Environment variable fallback: {llm_cfg.key_env_var}")
+            api_key = _typer.prompt("Enter API key", hide_input=True)
+            try:
+                llm_cfg.set_api_key(api_key)
+                console.print(text(f"[{C_SUCCESS}]{STATUS_OK}[/] API key stored in keyring."))
+            except RuntimeError as e:
+                console.print(text(f"[{C_WARN}]Could not store in keyring: {e}[/]"))
+                console.print(f"  Set {llm_cfg.key_env_var} environment variable instead.")
+
+    # --- Auto-detect repo ---
+    effective_repo: str | None = None
+    if not no_scan:
         for indicator in _CODEBASE_INDICATORS:
             if (cwd / indicator).is_file():
                 effective_repo = str(cwd)
                 break
 
-    # Resolve project info before init (may error on invalid --project)
-    project_db_path: str | None = None
-    project_name: str | None = None
-    project_global_cfg: Any = None
-    if project is not None:
+    # --- Warn on re-init ---
+    db_path = str(Path(".mementic/graph.db").resolve())
+    if Path(db_path).exists():
         try:
-            project_name, project_global_cfg = resolve_project(project)
-            proj_entry = project_global_cfg.projects[project_name]
-            project_db_path = str(Path(proj_entry.db_path).expanduser())
-        except ValueError as e:
-            typer.echo(str(e), err=True)
-            raise typer.Exit(code=1)
-    else:
-        # Use default project's db_path so init writes to the project DB
-        try:
-            project_name, project_global_cfg = resolve_project(None)
-            proj_entry = project_global_cfg.projects[project_name]
-            project_db_path = str(Path(proj_entry.db_path).expanduser())
-        except ValueError:
-            project_db_path = None
+            import sqlite3
+            conn = sqlite3.connect(db_path)
+            cur = conn.execute(
+                "SELECT COUNT(*) FROM decisions UNION ALL "
+                "SELECT COUNT(*) FROM constraints"
+            )
+            rows = cur.fetchall()
+            conn.close()
+            d_count = rows[0][0] if len(rows) > 0 else 0
+            c_count = rows[1][0] if len(rows) > 1 else 0
+        except Exception:
+            d_count = c_count = 0
 
-    # API key setup via OS keyring
-    global_cfg = load_global_config()
-    api_key = global_cfg.llm.get_api_key()
-
-    if key:
-        # --key flag: select provider and set/rotate key interactively
-        if not sys.stdin.isatty():
-            err_console.print(
+        if d_count > 0 or c_count > 0:
+            console.print(
                 panel(
                     text(
-                        "Error: --key requires an interactive terminal.\n"
-                        "  Run 'mementic init' without --key for guided setup, or\n"
-                        "  set the environment variable for your provider:\n"
-                        "    export DEEPSEEK_API_KEY=\"your-key-here\"\n"
-                        "    export OPENAI_API_KEY=\"your-key-here\"\n"
-                        "    export OPENROUTER_API_KEY=\"your-key-here\""
+                        f"Graph already contains {d_count} decision(s), "
+                        f"{c_count} constraint(s).\n"
+                        f"[{C_DIM}]Re-initializing will re-scan sources. "
+                        f"Existing entries will not be overwritten.[/]"
                     ),
-                    title="Error",
-                    border_style=C_FAIL,
+                    title="Re-initialize?",
+                    border_style=C_WARN,
                 )
             )
-            raise typer.Exit(code=1)
-
-        console.print(
-            text(
-                f"\n[{C_HEADER} bold]Select an LLM provider[/]\n"
-                f"  {', '.join(PROVIDER_CONFIGS.keys())}\n"
-                f"  [{C_DIM}]Press Enter to keep current "
-                f"({global_cfg.llm.provider})[/]"
-            )
-        )
-        provider = typer.prompt("Provider", default=global_cfg.llm.provider).strip()
-
-        if provider not in PROVIDER_CONFIGS:
-            err_console.print(
-                text(
-                    f"[{C_FAIL}]Error: Unknown provider '{provider}'.\n"
-                    f"  Known: {', '.join(PROVIDER_CONFIGS.keys())}[/]"
-                )
-            )
-            raise typer.Exit(code=1)
-
-        provider_cfg = PROVIDER_CONFIGS[provider]
-        env_var = provider_cfg["key_env_var"]
-
-        if env_var is None:
-            global_cfg.llm.provider = provider
-            console.print(
-                text(
-                    f"[{C_SUCCESS}]{STATUS_OK}[/] Ollama runs locally "
-                    f"— no API key needed.\n"
-                    f"  [{C_DIM}]Make sure ollama is running on "
-                    f"localhost:11434[/]"
-                )
-            )
-            save_global_config(global_cfg)
-            typer.echo(f"Saved to {GLOBAL_CONFIG_DISPLAY_PATH}")
-        else:
-            key_val = typer.prompt(
-                f"API key for {provider} ({env_var})",
-                hide_input=True,
-                show_default=False,
-            )
-            if not key_val.strip():
-                console.print(
-                    text(f"[{C_DIM}]No key entered — no changes made.[/]")
-                )
-            else:
-                global_cfg.llm.provider = provider
-                try:
-                    global_cfg.llm.set_api_key(key_val.strip())
-                except RuntimeError as e:
-                    typer.echo(str(e), err=True)
-                    raise typer.Exit(code=1)
-
-                console.print(
-                    text(
-                        f"[{C_SUCCESS}]{STATUS_OK}[/] Key stored in OS keyring.\n"
-                        f"  [{C_DIM}]Fallback: export {env_var}=...[/]"
-                    )
-                )
-                save_global_config(global_cfg)
-                typer.echo(f"Saved to {GLOBAL_CONFIG_DISPLAY_PATH}")
-
-        return
-    elif not api_key and sys.stdin.isatty():
-        # No key found — offer to set one up
-        console.print(
-            text(
-                f"\n[{C_HEADER}]Mementic can extract richer architectural "
-                f"context using an LLM.[/]\n"
-                f"[{C_DIM}]Deterministic mode (no key) works but produces "
-                f"lower-quality results.[/]\n"
-            )
-        )
-        setup_key = typer.confirm("Set up an LLM provider now?", default=True)
-
-        if setup_key:
-            console.print(
-                text(
-                    f"\n[{C_HEADER} bold]Select an LLM provider[/]\n"
-                    f"  {', '.join(PROVIDER_CONFIGS.keys())}"
-                )
-            )
-            provider = typer.prompt(
-                "Provider", default="", show_default=False
-            )
-
-            if provider not in PROVIDER_CONFIGS:
-                typer.echo(
-                    f"Unknown provider '{provider}'. Skipping LLM setup."
-                )
-            else:
-                provider_cfg = PROVIDER_CONFIGS[provider]
-                env_var = provider_cfg["key_env_var"]
-
-                if env_var is None:
-                    # ollama — no key needed
-                    console.print(
-                        text(
-                            f"[{C_SUCCESS}]{STATUS_OK}[/] Ollama runs locally "
-                            f"— no API key needed.\n"
-                            f"  [{C_DIM}]Make sure ollama is running on "
-                            f"localhost:11434[/]"
-                        )
-                    )
-                else:
-                    key_val = typer.prompt(
-                        f"API key for {provider} ({env_var})",
-                        hide_input=True,
-                        show_default=False,
-                    )
-                    if key_val.strip():
-                        # Store in OS keyring (primary)
-                        global_cfg.llm.provider = provider
-                        try:
-                            global_cfg.llm.set_api_key(key_val.strip())
-                        except RuntimeError as e:
-                            typer.echo(str(e), err=True)
-                            raise typer.Exit(code=1)
-                        console.print(
-                            text(
-                                f"[{C_SUCCESS}]{STATUS_OK}[/] Key stored in "
-                                f"OS keyring.\n"
-                                f"  [{C_DIM}]Fallback: export {env_var}=...[/]"
-                            )
-                        )
-
-                default_model = ""  # user must choose
-                model = typer.prompt(
-                    f"Model for {provider}", default=default_model
-                )
-                global_cfg.llm.provider = provider
-                global_cfg.llm.model = model
-                global_cfg.llm.extraction_model = model
-                save_global_config(global_cfg)
-                typer.echo(f"Saved to {GLOBAL_CONFIG_DISPLAY_PATH}")
-
-    # Populate session log_dirs from provider defaults
-    # Ensures the config shows default paths for all supported agents so
-    # users can see and override them.  Only writes when config currently
-    # has empty log_dirs (preserves user overrides on subsequent runs).
-    _populate_session_defaults(global_cfg)
-
-    # Compute tick total for progress bar.
-    # Pipeline calls advance() per sub-step — count actual work items,
-    # not abstract phases, so the bar tracks real progress.
-    phase_cfg = load_config(repo_path=str(cwd), project=project)
-    tick_total = 0
-
-    if effective_repo and not no_scan:
-        if deep:
-            tick_total += 2  # _run_codebase_scan: I/O + LLM (2 ticks)
-        try:
-            md_count = sum(
-                1 for _ in Path(effective_repo).rglob("*.md")
-                if ".mementic" not in _.parts and "node_modules" not in _.parts
-            )
-            md_count = max(md_count, 1)
-            if deep:
-                # LLM mode: pipeline advances per batch (~10 files per batch)
-                tick_total += max(1, (md_count + 9) // 10)
-            else:
-                # Deterministic: pipeline advances per file
-                tick_total += md_count
-        except (OSError, ValueError):
-            tick_total += 10 if deep else 5
-    tick_total += len(phase_cfg.sources.adr_dirs)
-    tick_total += len(phase_cfg.sources.opencode_instructions)
-    tick_total += len(phase_cfg.sources.claude_instructions)
-    tick_total += len(phase_cfg.sources.cursor_instructions)
-    tick_total += len(phase_cfg.sources.windsurf_instructions)
-    has_src = bool(
-        phase_cfg.sources.adr_dirs
-        or phase_cfg.sources.opencode_instructions
-        or phase_cfg.sources.claude_instructions
-        or phase_cfg.sources.cursor_instructions
-        or phase_cfg.sources.windsurf_instructions
-    )
-    if has_src or (effective_repo and not no_scan):
-        tick_total += 1  # backfill edges
-    if project_db_path and effective_repo:
-        tick_total += 1  # track repo in project_sources
-    tick_total = max(tick_total, 1)  # avoid indeterminate bar
-
-    # Warn on re-init when the graph already contains data.
-    if project_db_path:
-        db_path = str(Path(project_db_path).expanduser())
-        if Path(db_path).exists():
-            try:
-                import sqlite3
-                conn = sqlite3.connect(db_path)
-                cur = conn.execute(
-                    "SELECT COUNT(*) FROM decisions UNION ALL "
-                    "SELECT COUNT(*) FROM constraints"
-                )
-                rows = cur.fetchall()
-                conn.close()
-                d_count = rows[0][0] if len(rows) > 0 else 0
-                c_count = rows[1][0] if len(rows) > 1 else 0
-            except Exception:
-                d_count = c_count = 0
-
-            if d_count > 0 or c_count > 0:
-                console.print(
-                    panel(
-                        text(
-                            f"Graph already contains {d_count} decision(s), "
-                            f"{c_count} constraint(s).\n"
-                            f"[{C_DIM}]Re-initializing will re-scan sources. "
-                            f"Existing entries will not be overwritten.[/]"
-                        ),
-                        title="Re-initialize?",
-                        border_style=C_WARN,
-                    )
-                )
-                if sys.stdin.isatty():
-                    if not typer.confirm(
-                        "Continue?",
-                        default=False,
-                    ):
-                        typer.echo("Init cancelled.")
-                        raise typer.Exit(code=0)
-                # Non-interactive mode: proceed silently (CI/automation)
+            if sys.stdin.isatty():
+                if not typer.confirm(
+                    "Continue?",
+                    default=False,
+                ):
+                    typer.echo("Init cancelled.")
+                    raise typer.Exit(code=0)
+            # Non-interactive mode: proceed silently (CI/automation)
 
     if not deep:
         console.print(
@@ -626,20 +307,21 @@ def init(
             )
         )
 
-    # Run init — pipeline reads global config (no config_path)
+    # --- Run init pipeline ---
+    mementic_dir.mkdir(exist_ok=True)
+
     try:
         with make_progress() as progress:
             task_id = progress.add_task(
                 "Initializing knowledge graph...",
-                total=tick_total,
+                total=None,
             )
             advance = make_step_tracker(progress, task_id, preamble="")
-
             graph = run_init(
                 repo_path=effective_repo,
                 no_scan=no_scan,
-                db_path=project_db_path,
-                project=project,
+                db_path=db_path,
+                llm_cfg=llm_cfg,
                 advance=advance,
                 deep=deep,
             )
@@ -649,31 +331,9 @@ def init(
         )
         raise typer.Exit(code=1)
 
-    # Load config for source counts in post-bootstrap output
-    cfg = phase_cfg
+    # --- Post-bootstrap summary ---
     stats = graph.stats()
-
-    # Post-bootstrap summary
-    from mementic.health import check_health
-
-    items = check_health(graph, repo_path=cwd)
-
-    adr_count = len(cfg.sources.adr_dirs)
-    instr_count = (
-        len(cfg.sources.opencode_instructions)
-        + len(cfg.sources.claude_instructions)
-        + len(cfg.sources.cursor_instructions)
-        + len(cfg.sources.windsurf_instructions)
-    )
     entity_count = stats.get("entities", 0)
-
-    # Sources summary
-    src_table = kv_table()
-    src_table.add_column("Label", style="bold", width=20)
-    src_table.add_column("Value", style=C_DIM)
-    src_table.add_row("ADR", str(adr_count))
-    src_table.add_row("Instructions", str(instr_count))
-    src_table.add_row("Codebase entities", str(entity_count))
 
     # Graph summary
     g_table = kv_table()
@@ -685,6 +345,10 @@ def init(
     g_table.add_row("Edges", str(stats.get("edges", 0)))
 
     # Health table
+    from mementic.health import check_health
+
+    items = check_health(graph, repo_path=cwd)
+
     health_table = table(show_header=False, show_edge=False, padding=(0, 1))
     health_table.add_column("Status", width=7)
     health_table.add_column("Check", style="bold")
@@ -703,9 +367,6 @@ def init(
 
     console.print(
         panel(
-            text(f"[{C_HEADER} bold]Sources[/]"),
-            src_table,
-            rule(),
             text(f"[{C_HEADER} bold]Graph[/]"),
             g_table,
             rule(),
@@ -717,8 +378,8 @@ def init(
         )
     )
 
-    # Enforcement injection check
-    from mementic.inject import detect_agents, has_enforcement, inject_enforcement
+    # --- Inject enforcement template ---
+    from mementic.inject import inject_enforcement, detect_agents, has_enforcement
 
     agents_md_path = cwd / "AGENTS.md"
     if not has_enforcement(agents_md_path):
@@ -749,10 +410,13 @@ def init(
                         f"Run 'mementic init' to add them.[/]"
                     )
                 )
+        else:
+            # Always inject enforcement even without detected agents
+            inject_enforcement(agents_md_path)
 
     # Quality notice for deterministic mode
-    post_cfg = load_global_config()
-    if not post_cfg.llm.get_api_key():
+    existing_cfg = load_local_config()
+    if existing_cfg and existing_cfg.llm.get_api_key() is None:
         console.print(
             panel(
                 text(
@@ -762,8 +426,8 @@ def init(
                 ),
                 title="Note",
                 border_style=C_WARN,
+            )
         )
-    )
 
 
 @app.command()
@@ -774,10 +438,6 @@ def capture(
     tail: int = typer.Option(
         50, "--tail",
         help="Max messages from session tail (0 = skip session, use diff+notes only)",
-    ),
-    project: str | None = typer.Option(
-        None, "--project",
-        help="Target project name",
     ),
     keyword: list[str] = typer.Option(
         [], "--keyword", "-k",
@@ -793,16 +453,18 @@ def capture(
     from mementic.session import get_registry
 
     registry = get_registry()
-    cfg = load_config(repo_path=detect_repo_path())
+    local_cfg = load_local_config()
+    llm_cfg: LLMConfig = local_cfg.llm if local_cfg else LLMConfig(provider="ollama", model="llama3")
     detected_agent: str | None = None
 
     if not session and not agent:
         # Auto-detect: find most recent session across all providers
         log_dir_overrides: dict[str, list[str]] = {}
-        for name in ("opencode", "claude-code", "generic", "cursor", "windsurf"):
-            agent_cfg = getattr(cfg.sessions, name.replace("-", "_"))
-            if agent_cfg.log_dirs:
-                log_dir_overrides[name] = agent_cfg.log_dirs
+        if local_cfg and local_cfg.sessions:
+            for name in ("opencode", "claude-code", "generic", "cursor", "windsurf"):
+                agent_cfg = getattr(local_cfg.sessions, name.replace("-", "_"))
+                if agent_cfg.log_dirs:
+                    log_dir_overrides[name] = agent_cfg.log_dirs
         provider, detected = registry.detect(log_dirs=log_dir_overrides or None)
         if not detected:
             typer.echo("No session found. Provide --session PATH.", err=True)
@@ -839,41 +501,9 @@ def capture(
 
     session_text = Path(session).read_text(encoding="utf-8", errors="replace")
 
-    # Load or create graph — needed for checkpoint query
-    is_project = False
-    project_display: str | None = None
+    # Open graph for checkpoint query
+    graph = _resolve_graph()
     repo_path = str(Path.cwd())
-
-    try:
-        proj_name, global_cfg = resolve_project(project)
-        proj_entry = global_cfg.projects[proj_name]
-        db_path = Path(proj_entry.db_path).expanduser()
-        graph = GraphStore(db_path=db_path)
-        is_project = True
-        project_display = proj_name
-        # Use registered repo path if available, else CWD
-        for name, repo_entry in proj_entry.repos.items():
-            if Path(repo_entry.path).resolve() == Path(repo_path).resolve():
-                repo_path = repo_entry.path
-                break
-    except ValueError:
-        if project is not None:
-            typer.echo(
-                f"Project '{project}' not found. Use 'mementic project list' "
-                f"to see configured projects.",
-                err=True,
-            )
-            raise typer.Exit(code=1)
-        # No projects configured — fall back to legacy graph.json
-        graph_path = cfg.output.graph_path
-        if Path(graph_path).exists():
-            try:
-                graph = _load_graph_safe(graph_path)
-            except typer.Exit:
-                typer.echo("Starting with empty graph.", err=True)
-                graph = GraphStore()
-        else:
-            graph = GraphStore()
 
     # Compute git diff — incremental via SQLite checkpoint
     checkpoint = graph.get_capture_checkpoint(repo_path)
@@ -942,7 +572,7 @@ def capture(
             f"[{C_HEADER}]Extracting architectural decisions...[/]"
         ):
             extraction = _extract_session(
-                session_text, git_diff, notes or "", cfg,
+                session_text, git_diff, notes or "", llm_cfg,
                 max_messages=tail, custom_keywords=keyword or None,
             )
     except RuntimeError as e:
@@ -1009,13 +639,6 @@ def capture(
     for edge in extraction.edges_to_create:
         graph.link(edge.source, edge.target, edge.relation)
 
-    if is_project:
-        # SQLite mode: data already persisted via _write_back on each mutation
-        pass
-    else:
-        Path(graph_path).parent.mkdir(parents=True, exist_ok=True)
-        graph.save(graph_path)
-
     # F6 — Summary output
     result_table = kv_table()
     result_table.add_column("", style="bold", width=15)
@@ -1043,15 +666,9 @@ def capture(
             "Skipped",
             text(f"[{C_WARN}]{total_skipped} duplicates[/]"),
         )
-    if is_project and project_display:
-        result_table.add_row(
-            "Written",
-            text(f"[{C_DIM}]project '{project_display}' database[/]"),
-        )
-    else:
-        result_table.add_row(
-            "Written", text(f"[{C_DIM}]{graph_path}[/]")
-        )
+    result_table.add_row(
+        "Written", text(f"[{C_DIM}].mementic/graph.db[/]")
+    )
     # Build the panel content: summary table + optional lists of what was extracted
     panel_content: list = [result_table]
 
@@ -1128,10 +745,9 @@ app.add_typer(query_app, name="query")
 def keywords(
     keywords: list[str] = typer.Argument(..., help="Keywords for matching (e.g. auth login session pydantic)"),
     json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
-    project: str | None = typer.Option(None, "--project", help="Target project name"),
 ) -> None:
     """Return ranked context pack of constraints and decisions matched by keywords."""
-    graph, _cfg = _resolve_graph(project)
+    graph = _resolve_graph()
     graph.clean_dead_references()
     constraints = graph.get_all_active_constraints()
     decisions = graph.get_all_active_decisions()
@@ -1174,10 +790,9 @@ def file(
     prefix: bool = typer.Option(False, "--prefix", help="Use prefix matching for entity paths"),
     max_tokens: int = typer.Option(1500, "--max-tokens", help="Maximum token budget for output"),
     json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
-    project: str | None = typer.Option(None, "--project", help="Target project name"),
 ) -> None:
     """Show constraints and decisions affecting a specific file."""
-    graph, _cfg = _resolve_graph(project)
+    graph = _resolve_graph()
     graph.clean_dead_references()
     constraints = graph.get_constraints_for_entities([path], prefix_match=prefix)
     decisions = graph.get_evolution(path, prefix_match=prefix, annotate_overlap=True)
@@ -1202,10 +817,9 @@ def file(
 @query_app.command()
 def search(
     term: str = typer.Argument(..., help="Search term for titles, rationales, and descriptions"),
-    project: str | None = typer.Option(None, "--project", help="Target project name"),
 ) -> None:
     """Full-text search across decisions and constraints."""
-    graph, _cfg = _resolve_graph(project)
+    graph = _resolve_graph()
     all_d = graph.get_all_decisions()
     all_c = graph.get_all_constraints()
     t = term.lower()
@@ -1242,10 +856,9 @@ def search(
 
 @query_app.command()
 def stats(
-    project: str | None = typer.Option(None, "--project", help="Target project name"),
 ) -> None:
     """Show graph statistics."""
-    graph, _cfg = _resolve_graph(project)
+    graph = _resolve_graph()
     s = graph.stats()
     stats_table = kv_table()
     stats_table.add_column("Metric", style="bold", width=20)
@@ -1260,13 +873,9 @@ def log(
     n: int = typer.Option(
         20, "--n", "-n", help="Number of log entries to show",
     ),
-    project: str | None = typer.Option(
-        None, "--project",
-        help="Target project name",
-    ),
 ) -> None:
     """Show recent graph mutations from the audit log."""
-    graph, _cfg = _resolve_graph(project)
+    graph = _resolve_graph()
 
     rows = graph.get_audit_entries(limit=n)
     if rows:
@@ -1346,16 +955,12 @@ def log(
 
 @app.command()
 def status(
-    project: str | None = typer.Option(
-        None, "--project",
-        help="Target project name",
-    ),
 ) -> None:
     """Show health checklist for mementic."""
     from mementic.health import check_health
 
     try:
-        graph, _cfg = _resolve_graph(project)
+        graph = _resolve_graph()
     except typer.Exit:
         graph = None
 
@@ -1424,12 +1029,9 @@ def decisions(
         None, "--status",
         help="Filter by status: accepted, deprecated, rejected, active",
     ),
-    project: str | None = typer.Option(
-        None, "--project", help="Target project name",
-    ),
 ) -> None:
     """List architectural decisions in a scannable table."""
-    graph, _cfg = _resolve_graph(project)
+    graph = _resolve_graph()
     _validate_status(status)
 
     all_d = graph.get_all_decisions()
@@ -1469,12 +1071,9 @@ def constraints(
         None, "--status",
         help="Filter by status: accepted, deprecated, rejected, active",
     ),
-    project: str | None = typer.Option(
-        None, "--project", help="Target project name",
-    ),
 ) -> None:
     """List constraints in a scannable table."""
-    graph, _cfg = _resolve_graph(project)
+    graph = _resolve_graph()
     _validate_status(status)
 
     all_c = graph.get_all_constraints()
@@ -1516,12 +1115,9 @@ def entities(
         False, "--stale",
         help="Show only entities referencing files that no longer exist",
     ),
-    project: str | None = typer.Option(
-        None, "--project", help="Target project name",
-    ),
 ) -> None:
     """List code entities in a scannable table."""
-    graph, _cfg = _resolve_graph(project)
+    graph = _resolve_graph()
 
     all_e: list[tuple[str, dict[str, Any]]] = []
     for nid, ntype, payload in graph.iter_nodes():
@@ -1560,10 +1156,6 @@ def deprecate(
         "", "--reason", "-r",
         help="Reason for deprecation",
     ),
-    project: str | None = typer.Option(
-        None, "--project",
-        help="Target project name",
-    ),
 ) -> None:
     """Mark one or more decisions or constraints as deprecated.
 
@@ -1571,7 +1163,7 @@ def deprecate(
     Deprecated entities remain in the graph for history but are
     excluded from mementic memory.
     """
-    graph, cfg = _resolve_graph(project)
+    graph = _resolve_graph()
 
     deprecated = 0
     already = 0
@@ -1590,8 +1182,6 @@ def deprecate(
         else:
             typer.echo(result["message"], err=True)
             errors += 1
-
-    _save_graph_cli(graph, cfg)
 
     parts: list[str] = []
     if deprecated:
@@ -1627,10 +1217,9 @@ def decision(
     rationale: str = typer.Option(..., "--rationale", "-r", help="Justification for the decision"),
     entities: list[str] | None = typer.Option(None, "--entity", "-e", help="Affected file paths (repeatable)"),
     rejected: list[str] | None = typer.Option(None, "--rejected", help="Rejected alternatives (repeatable)"),
-    project: str | None = typer.Option(None, "--project", help="Target project name"),
 ) -> None:
     """Record a new architectural decision."""
-    graph, cfg = _resolve_graph(project)
+    graph = _resolve_graph()
     now = timestamp()
     d = Decision(
         id=slugify(title, max_length=DECISION_ID_MAX_LENGTH),
@@ -1642,7 +1231,7 @@ def decision(
         status=DecisionStatus.ACCEPTED,
         created_at=now,
         modified_at=now,
-        repo=resolve_repo_name(detect_repo_path()),
+        repo=str(Path(detect_repo_path()).resolve().name),
     )
     graph.add_decision(d)
     for ep in (entities or []):
@@ -1651,7 +1240,6 @@ def decision(
         e = CodeEntity(id=clean, type=EntityType.FILE, repo=d.repo)
         graph.add_code_entity(e)
         graph.link(d.id, clean, "affects")
-    _save_graph_cli(graph, cfg)
     console.print(
         panel(
             text(
@@ -1670,10 +1258,9 @@ def constraint(
     entities: list[str] = typer.Option(..., "--entity", "-e", help="Bound entity paths (repeatable, required)"),
     decision_id: str | None = typer.Option(None, "--decision-id", "-d", help="Enforcing decision ID"),
     rule_id: str | None = typer.Option(None, "--id", help="Explicit rule ID (auto-generated if omitted)"),
-    project: str | None = typer.Option(None, "--project", help="Target project name"),
 ) -> None:
     """Record a new constraint."""
-    graph, cfg = _resolve_graph(project)
+    graph = _resolve_graph()
     now = timestamp()
     cid = slugify(rule_id, max_length=CONSTRAINT_ID_MAX_LENGTH) if rule_id else slugify(description, max_length=CONSTRAINT_ID_MAX_LENGTH)
     c = Constraint(
@@ -1684,7 +1271,7 @@ def constraint(
         source="cli",
         status="active",
         created_at=now,
-        repo=resolve_repo_name(detect_repo_path()),
+        repo=str(Path(detect_repo_path()).resolve().name),
     )
     graph.add_constraint(c)
     for ep in entities:
@@ -1693,7 +1280,6 @@ def constraint(
         e = CodeEntity(id=clean, type=EntityType.FILE, repo=c.repo)
         graph.add_code_entity(e)
         graph.link(c.id, clean, "binds_to")
-    _save_graph_cli(graph, cfg)
     bound_list = ", ".join(entities[:5])
     if len(entities) > 5:
         bound_list += f" +{len(entities) - 5} more"
@@ -1707,195 +1293,6 @@ def constraint(
             title="Constraint added",
         )
     )
-
-
-project_app = typer.Typer(help="Manage Mementic projects")
-app.add_typer(project_app, name="project")
-
-
-@project_app.command()
-def create(
-    name: str = typer.Argument(..., help="Project name"),
-    description: str = typer.Option(
-        "", "--description", "-d",
-        help="Project description",
-    ),
-) -> None:
-    """Create a new Mementic project."""
-    from mementic.config import ProjectEntry
-
-    config = load_global_config()
-
-    if name in config.projects:
-        typer.echo(
-            f"Project '{name}' already exists.", err=True
-        )
-        raise typer.Exit(code=1)
-
-    config.projects[name] = ProjectEntry(
-        description=description,
-        db_path=f"~/.mementic/projects/{name}.mementic.db",
-    )
-    save_global_config(config)
-    console.print(
-        panel(
-            text(
-                f"Project [{C_ID}]{name}[/] created.\n"
-                f"[{C_DIM}]Database will be created on first mementic init.[/]"
-            ),
-            title="Project created",
-        )
-    )
-
-
-@project_app.command(name="list")
-def list_projects() -> None:
-    """List all configured projects."""
-    config = load_global_config()
-
-    if not config.projects:
-        typer.echo("No projects configured.")
-        raise typer.Exit()
-
-    default = config.default_project
-    proj_table = table()
-    proj_table.add_column("Default", width=2)
-    proj_table.add_column("Name", style="bold")
-    proj_table.add_column("Repos")
-    proj_table.add_column("Description", style=C_DIM)
-    for proj_name, proj_entry in config.projects.items():
-        marker = f"[{C_SUCCESS}]*[/]" if proj_name == default else " "
-        proj_table.add_row(
-            marker,
-            proj_name,
-            str(len(proj_entry.repos)),
-            proj_entry.description or "",
-        )
-    console.print(panel(proj_table, title="Projects"))
-
-
-@project_app.command()
-def set_default(
-    name: str = typer.Argument(..., help="Project name to set as default"),
-) -> None:
-    """Set the default project for cross-repo operations."""
-    config = load_global_config()
-
-    if name not in config.projects:
-        available = ", ".join(sorted(config.projects))
-        typer.echo(
-            f"Project '{name}' not found. Available: {available}",
-            err=True,
-        )
-        raise typer.Exit(code=1)
-
-    config.default_project = name
-    save_global_config(config)
-    console.print(
-        panel(
-            text(f"Default project: [{C_ID}]{name}[/]"),
-            title="Default set",
-        )
-    )
-
-
-@project_app.command()
-def delete(
-    name: str = typer.Argument(..., help="Project name to delete"),
-    force: bool = typer.Option(
-        False, "--force", "-f",
-        help="Skip confirmation prompt",
-    ),
-    keep_db: bool = typer.Option(
-        False, "--keep-db",
-        help="Keep the SQLite database file (delete config entry only)",
-    ),
-) -> None:
-    """Delete a project and optionally its database file."""
-    from mementic.config import delete_project as _delete_project
-
-    # Load config for display purposes only; delete_project() handles
-    # its own validation (existence check, last-project guard).
-    config = load_global_config()
-
-    if name in config.projects:
-        proj = config.projects[name]
-        db_path = Path(proj.db_path).expanduser()
-
-        typer.echo(f"Project: {name}")
-        typer.echo(f"Repos:   {len(proj.repos)}")
-        typer.echo(f"DB path: {db_path}")
-
-        if not keep_db and db_path.is_file() and not force:
-            confirm = typer.confirm(
-                f"Delete database file {db_path}?"
-            )
-            if not confirm:
-                typer.echo(
-                    "Keeping database file. Deleting config entry only."
-                )
-                keep_db = True
-
-    try:
-        _, msg = _delete_project(name, delete_db=not keep_db)
-    except ValueError as exc:
-        typer.echo(str(exc), err=True)
-        raise typer.Exit(code=1)
-
-    console.print(
-        panel(text(f"[{C_SUCCESS}]{msg}[/]"), title="Project deleted")
-    )
-
-
-@project_app.command()
-def info(
-    name: str | None = typer.Argument(
-        None, help="Project name (defaults to current default)"
-    ),
-) -> None:
-    """Show details for a project."""
-    config = load_global_config()
-
-    target = name if name is not None else config.default_project
-
-    if target not in config.projects:
-        available = ", ".join(sorted(config.projects))
-        typer.echo(
-            f"Project '{target}' not found. Available: {available}",
-            err=True,
-        )
-        raise typer.Exit(code=1)
-
-    proj = config.projects[target]
-    is_default = target == config.default_project
-
-    info_table = kv_table()
-    info_table.add_column("", style="bold", width=15)
-    info_table.add_column("", style=C_DIM)
-    info_table.add_row("DB path", str(proj.db_path))
-    if proj.description:
-        info_table.add_row("Description", proj.description)
-    info_table.add_row("Repos", str(len(proj.repos)))
-
-    console.print(
-        panel(
-            info_table,
-            title=f"Project: {target}{' (default)' if is_default else ''}",
-        )
-    )
-
-    # Also show individual repos
-    if proj.repos:
-        repo_lines = []
-        for repo_path, repo_entry in proj.repos.items():
-            label = f" [{repo_entry.label}]" if repo_entry.label else ""
-            repo_lines.append(f"[{C_PATH}]{repo_path}{label}[/]")
-        console.print(
-            panel(
-                *[text(line) for line in repo_lines],
-                title="Registered repos",
-            )
-        )
 
 
 if __name__ == "__main__":

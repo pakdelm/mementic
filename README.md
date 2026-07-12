@@ -29,16 +29,24 @@ cd mementic
 uv sync
 ```
 
-### Configure your LLM provider
+### Provider selection
 
-Mementic supports LLM-based extraction for richer results. Without an API
-key, it runs in deterministic mode (reduced quality). Supported providers:
+Mementic needs an LLM provider for extraction. Provider resolution follows
+this order:
 
-| Provider | Key stored in | Model example |
+1. **`--provider` flag** (explicit): `mementic init --provider openrouter`
+2. **Environment variable auto-detect:** If any of `OPENROUTER_API_KEY`,
+   `OPENAI_API_KEY`, `DEEPSEEK_API_KEY` is set, that provider is used.
+3. **Interactive prompt:** When no flag and no env var, `mementic init` asks
+   which provider to use.
+
+Supported providers:
+
+| Provider | API key env var | Model example |
 |---|---|---|
-| DeepSeek (default) | OS keyring / `DEEPSEEK_API_KEY` | `deepseek-chat` |
-| OpenAI | OS keyring / `OPENAI_API_KEY` | `gpt-4o` |
-| OpenRouter | OS keyring / `OPENROUTER_API_KEY` | `openai/gpt-4o` |
+| OpenRouter (default) | `OPENROUTER_API_KEY` | `deepseek/deepseek-v4-pro` |
+| OpenAI | `OPENAI_API_KEY` | `gpt-4o` |
+| DeepSeek | `DEEPSEEK_API_KEY` | `deepseek-v4-pro` |
 | Ollama (local) | none required | `llama3` |
 
 **Interactive setup (recommended):** `mementic init` prompts for provider,
@@ -46,15 +54,15 @@ model, and API key. The key is stored in your OS keychain (Windows Credential
 Locker, macOS Keychain, Linux Secret Service) — never in a file.
 
 ```bash
-mementic init           # first-time setup, prompts for key
+mementic init           # interactive: choose provider, enter key
 mementic init --key     # rotate an existing key
 ```
 
 **CI / headless environments:** set the environment variable for your provider.
 
 ```bash
-export DEEPSEEK_API_KEY="sk-..."
-mementic init
+export OPENROUTER_API_KEY="sk-..."
+mementic init --provider openrouter
 ```
 
 If no API key is available from keyring or env, mementic exits with a clear
@@ -66,13 +74,13 @@ error naming the required environment variable and suggesting `mementic init --k
 
 ```bash
 cd ~/dev/my-app
-mementic init
+mementic init --provider openrouter
 ```
 
+Creates a local `.mementic/` directory with the graph database and config.
 Auto-discovers `./docs/adr/`, `./docs/instructions/`, `.cursor/instructions/`,
-and `.windsurf/instructions/` directories. Registers the repo in
-`~/.mementic/config.json` under the default project. Use `--interactive` for
-a guided setup walkthrough.
+and `.windsurf/instructions/` directories. No global config, no project
+registration — everything lives in `.mementic/`.
 
 Scans all configured sources, extracts decisions and constraints via LLM, and
 populates the knowledge graph.
@@ -100,8 +108,8 @@ Agents generate 5-12 narrow, single-word technical keywords per task for best re
 # Auto-discovers latest session from any supported agent
 mementic capture
 
-# With manual session path and notes
-mementic capture --session /path/to/session.log --notes "Migrated Redis to Valkey"
+# With manual session path and agent hint
+mementic capture --session /path/to/session.log --agent opencode
 ```
 
 Extracts architectural decisions from the agent session log + git diff.
@@ -109,7 +117,7 @@ Decisions are auto-resolved against the existing graph: new slugs are
 accepted, duplicates are skipped, and conflicting changes deprecate existing
 entries. No manual review required.
 Tracks the last captured commit so subsequent captures only diff new changes.
-Runs without git (warns and uses notes only).
+Runs without git (warns and uses session-only extraction).
 
 ### 5. View audit log
 
@@ -118,33 +126,6 @@ mementic log
 ```
 
 Shows recent graph mutations with timestamps.
-
-## Multi-project workflow
-
-Mementic supports multiple isolated projects, each with its own knowledge
-graph database. Commands automatically detect which project to use based on
-your current directory.
-
-```bash
-# Create a project
-mementic project create platform --description "Core platform services"
-
-# Register repos in it
-cd ~/dev/auth-service && mementic init --project platform
-cd ~/dev/billing && mementic init --project platform
-
-# Now any command run inside those repos targets "platform" automatically
-cd ~/dev/auth-service
-mementic capture --notes "added rate limiting"
-# → resolves to "platform" — no --project needed
-
-# List and inspect projects
-mementic project list
-mementic project info platform
-```
-
-The `--project` flag is only required when a repo belongs to multiple
-projects (rare). See `mementic project --help` for all subcommands.
 
 ## Agent integration
 
@@ -164,8 +145,7 @@ Agents invoke mementic as CLI commands:
 | Retire outdated rules | `mementic deprecate ID1 ID2 ... -r "reason"` |
 | Capture session decisions | `mementic capture` (user-triggered only) |
 
-All commands support `--json` for programmatic output and `--project NAME`
-for multi-project setups.
+All commands support `--json` for programmatic output.
 
 
 ## Agent enforcement
@@ -221,25 +201,61 @@ no manual review step.
 
 | Command | Description |
 |---|---|
-| `mementic init [--repo PATH] [--no-scan] [--interactive] [--key] [--project NAME]` | Initialize graph from configured sources |
-| `mementic capture [--session PATH] [--notes TEXT] [--tail N] [-k KEYWORD]` | Extract decisions from session (auto-resolves: new/skip/update) |
-| `mementic query keywords KEYWORD [KEYWORD ...] [--json] [--project NAME]` | Return ranked context pack of constraints and decisions matched by keywords |
-| `mementic query file PATH [--prefix] [--max-tokens N] [--json]` | Show constraints and decisions affecting a specific file |
-| `mementic query search TERM` | Full-text search across decisions and constraints |
-| `mementic query stats` | Show graph statistics (entity/decision/constraint counts) |
-| `mementic add decision TITLE -r RATIONALE [-e PATH] [--rejected ALT]` | Record a new architectural decision |
-| `mementic add constraint DESCRIPTION -e PATH [-d DECISION_ID]` | Record a new constraint |
-| `mementic list decisions [-n N] [--status S] [--project NAME]` | List recent architectural decisions |
-| `mementic list constraints [-n N] [--status S] [--project NAME]` | List recent constraints |
-| `mementic list entities [-n N] [--stale] [--project NAME]` | List code entities |
-| `mementic deprecate <id> [<id> ...] [--reason TEXT]` | Retire decisions or constraints (accepts multiple IDs) |
+| `mementic init [--provider X] [--model X] [--key] [--deep] [--no-scan]` | Initialize graph from configured sources |
+| `mementic capture [--agent X] [--session PATH] [--keyword X]` | Extract decisions from session (auto-resolves: new/skip/update) |
+| `mementic query keywords <kw...> [--json]` | Return ranked context pack of constraints and decisions matched by keywords |
+| `mementic query file <path> [--json]` | Show constraints and decisions affecting a specific file |
+| `mementic add decision <title> --rationale TEXT [-e PATH]` | Record a new architectural decision |
+| `mementic add constraint <desc> -e PATH` | Record a new constraint |
+| `mementic deprecate <id...> [-r REASON]` | Retire decisions or constraints (accepts multiple IDs) |
 | `mementic status` | Show health checklist (config, API key, graph, session provider) |
-| `mementic log [-n N]` | Show recent graph mutations |
-| `mementic project create <name> [--description TEXT]` | Create a new project |
-| `mementic project list` | List all configured projects |
-| `mementic project set-default <name>` | Set the default project |
-| `mementic project info [name]` | Show project details (repos, DB path, description) |
-| `mementic project delete <name> [--force] [--keep-db]` | Delete a project and optionally its database |
+| `mementic list [decisions\|constraints\|entities]` | List decisions, constraints, or entities |
+| `mementic log [--limit N]` | Show recent graph mutations |
+
+## Config file reference
+
+`mementic init` creates a local `.mementic/` directory with the knowledge
+graph database and a minimal `config.json`:
+
+```json
+{
+  "llm": {
+    "provider": "openrouter",
+    "model": "deepseek/deepseek-v4-pro"
+  }
+}
+```
+
+All configuration lives in `.mementic/config.json` alongside `graph.db`.
+No global config files, no `~/.mementic/`. API keys are never stored here —
+they live in your OS keyring (or environment variable for CI / Docker).
+
+### Sessions and log directories
+
+Mementic auto-discovers agent session logs from standard locations. By
+default, each supported agent uses its own built-in platform paths.
+
+Adding a `sessions` key to the config is optional — only needed when your
+session logs live in non-standard locations. The `log_dirs` entries are
+**additive**: they extend the defaults, not replace them.
+
+```json
+{
+  "llm": {
+    "provider": "openrouter",
+    "model": "deepseek/deepseek-v4-pro"
+  },
+  "sessions": {
+    "opencode": {
+      "log_dirs": ["/mnt/nfs-shared/sessions"]
+    }
+  }
+}
+```
+
+With this config, mementic searches the standard OpenCode log directory
+**plus** `/mnt/nfs-shared/sessions`. All other agents (Claude, Cursor,
+Windsurf) continue using their built-in defaults unchanged.
 
 ## Why Mementic
 

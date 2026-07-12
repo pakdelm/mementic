@@ -71,67 +71,29 @@ def timestamp() -> str:
 
 
 def resolve_repo_name(repo_path: str) -> str:
-    """Resolve a human-readable repo name from a full filesystem path.
+    """Resolve a short display name for a repository.
 
-    Checks the global config for a ``RepoEntry`` whose resolved ``path``
-    matches ``repo_path``.  Returns the entry's ``label`` when set,
-    otherwise the directory basename.
+    Returns the directory basename of the repo path.
 
     Args:
         repo_path: Absolute path to the repository root.
 
     Returns:
-        Short repo name (label or last path component).
+        Short repo name (last path component).
     """
-    resolved = Path(repo_path).resolve()
-    try:
-        from mementic.config import load_global_config
-
-        global_cfg = load_global_config()
-        for proj_entry in global_cfg.projects.values():
-            for repo_entry in proj_entry.repos.values():
-                try:
-                    if Path(repo_entry.path).resolve() == resolved:
-                        return repo_entry.label or resolved.name
-                except (OSError, ValueError):
-                    continue
-    except Exception:
-        pass
-    return resolved.name
+    return Path(repo_path).resolve().name
 
 
-def detect_repo_path(*, check_global_config: bool = False) -> str:
+def detect_repo_path() -> str:
     """Detect the repository root path.
 
-    When ``check_global_config`` is ``True``, checks the global config
-    first (matching CWD against registered repos) before falling back
-    to git root.  This is useful for the MCP server which needs a
-    *registered* repo path for proper config resolution.
-
-    Args:
-        check_global_config: If True, check ``~/.mementic/config.json``
-            for a registered repo matching CWD before trying git.
+    Tries ``git rev-parse --show-toplevel`` to find the Git repository
+    root directory.  Falls back to the current working directory if Git
+    is not available or the directory is not a Git repository.
 
     Returns:
-        The detected repo path, or ``""`` when ``check_global_config``
-        is True and no repo is found.
+        The detected repo path as a string.
     """
-    if check_global_config:
-        try:
-            from mementic.config import load_global_config
-
-            global_cfg = load_global_config()
-            cwd = Path.cwd().resolve()
-            for proj_entry in global_cfg.projects.values():
-                for repo_entry in proj_entry.repos.values():
-                    try:
-                        if Path(repo_entry.path).resolve() == cwd:
-                            return repo_entry.path
-                    except (OSError, ValueError):
-                        continue
-        except Exception:
-            pass
-
     import subprocess
 
     try:
@@ -145,7 +107,7 @@ def detect_repo_path(*, check_global_config: bool = False) -> str:
     except FileNotFoundError:
         pass
 
-    return "" if check_global_config else str(Path.cwd())
+    return str(Path.cwd())
 
 
 # ---------------------------------------------------------------------------

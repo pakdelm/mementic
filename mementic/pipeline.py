@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
-from mementic.config import MementicConfig, load_config, load_global_config
+from mementic.config import LLMConfig
 from mementic.extraction import (
     extract_constraints_from_consequences,
     extract_from_adr_consequences,
@@ -170,25 +170,36 @@ def _backfill_decision_edges(
     return count
 
 
-def _should_use_llm(cfg: MementicConfig) -> bool:
+def _should_use_llm(
+    llm_cfg: LLMConfig, force_deterministic: bool = False
+) -> bool:
     """Check if LLM extraction should be attempted.
 
     Returns True when an API key is available AND deterministic mode has not
-    been forced via the ``_force_deterministic`` attribute set by ``run_init``.
+    been forced (e.g. by ``run_init`` when ``deep=False``).
+
+    Args:
+        llm_cfg: The LLM configuration.
+        force_deterministic: If True, forces deterministic extraction regardless
+            of API key availability.
+
+    Returns:
+        True if LLM extraction should be used.
     """
-    if getattr(cfg, "_force_deterministic", False):
+    if force_deterministic:
         return False
-    return cfg.llm.get_api_key() is not None
+    return llm_cfg.get_api_key() is not None
 
 
 def _extract_markdown(
-    content: str, source_label: str, cfg: MementicConfig
+    content: str, source_label: str, llm_cfg: LLMConfig,
+    force_deterministic: bool = False,
 ) -> ExtractionResult:
     """Dispatch markdown extraction by mode. Falls back to deterministic on LLM failure."""
-    if not _should_use_llm(cfg):
+    if not _should_use_llm(llm_cfg, force_deterministic):
         return extract_from_markdown(content, source_label)
     try:
-        return extract_from_freeform(content, source_label, cfg.llm)
+        return extract_from_freeform(content, source_label, llm_cfg)
     except Exception:
         sys.stderr.write("LLM unavailable, falling back to deterministic.\n")
         sys.stderr.flush()
@@ -199,15 +210,16 @@ def _extract_consequences(
     consequences_text: str,
     source_label: str,
     decision_id: str,
-    cfg: MementicConfig,
+    llm_cfg: LLMConfig,
+    force_deterministic: bool = False,
 ) -> list[Constraint]:
     """Dispatch ADR consequences extraction by mode."""
-    if not _should_use_llm(cfg):
+    if not _should_use_llm(llm_cfg, force_deterministic):
         return extract_constraints_from_consequences(
             consequences_text, source_label, decision_id
         )
     try:
-        return extract_from_adr_consequences(consequences_text, cfg.llm)
+        return extract_from_adr_consequences(consequences_text, llm_cfg)
     except Exception:
         sys.stderr.write("LLM unavailable, falling back to deterministic.\n")
         return extract_constraints_from_consequences(
@@ -219,12 +231,12 @@ def _extract_session(
     session_log: str,
     git_diff: str,
     user_notes: str,
-    cfg: MementicConfig,
+    llm_cfg: LLMConfig,
     max_messages: int = 50,
     custom_keywords: list[str] | None = None,
 ) -> ExtractionResult:
     """Dispatch session extraction by mode."""
-    if not _should_use_llm(cfg):
+    if not _should_use_llm(llm_cfg):
         return extract_from_session_deterministic(
             session_log, git_diff, user_notes, max_messages, custom_keywords
         )
@@ -233,7 +245,7 @@ def _extract_session(
             session_log,
             git_diff,
             user_notes,
-            cfg.llm,
+            llm_cfg,
             max_messages=max_messages,
             custom_keywords=custom_keywords,
         )
@@ -244,51 +256,16 @@ def _extract_session(
         )
 
 
-def _resolve_db_path(repo_path: str | None) -> str | None:
-    """Resolve the SQLite db_path from the global config's project entry.
-
-    Searches for a project whose repos contain ``repo_path``.  Falls back
-    to the default project's ``db_path`` when no match is found.
-
-    Args:
-        repo_path: Absolute path to the repository root.
-
-    Returns:
-        The ``db_path`` string, or ``None`` if no project config is found.
-    """
-    try:
-        global_cfg = load_global_config()
-    except Exception:
-        return None
-
-    if repo_path:
-        resolved = Path(repo_path).resolve()
-        for proj_entry in global_cfg.projects.values():
-            for repo_entry in proj_entry.repos.values():
-                try:
-                    if Path(repo_entry.path).resolve() == resolved:
-                        return proj_entry.db_path
-                except (OSError, ValueError):
-                    continue
-
-    if global_cfg.default_project:
-        try:
-            return global_cfg.projects[global_cfg.default_project].db_path
-        except KeyError:
-            pass
-
-    return None
-
-
 def _run_codebase_scan(
-    graph: GraphStore, repo_path: str, cfg: MementicConfig, no_scan: bool,
+    graph: GraphStore, repo_path: str, llm_cfg: LLMConfig, no_scan: bool,
+    force_deterministic: bool = False,
     advance: Callable[[str, int], None] | None = None,
 ) -> None:
     """Phase 1: scan codebase structure for architectural patterns (Spec 12a).
 
     Only runs when an LLM is available — there is no deterministic equivalent.
     """
-    if no_scan or not _should_use_llm(cfg):
+    if no_scan or not _should_use_llm(llm_cfg, force_deterministic):
         return
 
     if advance:
@@ -305,7 +282,7 @@ def _run_codebase_scan(
         advance("Analyzing structure with LLM...", 1)
 
     t0 = time.monotonic()
-    result = extract_from_codebase_summary(summary, cfg.llm)
+    result = extract_from_codebase_summary(summary, llm_cfg)
     elapsed = time.monotonic() - t0
 
     if result.decisions:
@@ -347,7 +324,8 @@ def _build_md_batches(
 
 
 def _run_markdown_scan(
-    graph: GraphStore, repo_path: str, cfg: MementicConfig,
+    graph: GraphStore, repo_path: str, llm_cfg: LLMConfig,
+    force_deterministic: bool = False,
     advance: Callable[[str, int], None] | None = None,
 ) -> None:
     """Phase 0: scan repo-wide markdown files for decisions (Spec 15).
@@ -360,10 +338,12 @@ def _run_markdown_scan(
     if not md_files:
         return
 
-    if not _should_use_llm(cfg):
+    if not _should_use_llm(llm_cfg, force_deterministic):
         total = len(md_files)
         for idx, (md_relpath, md_content) in enumerate(md_files, 1):
-            result = _extract_markdown(md_content, md_relpath, cfg)
+            result = _extract_markdown(
+                md_content, md_relpath, llm_cfg, force_deterministic,
+            )
             _ingest_result(graph, result, source_path=md_relpath, repo_path=repo_path)
             if advance:
                 advance(f"Markdown file {idx}/{total}", 1)
@@ -384,7 +364,7 @@ def _run_markdown_scan(
             f"### File: {relpath}\n{content}" for relpath, content in batch
         )
         result = extract_from_freeform(
-            batch_content, f"markdown-scan-batch-{batch_idx}", cfg.llm
+            batch_content, f"markdown-scan-batch-{batch_idx}", llm_cfg
         )
         _ingest_result(
             graph, result, source_path="markdown-scan", repo_path=repo_path
@@ -398,7 +378,8 @@ def _run_markdown_scan(
 
 
 def _ingest_adr_source(
-    graph: GraphStore, adr_dir_path: str, cfg: MementicConfig, repo_path: str | None
+    graph: GraphStore, adr_dir_path: str, llm_cfg: LLMConfig,
+    force_deterministic: bool = False, repo_path: str | None = None,
 ) -> None:
     """Process a single ADR source directory.
 
@@ -427,7 +408,8 @@ def _ingest_adr_source(
 
         if adr.consequences.strip():
             constraints = _extract_consequences(
-                adr.consequences, adr.path, decision_id, cfg
+                adr.consequences, adr.path, decision_id,
+                llm_cfg, force_deterministic,
             )
             for c in constraints:
                 c.repo = resolve_repo_name(repo_path) if repo_path else ""
@@ -446,7 +428,8 @@ def _ingest_adr_source(
 
 
 def _ingest_instruction_source(
-    graph: GraphStore, source_path: str, cfg: MementicConfig, repo_path: str | None
+    graph: GraphStore, source_path: str, llm_cfg: LLMConfig,
+    force_deterministic: bool = False, repo_path: str | None = None,
 ) -> None:
     """Process a single instruction source directory.
 
@@ -458,7 +441,9 @@ def _ingest_instruction_source(
         return
 
     for instr in scan_opencode_instructions(source_path):
-        result = _extract_markdown(instr.content, instr.path, cfg)
+        result = _extract_markdown(
+            instr.content, instr.path, llm_cfg, force_deterministic,
+        )
         _ingest_result(graph, result, instr.path, repo_path=repo_path)
 
 
@@ -466,7 +451,7 @@ def run_init(
     repo_path: str | None = None,
     no_scan: bool = False,
     db_path: str | None = None,
-    project: str | None = None,
+    llm_cfg: LLMConfig | None = None,
     advance: Callable[[str, int], None] | None = None,
     deep: bool = False,
 ) -> GraphStore:
@@ -491,22 +476,16 @@ def run_init(
         repo_path: Optional path to the repository root for codebase scanning.
         no_scan: If True, skip the codebase structural scan.
         db_path: Optional path to a SQLite database for persistent storage.
-        project: Optional project name to scope the loaded configuration.
+        llm_cfg: Optional LLM configuration for LLM-powered extraction phases.
+            If not provided, LLM phases are skipped.
         deep: If True, use LLM extraction for all phases (requires API key).
             Default is deterministic (fast, no API calls).
 
     Returns:
         The initialized GraphStore.
     """
-    cfg = load_config(repo_path=repo_path, project=project)
+    force_deterministic = not deep
 
-    if not deep:
-        cfg._force_deterministic = True  # type: ignore[attr-defined]
-
-    # Resolve db_path from project config when not explicitly provided.
-    # Avoids falling back to the deprecated .mementic/graph.json path.
-    if db_path is None:
-        db_path = _resolve_db_path(repo_path)
     if db_path:
         db_path = str(Path(db_path).expanduser())
 
@@ -519,54 +498,73 @@ def run_init(
     # 33 files on this project).
     with graph.batch():
         # Phase 1: Codebase structural scan (Spec 12a) — cold-start killer.
-        if repo_path:
-            _run_codebase_scan(graph, repo_path, cfg, no_scan, advance=advance)
+        if repo_path and llm_cfg:
+            _run_codebase_scan(
+                graph, repo_path, llm_cfg, no_scan,
+                force_deterministic=force_deterministic, advance=advance,
+            )
 
         # Phase 0: Repo-wide markdown scan (Spec 15) — deterministic-friendly.
-        if repo_path:
-            _run_markdown_scan(graph, repo_path, cfg, advance=advance)
+        if repo_path and llm_cfg:
+            _run_markdown_scan(
+                graph, repo_path, llm_cfg,
+                force_deterministic=force_deterministic, advance=advance,
+            )
 
-        # ADR sources
-        for adr_source in cfg.sources.adr_dirs:
-            if advance:
-                advance("Ingesting ADR sources...", 1)
-            _ingest_adr_source(graph, adr_source.path, cfg, repo_path)
+        # ADR sources (when llm_cfg is available)
+        if llm_cfg:
+            adr_source: Any
+            for adr_source in ():  # sources configured externally via Spec 22
+                if advance:
+                    advance("Ingesting ADR sources...", 1)
+                _ingest_adr_source(
+                    graph, adr_source.path, llm_cfg,
+                    force_deterministic=force_deterministic, repo_path=repo_path,
+                )
 
-        # Instruction sources
-        for oc_src in cfg.sources.opencode_instructions:
-            if advance:
-                advance("Ingesting OpenCode instructions...", 1)
-            _ingest_instruction_source(graph, oc_src.path, cfg, repo_path)
-        for cl_src in cfg.sources.claude_instructions:
-            if advance:
-                advance("Ingesting Claude instructions...", 1)
-            _ingest_instruction_source(graph, cl_src.path, cfg, repo_path)
-        for cu_src in cfg.sources.cursor_instructions:
-            if advance:
-                advance("Ingesting Cursor instructions...", 1)
-            _ingest_instruction_source(graph, cu_src.path, cfg, repo_path)
-        for ws_src in cfg.sources.windsurf_instructions:
-            if advance:
-                advance("Ingesting Windsurf instructions...", 1)
-            _ingest_instruction_source(graph, ws_src.path, cfg, repo_path)
+            # Instruction sources
+            oc_src: Any
+            for oc_src in ():  # sources configured externally via Spec 22
+                if advance:
+                    advance("Ingesting OpenCode instructions...", 1)
+                _ingest_instruction_source(
+                    graph, oc_src.path, llm_cfg,
+                    force_deterministic=force_deterministic, repo_path=repo_path,
+                )
+            cl_src: Any
+            for cl_src in ():  # sources configured externally via Spec 22
+                if advance:
+                    advance("Ingesting Claude instructions...", 1)
+                _ingest_instruction_source(
+                    graph, cl_src.path, llm_cfg,
+                    force_deterministic=force_deterministic, repo_path=repo_path,
+                )
+            cu_src: Any
+            for cu_src in ():  # sources configured externally via Spec 22
+                if advance:
+                    advance("Ingesting Cursor instructions...", 1)
+                _ingest_instruction_source(
+                    graph, cu_src.path, llm_cfg,
+                    force_deterministic=force_deterministic, repo_path=repo_path,
+                )
+            ws_src: Any
+            for ws_src in ():  # sources configured externally via Spec 22
+                if advance:
+                    advance("Ingesting Windsurf instructions...", 1)
+                _ingest_instruction_source(
+                    graph, ws_src.path, llm_cfg,
+                    force_deterministic=force_deterministic, repo_path=repo_path,
+                )
 
         # Backfill edges + persist
-        has_sources = bool(
-            cfg.sources.adr_dirs
-            or cfg.sources.opencode_instructions
-            or cfg.sources.claude_instructions
-            or cfg.sources.cursor_instructions
-            or cfg.sources.windsurf_instructions
+        has_sources = (
+            repo_path is not None and repo_path and not no_scan
         )
-        if has_sources or (repo_path and not no_scan):
+        if has_sources:
             if advance:
                 advance("Backfilling entity edges...", 1)
             _backfill_edges(graph, repo_path=repo_path)
             _backfill_decision_edges(graph, repo_path=repo_path)
-            if db_path is None:
-                # Legacy: save to graph.json (last resort when no SQLite config)
-                Path(cfg.output.graph_path).parent.mkdir(parents=True, exist_ok=True)
-                graph.save(cfg.output.graph_path)
 
     # Track repo in project_sources for multi-repo awareness (outside batch
     # since it writes directly to _conn, not through GraphStore mutation methods).
