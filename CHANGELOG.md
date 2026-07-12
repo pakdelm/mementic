@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.2] - 2026-07-12
+
+### Fixed
+- `mementic init --provider`/`--model` now preserves existing `sessions` overrides instead of silently dropping them.
+- Invalid `--provider` value exits cleanly with an error message instead of a raw traceback.
+- Removed dead empty ADR/instruction ingestion loops in `run_init` (the codebase-first auto-scan handles ingestion).
+- Fixed stale `~/.mementic` docstrings in `session/generic.py`.
+- Corrected README `log` flag (`--limit` -> `-n`) and documented `query search` / `query stats`.
+
+### Tests
+- Added regression tests for sessions preservation and invalid-provider exit.
+
 ## [0.2.1] - 2026-07-12
 
 ### Changed
