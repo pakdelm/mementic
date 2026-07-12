@@ -46,7 +46,7 @@ Supported providers:
 |---|---|---|
 | OpenRouter (default) | `OPENROUTER_API_KEY` | `deepseek/deepseek-v4-pro` |
 | OpenAI | `OPENAI_API_KEY` | `gpt-4o` |
-| DeepSeek | `DEEPSEEK_API_KEY` | `deepseek-chat` |
+| DeepSeek | `DEEPSEEK_API_KEY` | `deepseek-v4-pro` |
 | Ollama (local) | none required | `llama3` |
 
 **Interactive setup (recommended):** `mementic init` prompts for provider,
