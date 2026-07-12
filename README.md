@@ -214,42 +214,37 @@ no manual review step.
 
 ## Config file reference
 
-`mementic init` creates a local `.mementic/` directory with a
-`config.json` file:
+`mementic init` creates a local `.mementic/` directory with the knowledge
+graph database and a minimal `config.json`:
 
-```jsonc
+```json
 {
   "llm": {
     "provider": "openrouter",
     "model": "deepseek/deepseek-v4-pro"
   }
-  // "sessions" is optional. Only add when overriding log directories.
-  // log_dirs entries are ADDED to provider defaults, not replaced.
-  //
-  // "sessions": {
-  //   "opencode": {"log_dirs": ["/custom/path"]}
-  // }
 }
 ```
 
-All configuration lives in `.mementic/config.json` alongside the graph
-database (`graph.db`). No global config files, no `~/.mementic/`.
+All configuration lives in `.mementic/config.json` alongside `graph.db`.
+No global config files, no `~/.mementic/`. API keys are never stored here —
+they live in your OS keyring (or environment variable for CI / Docker).
 
-## Sessions and log directories
+### Sessions and log directories
 
 Mementic auto-discovers agent session logs from standard locations. By
-default, each supported agent has its own set of log directories.
+default, each supported agent uses its own built-in platform paths.
 
-The `sessions` key in `.mementic/config.json` is optional. When absent or
-empty, mementic uses the built-in defaults for each agent. When present,
-the `log_dirs` entries are **additive** — they extend the defaults, not
-replace them. This is useful for custom workspace layouts or remote
-development hosts where sessions land in non-standard paths.
+Adding a `sessions` key to the config is optional — only needed when your
+session logs live in non-standard locations. The `log_dirs` entries are
+**additive**: they extend the defaults, not replace them.
 
-```jsonc
-// .mementic/config.json
+```json
 {
-  // ...
+  "llm": {
+    "provider": "openrouter",
+    "model": "deepseek/deepseek-v4-pro"
+  },
   "sessions": {
     "opencode": {
       "log_dirs": ["/mnt/nfs-shared/sessions"]
@@ -259,33 +254,8 @@ development hosts where sessions land in non-standard paths.
 ```
 
 With this config, mementic searches the standard OpenCode log directory
-**plus** `/mnt/nfs-shared/sessions`.
-
-## Docker Sandbox support
-
-Docker Sandboxes (`sbx` CLI) run agents in isolated microVMs with the
-workspace mounted via filesystem passthrough. The `.mementic/` directory
-is auto-available at the same absolute path — no volume mounts needed.
-
-API keys never enter the sandbox. The user stores the real key on the host
-via `sbx secret set`, and the proxy injects it into outbound API calls.
-Mementic sees only a sentinel value (`proxy-managed`).
-
-**Setup (one-time):**
-
-```bash
-# Store API key on host (never enters sandbox)
-sbx secret set -g openrouter
-
-# Start sandbox with mementic kit
-sbx run claude --kit ./mementic-kit/
-
-# Inside the sandbox — .mementic/ is already there
-mementic init --provider openrouter
-```
-
-The mementic kit declares network domains, service auth wiring, and
-credential env vars — all declarative. Zero mounts, zero env var leaks.
+**plus** `/mnt/nfs-shared/sessions`. All other agents (Claude, Cursor,
+Windsurf) continue using their built-in defaults unchanged.
 
 ## Why Mementic
 
