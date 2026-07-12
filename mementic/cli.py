@@ -123,11 +123,13 @@ def init(
     Creates a .mementic/ directory, sets up the LLM provider, scans the
     codebase, and populates the knowledge graph.
 
-    Provider auto-detection:
-    - --provider flag (explicit), or
-    - Detected from environment variables (DEEPSEEK_API_KEY, OPENAI_API_KEY,
-      OPENROUTER_API_KEY), or
-    - Interactive prompt (when stdin is a tty)
+    Provider resolution order:
+    1. --provider flag (explicit)
+    2. Interactive prompt (when stdin is a tty) — always shown so the user
+       can choose, even if env vars are already set
+    3. Environment variable detection — used as a fallback when non-interactive
+       (CI, Docker SBX). Picks the first detected from: OPENROUTER_API_KEY,
+       DEEPSEEK_API_KEY, OPENAI_API_KEY
 
     API keys are stored in the OS keyring. Use --key to set or rotate.
     """
@@ -149,23 +151,34 @@ def init(
             if llm_cfg is not None:
                 resolved_provider = llm_cfg.provider
         if not resolved_provider:
-            # Auto-detect from env vars
             import os as _os
+
+            # Detect which env vars are set (informational, for the prompt)
+            env_providers: dict[str, str] = {}
             if _os.environ.get("OPENROUTER_API_KEY"):
-                resolved_provider = "openrouter"
-            elif _os.environ.get("OPENAI_API_KEY"):
-                resolved_provider = "openai"
-            elif _os.environ.get("DEEPSEEK_API_KEY"):
-                resolved_provider = "deepseek"
-            elif sys.stdin.isatty():
+                env_providers["openrouter"] = "OPENROUTER_API_KEY"
+            if _os.environ.get("DEEPSEEK_API_KEY"):
+                env_providers["deepseek"] = "DEEPSEEK_API_KEY"
+            if _os.environ.get("OPENAI_API_KEY"):
+                env_providers["openai"] = "OPENAI_API_KEY"
+
+            if sys.stdin.isatty():
                 console.print("\n[bold]Select LLM provider:[/]")
-                console.print("  [1] openrouter")
-                console.print("  [2] deepseek")
-                console.print("  [3] openai")
-                console.print("  [4] ollama (local, no API key needed)")
+                for i, (name, env_var) in enumerate(
+                    [("openrouter", "OPENROUTER_API_KEY"),
+                     ("deepseek", "DEEPSEEK_API_KEY"),
+                     ("openai", "OPENAI_API_KEY"),
+                     ("ollama", None)],
+                    start=1,
+                ):
+                    tag = f" [{C_SUCCESS}detected[/]]" if name in env_providers else ""
+                    console.print(f"  [{i}] {name}{tag}")
                 choice = _typer.prompt("Enter number", default="1")
                 provider_map = {"1": "openrouter", "2": "deepseek", "3": "openai", "4": "ollama"}
                 resolved_provider = provider_map.get(choice, "openrouter")
+            elif env_providers:
+                # Non-interactive with env vars: pick the first detected
+                resolved_provider = next(iter(env_providers))
             else:
                 console.print(
                     text(f"[{C_FAIL}]No provider specified. "
@@ -183,7 +196,13 @@ def init(
                 "openai": "gpt-4o",
                 "ollama": "llama3",
             }
-            resolved_model = model_defaults.get(resolved_provider, "deepseek-v4-pro")
+            default_model = model_defaults.get(resolved_provider, "deepseek-v4-pro")
+            if sys.stdin.isatty():
+                resolved_model = _typer.prompt(
+                    "Model", default=default_model
+                )
+            else:
+                resolved_model = default_model
 
         llm_cfg = LLMConfig(provider=resolved_provider, model=resolved_model)
         local_cfg = LocalConfig(llm=llm_cfg)
