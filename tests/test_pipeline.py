@@ -272,7 +272,7 @@ class TestRunInitWithAdr:
         adr_dir.mkdir()
         (adr_dir / "0001-use-postgres.md").write_text(ADR_CONTENT)
 
-        llm_cfg = LLMConfig(provider="deepseek", model="deepseek-chat")
+        llm_cfg = LLMConfig(provider="deepseek", model="deepseek-v4-pro")
         graph = GraphStore()
         _ingest_adr_source(graph, str(adr_dir), llm_cfg, force_deterministic=True, repo_path=str(repo_dir))
 
@@ -297,7 +297,7 @@ class TestRunInitWithAdr:
         (adr_dir / "0002-redis.md").write_text(ADR_PROPOSED)
         (adr_dir / "0003-deprecated.md").write_text(ADR_DEPRECATED)
 
-        llm_cfg = LLMConfig(provider="deepseek", model="deepseek-chat")
+        llm_cfg = LLMConfig(provider="deepseek", model="deepseek-v4-pro")
         graph = GraphStore()
         _ingest_adr_source(graph, str(adr_dir), llm_cfg, force_deterministic=True, repo_path=str(repo_dir))
 
@@ -319,7 +319,7 @@ class TestRunInitWithAdr:
         adr_dir.mkdir()
         (adr_dir / "0001-use-postgres.md").write_text(ADR_CONTENT)
 
-        llm_cfg = LLMConfig(provider="deepseek", model="deepseek-chat")
+        llm_cfg = LLMConfig(provider="deepseek", model="deepseek-v4-pro")
         graph = GraphStore()
         _ingest_adr_source(graph, str(adr_dir), llm_cfg, force_deterministic=True, repo_path=str(repo_dir))
 
@@ -344,7 +344,7 @@ class TestRunInitWithAdr:
         adr_dir.mkdir()
         (adr_dir / "0001-use-postgres.md").write_text(ADR_CONTENT)
 
-        llm_cfg = LLMConfig(provider="deepseek", model="deepseek-chat")
+        llm_cfg = LLMConfig(provider="deepseek", model="deepseek-v4-pro")
         graph = GraphStore()
         _ingest_adr_source(graph, str(adr_dir), llm_cfg, force_deterministic=True, repo_path=str(repo_dir))
 
@@ -380,7 +380,7 @@ class TestRunInitWithOpenCode:
             lambda content, label: _mock_freeform_result(),
         )
 
-        llm_cfg = LLMConfig(provider="deepseek", model="deepseek-chat")
+        llm_cfg = LLMConfig(provider="deepseek", model="deepseek-v4-pro")
         graph = GraphStore()
         _ingest_instruction_source(
             graph, str(oc_dir), llm_cfg, force_deterministic=True, repo_path=str(repo_dir),
@@ -421,7 +421,7 @@ class TestRunInitWithOpenCode:
             lambda content, label: result,
         )
 
-        llm_cfg = LLMConfig(provider="deepseek", model="deepseek-chat")
+        llm_cfg = LLMConfig(provider="deepseek", model="deepseek-v4-pro")
         graph = GraphStore()
         _ingest_instruction_source(
             graph, str(oc_dir), llm_cfg, force_deterministic=True, repo_path=str(repo_dir),
@@ -453,7 +453,7 @@ class TestRunInitWithClaude:
             lambda content, label: _mock_claude_freeform_result(),
         )
 
-        llm_cfg = LLMConfig(provider="deepseek", model="deepseek-chat")
+        llm_cfg = LLMConfig(provider="deepseek", model="deepseek-v4-pro")
         graph = GraphStore()
         _ingest_instruction_source(
             graph, str(claude_dir), llm_cfg, force_deterministic=True, repo_path=str(repo_dir),
@@ -497,7 +497,7 @@ class TestRunInitCombined:
             lambda content, label: _mock_freeform_result(),
         )
 
-        llm_cfg = LLMConfig(provider="deepseek", model="deepseek-chat")
+        llm_cfg = LLMConfig(provider="deepseek", model="deepseek-v4-pro")
         graph = GraphStore()
         _ingest_adr_source(graph, str(adr_dir), llm_cfg, force_deterministic=True, repo_path=str(repo_dir))
         _ingest_instruction_source(
@@ -543,7 +543,7 @@ class TestRunInitCombined:
             lambda content, label: next(results),
         )
 
-        llm_cfg = LLMConfig(provider="deepseek", model="deepseek-chat")
+        llm_cfg = LLMConfig(provider="deepseek", model="deepseek-v4-pro")
         graph = GraphStore()
         _ingest_adr_source(graph, str(adr_dir), llm_cfg, force_deterministic=True, repo_path=str(repo_dir))
         _ingest_instruction_source(
@@ -580,7 +580,7 @@ class TestSaveAndLoad:
         db_path = tmp_path / ".mementic" / "graph.db"
         db_path.parent.mkdir(parents=True)
 
-        llm_cfg = LLMConfig(provider="deepseek", model="deepseek-chat")
+        llm_cfg = LLMConfig(provider="deepseek", model="deepseek-v4-pro")
         gs1 = GraphStore(db_path=str(db_path))
         _ingest_adr_source(gs1, str(adr_dir), llm_cfg, force_deterministic=True, repo_path=str(repo_dir))
 
@@ -795,7 +795,7 @@ class TestRunInitWithCursor:
             lambda content, label: _mock_cursor_freeform_result(),
         )
 
-        llm_cfg = LLMConfig(provider="deepseek", model="deepseek-chat")
+        llm_cfg = LLMConfig(provider="deepseek", model="deepseek-v4-pro")
         graph = GraphStore()
         _ingest_instruction_source(
             graph, str(cursor_dir), llm_cfg, force_deterministic=True, repo_path=str(repo_dir),
@@ -835,7 +835,7 @@ class TestRunInitWithCursor:
             lambda content, label, llm_cfg: _mock_cursor_freeform_result(),
         )
 
-        llm_cfg = LLMConfig(provider="deepseek", model="deepseek-chat")
+        llm_cfg = LLMConfig(provider="deepseek", model="deepseek-v4-pro")
         graph = GraphStore()
         _ingest_instruction_source(
             graph, str(cursor_dir), llm_cfg,
@@ -867,7 +867,7 @@ class TestRunInitWithWindsurf:
             lambda content, label: _mock_windsurf_freeform_result(),
         )
 
-        llm_cfg = LLMConfig(provider="deepseek", model="deepseek-chat")
+        llm_cfg = LLMConfig(provider="deepseek", model="deepseek-v4-pro")
         graph = GraphStore()
         _ingest_instruction_source(
             graph, str(windsurf_dir), llm_cfg, force_deterministic=True, repo_path=str(repo_dir),
@@ -904,7 +904,7 @@ class TestRunInitWithWindsurf:
             lambda content, label, llm_cfg: _mock_windsurf_freeform_result(),
         )
 
-        llm_cfg = LLMConfig(provider="deepseek", model="deepseek-chat")
+        llm_cfg = LLMConfig(provider="deepseek", model="deepseek-v4-pro")
         graph = GraphStore()
         _ingest_instruction_source(
             graph, str(windsurf_dir), llm_cfg,
@@ -945,7 +945,7 @@ class TestRunInitCombinedCursorWindsurf:
             lambda content, label: next(results),
         )
 
-        llm_cfg = LLMConfig(provider="deepseek", model="deepseek-chat")
+        llm_cfg = LLMConfig(provider="deepseek", model="deepseek-v4-pro")
         graph = GraphStore()
         _ingest_instruction_source(
             graph, str(cursor_dir), llm_cfg, force_deterministic=True, repo_path=str(repo_dir),
@@ -1018,7 +1018,7 @@ class TestRunInitWithRepoScan:
             "mementic.pipeline.extract_from_codebase_summary",
             return_value=mock_result,
         ):
-            llm_cfg = LLMConfig(provider="deepseek", model="deepseek-chat")
+            llm_cfg = LLMConfig(provider="deepseek", model="deepseek-v4-pro")
             gs = run_init(repo_path=str(repo), llm_cfg=llm_cfg, deep=True)
 
         decisions = gs.get_all_decisions()
@@ -1046,7 +1046,7 @@ class TestRunInitWithRepoScan:
         with patch(
             "mementic.pipeline.extract_from_codebase_summary"
         ) as mock_extract:
-            llm_cfg = LLMConfig(provider="deepseek", model="deepseek-chat")
+            llm_cfg = LLMConfig(provider="deepseek", model="deepseek-v4-pro")
             _gs = run_init(
                 repo_path=str(repo), llm_cfg=llm_cfg, no_scan=True, deep=True,
             )
@@ -1063,7 +1063,7 @@ class TestRunInitWithRepoScan:
         with patch(
             "mementic.pipeline.extract_from_codebase_summary"
         ) as mock_extract:
-            llm_cfg = LLMConfig(provider="deepseek", model="deepseek-chat")
+            llm_cfg = LLMConfig(provider="deepseek", model="deepseek-v4-pro")
             _gs = run_init(llm_cfg=llm_cfg, deep=True)
 
         mock_extract.assert_not_called()
@@ -1091,7 +1091,7 @@ class TestRunInitWithRepoScan:
         with patch(
             "mementic.pipeline.extract_from_codebase_summary"
         ) as mock_extract:
-            llm_cfg = LLMConfig(provider="deepseek", model="deepseek-chat")
+            llm_cfg = LLMConfig(provider="deepseek", model="deepseek-v4-pro")
             _gs = run_init(repo_path=str(repo), llm_cfg=llm_cfg, deep=True)
 
         mock_extract.assert_not_called()

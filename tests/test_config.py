@@ -24,9 +24,9 @@ class TestLLMConfig:
 
     def test_valid_provider_deepseek(self) -> None:
         """LLMConfig with valid provider passes validation."""
-        cfg = LLMConfig(provider="deepseek", model="deepseek-chat")
+        cfg = LLMConfig(provider="deepseek", model="deepseek-v4-pro")
         assert cfg.provider == "deepseek"
-        assert cfg.model == "deepseek-chat"
+        assert cfg.model == "deepseek-v4-pro"
         assert cfg.base_url == "https://api.deepseek.com"
         assert cfg.key_env_var == "DEEPSEEK_API_KEY"
 
@@ -39,7 +39,7 @@ class TestLLMConfig:
 
     def test_valid_provider_openrouter(self) -> None:
         """LLMConfig with openrouter provider."""
-        cfg = LLMConfig(provider="openrouter", model="deepseek/deepseek-chat")
+        cfg = LLMConfig(provider="openrouter", model="deepseek/deepseek-v4-pro")
         assert cfg.provider == "openrouter"
         assert cfg.base_url == "https://openrouter.ai/api/v1"
         assert cfg.key_env_var == "OPENROUTER_API_KEY"
@@ -89,7 +89,7 @@ class TestLocalConfig:
 
     def test_valid_local_config(self) -> None:
         """LocalConfig with valid LLM config passes validation."""
-        cfg = LocalConfig(llm=LLMConfig(provider="deepseek", model="deepseek-chat"))
+        cfg = LocalConfig(llm=LLMConfig(provider="deepseek", model="deepseek-v4-pro"))
         assert cfg.llm.provider == "deepseek"
         assert cfg.sessions is None
 
@@ -99,7 +99,7 @@ class TestLocalConfig:
             opencode=AgentSessionConfig(log_dirs=["/custom/logs"]),
         )
         cfg = LocalConfig(
-            llm=LLMConfig(provider="deepseek", model="deepseek-chat"),
+            llm=LLMConfig(provider="deepseek", model="deepseek-v4-pro"),
             sessions=sessions,
         )
         assert cfg.sessions is not None
@@ -149,12 +149,12 @@ class TestLoadSaveLocalConfig:
         mementic_dir.mkdir()
         config_file = mementic_dir / "config.json"
         config_file.write_text(json.dumps({
-            "llm": {"provider": "deepseek", "model": "deepseek-chat"},
+            "llm": {"provider": "deepseek", "model": "deepseek-v4-pro"},
         }))
         cfg = load_local_config()
         assert cfg is not None
         assert cfg.llm.provider == "deepseek"
-        assert cfg.llm.model == "deepseek-chat"
+        assert cfg.llm.model == "deepseek-v4-pro"
 
     def test_load_corrupt_json_raises(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         """load_local_config raises ValueError for corrupt JSON."""
@@ -169,14 +169,14 @@ class TestLoadSaveLocalConfig:
     def test_save_creates_directory(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         """save_local_config creates .mementic/ directory if missing."""
         monkeypatch.chdir(tmp_path)
-        cfg = LocalConfig(llm=LLMConfig(provider="deepseek", model="deepseek-chat"))
+        cfg = LocalConfig(llm=LLMConfig(provider="deepseek", model="deepseek-v4-pro"))
         save_local_config(cfg)
         assert (tmp_path / ".mementic" / "config.json").exists()
 
     def test_save_exclude_none(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         """save_local_config excludes None fields from JSON output."""
         monkeypatch.chdir(tmp_path)
-        cfg = LocalConfig(llm=LLMConfig(provider="deepseek", model="deepseek-chat"))
+        cfg = LocalConfig(llm=LLMConfig(provider="deepseek", model="deepseek-v4-pro"))
         save_local_config(cfg)
         content = (tmp_path / ".mementic" / "config.json").read_text()
         data = json.loads(content)

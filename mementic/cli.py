@@ -190,14 +190,30 @@ def init(
         # Determine model
         resolved_model = model
         if not resolved_model:
-            model_defaults = {
+            model_defaults: dict[str, str] = {
                 "openrouter": "deepseek/deepseek-v4-pro",
                 "deepseek": "deepseek-v4-pro",
                 "openai": "gpt-4o",
                 "ollama": "llama3",
             }
+            model_suggestions: dict[str, list[str]] = {
+                "openrouter": [
+                    "deepseek/deepseek-v4-pro",
+                    "deepseek/deepseek-v4-flash",
+                    "openai/gpt-4o",
+                    "anthropic/claude-sonnet-4",
+                ],
+                "deepseek": ["deepseek-v4-pro", "deepseek-v4-flash"],
+                "openai": ["gpt-4o", "gpt-4o-mini", "o3-mini"],
+                "ollama": ["llama3", "codellama", "mistral"],
+            }
             default_model = model_defaults.get(resolved_provider, "deepseek-v4-pro")
             if sys.stdin.isatty():
+                suggestions = model_suggestions.get(resolved_provider, [default_model])
+                console.print(f"\n  Popular {resolved_provider} models:")
+                for s in suggestions:
+                    marker = " (default)" if s == default_model else ""
+                    console.print(f"    {s}{marker}")
                 resolved_model = _typer.prompt(
                     "Model", default=default_model
                 )
