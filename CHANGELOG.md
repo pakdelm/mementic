@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.1] - 2026-07-12
+
+### Changed
+- **Local per-repo config (Spec 22)** — replaced the global `~/.mementic/` config model with a local `.mementic/` directory. LLM provider/model and session-log overrides now live in `.mementic/config.json`; API keys are stored in the OS keyring. The project registry and `--project` flag were removed.
+- **Interactive provider selection** — `mementic init` now prompts for provider and model when no API key or environment variable is set.
+
+### Fixed
+- Replaced stale `deepseek-chat` references with `deepseek-v4-pro` across the codebase and docs.
+- Stripped ANSI codes in the `init --help` test.
+
+### Docs
+- Improved the config reference; removed the Docker SBX section.
+- Fixed stale `deepseek-chat` references in README and spec.
+
+### Tests
+- Rewrote skipped tests and deleted dead test classes.
+
 ## [0.2.0] - 2026-07-12
 
 ### Removed
