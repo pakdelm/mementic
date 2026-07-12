@@ -145,6 +145,10 @@ def init(
         # Determine provider
         resolved_provider = provider
         if not resolved_provider:
+            # Preserve existing config's provider when only --model is given
+            if llm_cfg is not None:
+                resolved_provider = llm_cfg.provider
+        if not resolved_provider:
             # Auto-detect from env vars
             import os as _os
             if _os.environ.get("OPENROUTER_API_KEY"):

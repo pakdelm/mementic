@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 import re
 import subprocess
 from pathlib import Path
@@ -40,129 +39,11 @@ def _strip_ansi(text: str) -> str:
     return re.sub(r"\x1b\[[0-9;]*[a-zA-Z]", "", text)
 
 
-def _write_config_and_graph(
-    tmp_path: Path,
-    decisions: list[dict] | None = None,
-    constraints: list[dict] | None = None,
-    entities: list[dict] | None = None,
-    edges: list[dict] | None = None,
-) -> tuple[Path, Path]:
-    """Helper to write a .mementic.json and graph.json for CLI tests."""
-    config_path = tmp_path / ".mementic.json"
-    graph_path = tmp_path / ".mementic" / "graph.json"
-    graph_path.parent.mkdir(parents=True)
-
-    config_path.write_text(json.dumps({
-        "output": {"graph_path": str(graph_path)},
-        "llm": {"provider": "deepseek", "model": "deepseek-chat"},
-    }))
-
-    graph_data: dict = {
-        "nodes": [],
-        "edges": edges or [],
-    }
-
-    for d in (decisions or []):
-        graph_data["nodes"].append({
-            "id": d["id"],
-            "type": "Decision",
-            "data": d,
-        })
-    for c in (constraints or []):
-        graph_data["nodes"].append({
-            "id": c["id"],
-            "type": "Constraint",
-            "data": c,
-        })
-    for e in (entities or []):
-        graph_data["nodes"].append({
-            "id": e["id"],
-            "type": "CodeEntity",
-            "data": e,
-        })
-
-    graph_path.write_text(json.dumps(graph_data))
-    return config_path, graph_path
 
 
-# ── D2: mementic init auto-bootstrap ──────────────────────────────
-
-
-@pytest.mark.skip(reason="Spec 22: GlobalConfig and project-based registration removed")
-class TestInitAutoBootstrap:
-    """Tests for mementic init auto-bootstrap behaviour."""
-
-    def _find_registered_repo(
-        self, repo_path: Path
-    ) -> object | None:
-        """Find the repo entry registered in the global config for repo_path."""
-        raise NotImplementedError("Spec 22: global config removed")
-
-    def test_init_autocreate_config_when_missing(self, tmp_path: Path) -> None:
-        pass
-
-    def test_init_no_sources_discovered_is_warning(self, tmp_path: Path) -> None:
-        pass
-
-    def test_init_existing_registration_not_overwritten(self, tmp_path: Path) -> None:
-        pass
-
-
-@pytest.mark.skip(reason="Spec 22: GlobalConfig and interactive LLM prompt removed")
-class TestInitInteractive:
-    """Tests for mementic init API key setup prompt. (Skipped — Spec 22)"""
-    pass
-
-
-# ── D4: graph corrupt error message ───────────────────────────────
-
-
-class TestGraphCorruptMessage:
-    """Tests for D4: corrupt graph file error message."""
-
-    def test_graph_corrupt_message_on_invalid_json(
-        self, tmp_path: Path
-    ) -> None:
-        """Graph file with invalid JSON shows health checklist [FAIL]."""
-        graph_path = tmp_path / ".mementic" / "graph.json"
-        graph_path.parent.mkdir(parents=True)
-        graph_path.write_text("not valid json at all {{{")
-
-        config_path = tmp_path / ".mementic.json"
-        config_path.write_text(json.dumps({
-            "output": {"graph_path": str(graph_path)},
-        }))
-
-        result = runner.invoke(
-            app, ["status"],
-            env={"MEMENTIC_CONFIG": str(config_path)},
-        )
-        # Status command handles graph load failures gracefully
-        assert result.exit_code == 0
-        output = result.stdout + result.stderr
-        assert "[FAIL]" in output  # STATUS_FAIL icon
-        assert "Graph" in output
-
-    def test_graph_missing_shows_init_message(
-        self, tmp_path: Path
-    ) -> None:
-        """Missing graph file shows health checklist [FAIL]."""
-        graph_path = tmp_path / ".mementic" / "graph.json"
-
-        config_path = tmp_path / ".mementic.json"
-        config_path.write_text(json.dumps({
-            "output": {"graph_path": str(graph_path)},
-        }))
-
-        result = runner.invoke(
-            app, ["status"],
-            env={"MEMENTIC_CONFIG": str(config_path)},
-        )
-        # Status command handles graph load failures gracefully
-        assert result.exit_code == 0
-        output = result.stdout + result.stderr
-        assert "[FAIL]" in output  # STATUS_FAIL icon
-        assert "Graph" in output
+# ── D4: graph corrupt error message (removed — Spec 22) ──────────
+# _load_graph_safe and graph.json fallback were removed.
+# SQLite is crash-safe by design; no corrupt JSON edge case to handle.
 
 
 # ── D4: git error message in capture ──────────────────────────────
@@ -199,7 +80,6 @@ class TestCaptureGitErrorMessage:
 # ── 06c F1: capture auto-accept ────────────────────────────────────
 
 
-@pytest.mark.skip(reason="Spec 22: _resolve_graph uses SQLite; _write_config_and_graph writes JSON. Incompatible.")
 class TestCaptureAutoAccept:
     """Tests for capture auto-accept behaviour (Spec 06c F1)."""
 
@@ -210,13 +90,13 @@ class TestCaptureAutoAccept:
         monkeypatch.chdir(tmp_path)
         monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-fake-key")
 
-        config_path, graph_path = _write_config_and_graph(tmp_path)
-        # Graph is at tmp_path/.mementic/graph.json (default legacy path)
+        from mementic.graph import GraphStore
+        from mementic.models import Decision, DecisionStatus, ExtractionResult
+
+        graph = GraphStore(db_path=None)
 
         session_file = tmp_path / "session.log"
         session_file.write_text("Agent session about adding auth.\n")
-
-        from mementic.models import Decision, DecisionStatus, ExtractionResult
 
         mock_result = ExtractionResult(
             decisions=[
@@ -234,6 +114,8 @@ class TestCaptureAutoAccept:
         )
 
         with patch(
+            "mementic.cli._resolve_graph", return_value=graph,
+        ), patch(
             "mementic.cli._extract_session",
             return_value=mock_result,
         ), patch(
@@ -257,26 +139,23 @@ class TestCaptureAutoAccept:
         monkeypatch.chdir(tmp_path)
         monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-fake-key")
 
-        config_path, graph_path = _write_config_and_graph(
-            tmp_path,
-            decisions=[{
-                "id": "use-jwt-auth",
-                "title": "Use JWT Auth",
-                "rationale": "Token-based auth for APIs",
-                "source": "ADR-001",
-                "status": "accepted",
-                "created_at": "2024-01-01T00:00:00Z",
-                "modified_at": "2024-01-01T00:00:00Z",
-                "tags": ["auth"],
-                "rejected_alternatives": [],
-                "author": "test",
-            }],
+        from mementic.graph import GraphStore
+        from mementic.models import Decision, DecisionStatus, ExtractionResult
+
+        graph = GraphStore(db_path=None)
+        existing = Decision(
+            id="use-jwt-auth",
+            title="Use JWT Auth",
+            rationale="Token-based auth for APIs",
+            source="ADR-001",
+            status=DecisionStatus.ACCEPTED,
+            created_at="2024-01-01T00:00:00Z",
+            modified_at="2024-01-01T00:00:00Z",
         )
+        graph.add_decision(existing)
 
         session_file = tmp_path / "session.log"
         session_file.write_text("Session about JWT auth updates.\n")
-
-        from mementic.models import Decision, DecisionStatus, ExtractionResult
 
         mock_result = ExtractionResult(
             decisions=[
@@ -294,6 +173,8 @@ class TestCaptureAutoAccept:
         )
 
         with patch(
+            "mementic.cli._resolve_graph", return_value=graph,
+        ), patch(
             "mementic.cli._extract_session",
             return_value=mock_result,
         ), patch(
@@ -314,12 +195,13 @@ class TestCaptureAutoAccept:
         monkeypatch.chdir(tmp_path)
         monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-fake-key")
 
-        config_path, graph_path = _write_config_and_graph(tmp_path)
+        from mementic.graph import GraphStore
+        from mementic.models import Decision, DecisionStatus, ExtractionResult
+
+        graph = GraphStore(db_path=None)
 
         session_file = tmp_path / "session.log"
         session_file.write_text("Session log content.\n")
-
-        from mementic.models import Decision, DecisionStatus, ExtractionResult
 
         mock_result = ExtractionResult(
             decisions=[
@@ -336,6 +218,8 @@ class TestCaptureAutoAccept:
         )
 
         with patch(
+            "mementic.cli._resolve_graph", return_value=graph,
+        ), patch(
             "mementic.cli._extract_session",
             return_value=mock_result,
         ):
@@ -352,47 +236,40 @@ class TestCaptureAutoAccept:
 # ── 06c F3: list command ───────────────────────────────────────────
 
 
-@pytest.mark.skip(reason="Spec 22: _resolve_graph uses SQLite; _write_config_and_graph writes JSON. Incompatible.")
 class TestListCommand:
     """Tests for mementic list command (Spec 06c F3)."""
 
     def test_list_decisions(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        config_path, _graph_path = _write_config_and_graph(
-            tmp_path,
-            decisions=[
-                {
-                    "id": "use-jwt",
-                    "title": "Use JWT Auth",
-                    "rationale": "Tokens",
-                    "source": "test",
-                    "status": "accepted",
-                    "created_at": "2024-05-15T00:00:00Z",
-                    "modified_at": "2024-05-15T00:00:00Z",
-                    "tags": ["auth"],
-                    "rejected_alternatives": [],
-                    "author": "test",
-                },
-                {
-                    "id": "use-async",
-                    "title": "Use async I/O",
-                    "rationale": "Performance",
-                    "source": "test",
-                    "status": "accepted",
-                    "created_at": "2024-05-20T00:00:00Z",
-                    "modified_at": "2024-05-20T00:00:00Z",
-                    "tags": ["perf"],
-                    "rejected_alternatives": [],
-                    "author": "test",
-                },
-            ],
-        )
-        monkeypatch.chdir(tmp_path)
+        from mementic.graph import GraphStore
+        from mementic.models import Decision, DecisionStatus
 
-        result = runner.invoke(app, ["list", "decisions"])
+        graph = GraphStore(db_path=None)
+        graph.add_decision(Decision(
+            id="use-jwt",
+            title="Use JWT Auth",
+            rationale="Tokens",
+            source="test",
+            status=DecisionStatus.ACCEPTED,
+            created_at="2024-05-15T00:00:00Z",
+            modified_at="2024-05-15T00:00:00Z",
+        ))
+        graph.add_decision(Decision(
+            id="use-async",
+            title="Use async I/O",
+            rationale="Performance",
+            source="test",
+            status=DecisionStatus.ACCEPTED,
+            created_at="2024-05-20T00:00:00Z",
+            modified_at="2024-05-20T00:00:00Z",
+        ))
+
+        with patch("mementic.cli._resolve_graph", return_value=graph):
+            result = runner.invoke(app, ["list", "decisions"])
+
         assert result.exit_code == 0
-        output = result.stdout
+        output = _strip_ansi(result.stdout)
         assert "use-jwt" in output
         assert "use-async" in output
         assert "Use JWT Auth" in output
@@ -400,69 +277,60 @@ class TestListCommand:
     def test_list_decisions_by_status(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        config_path, _graph_path = _write_config_and_graph(
-            tmp_path,
-            decisions=[
-                {
-                    "id": "d-accepted",
-                    "title": "Accepted",
-                    "rationale": "...",
-                    "source": "test",
-                    "status": "accepted",
-                    "created_at": "2024-01-01T00:00:00Z",
-                    "modified_at": "2024-01-01T00:00:00Z",
-                    "tags": [],
-                    "rejected_alternatives": [],
-                    "author": "test",
-                },
-                {
-                    "id": "d-deprecated",
-                    "title": "Deprecated",
-                    "rationale": "...",
-                    "source": "test",
-                    "status": "deprecated",
-                    "created_at": "2024-01-01T00:00:00Z",
-                    "modified_at": "2024-01-01T00:00:00Z",
-                    "tags": [],
-                    "rejected_alternatives": [],
-                    "author": "test",
-                },
-            ],
-        )
-        monkeypatch.chdir(tmp_path)
+        from mementic.graph import GraphStore
+        from mementic.models import Decision, DecisionStatus
 
-        result = runner.invoke(app, ["list", "decisions", "--status", "deprecated"])
+        graph = GraphStore(db_path=None)
+        graph.add_decision(Decision(
+            id="d-accepted",
+            title="Accepted",
+            rationale="...",
+            source="test",
+            status=DecisionStatus.ACCEPTED,
+            created_at="2024-01-01T00:00:00Z",
+            modified_at="2024-01-01T00:00:00Z",
+        ))
+        graph.add_decision(Decision(
+            id="d-deprecated",
+            title="Deprecated",
+            rationale="...",
+            source="test",
+            status=DecisionStatus.DEPRECATED,
+            created_at="2024-01-01T00:00:00Z",
+            modified_at="2024-01-01T00:00:00Z",
+        ))
+
+        with patch("mementic.cli._resolve_graph", return_value=graph):
+            result = runner.invoke(app, ["list", "decisions", "--status", "deprecated"])
+
         assert result.exit_code == 0
-        output = result.stdout
+        output = _strip_ansi(result.stdout)
         assert "d-deprecated" in output
         assert "d-accepted" not in output
 
     def test_list_decisions_last_n(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        config_path, _graph_path = _write_config_and_graph(
-            tmp_path,
-            decisions=[
-                {
-                    "id": f"d-{i}",
-                    "title": f"Decision {i}",
-                    "rationale": "...",
-                    "source": "test",
-                    "status": "accepted",
-                    "created_at": f"2024-01-{i:02d}T00:00:00Z",
-                    "modified_at": f"2024-01-{i:02d}T00:00:00Z",
-                    "tags": [],
-                    "rejected_alternatives": [],
-                    "author": "test",
-                }
-                for i in range(1, 6)
-            ],
-        )
-        monkeypatch.chdir(tmp_path)
+        from mementic.graph import GraphStore
+        from mementic.models import Decision, DecisionStatus
 
-        result = runner.invoke(app, ["list", "decisions", "-n", "2"])
+        graph = GraphStore(db_path=None)
+        for i in range(1, 6):
+            graph.add_decision(Decision(
+                id=f"d-{i}",
+                title=f"Decision {i}",
+                rationale="...",
+                source="test",
+                status=DecisionStatus.ACCEPTED,
+                created_at=f"2024-01-{i:02d}T00:00:00Z",
+                modified_at=f"2024-01-{i:02d}T00:00:00Z",
+            ))
+
+        with patch("mementic.cli._resolve_graph", return_value=graph):
+            result = runner.invoke(app, ["list", "decisions", "-n", "2"])
+
         assert result.exit_code == 0
-        output = result.stdout
+        output = _strip_ansi(result.stdout)
         assert "d-4" in output
         assert "d-5" in output
         assert "d-1" not in output
@@ -470,142 +338,139 @@ class TestListCommand:
     def test_list_constraints(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        config_path, _graph_path = _write_config_and_graph(
-            tmp_path,
-            constraints=[
-                {
-                    "id": "c-stateless",
-                    "description": "Services must be stateless",
-                    "bound_entities": [],
-                    "enforced_by": "use-jwt",
-                    "source": "test",
-                    "status": "active",
-                    "created_at": "2024-01-01T00:00:00Z",
-                },
-            ],
-        )
-        monkeypatch.chdir(tmp_path)
+        from mementic.graph import GraphStore
+        from mementic.models import Constraint
 
-        result = runner.invoke(app, ["list", "constraints"])
+        graph = GraphStore(db_path=None)
+        graph.add_constraint(Constraint(
+            id="c-stateless",
+            description="Services must be stateless",
+            bound_entities=[],
+            enforced_by="use-jwt",
+            source="test",
+            status="active",
+            created_at="2024-01-01T00:00:00Z",
+        ))
+
+        with patch("mementic.cli._resolve_graph", return_value=graph):
+            result = runner.invoke(app, ["list", "constraints"])
+
         assert result.exit_code == 0
-        output = result.stdout
+        output = _strip_ansi(result.stdout)
         assert "c-stateless" in output
         assert "Services must be stateless" in output
 
     def test_list_entities(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        config_path, _graph_path = _write_config_and_graph(
-            tmp_path,
-            entities=[
-                {
-                    "id": "src/auth.py",
-                    "type": "file",
-                    "repo": "my-repo",
-                },
-                {
-                    "id": "src/models/user.py",
-                    "type": "file",
-                    "repo": "my-repo",
-                },
-            ],
-        )
-        monkeypatch.chdir(tmp_path)
+        from mementic.graph import GraphStore
+        from mementic.models import CodeEntity, EntityType
 
-        result = runner.invoke(app, ["list", "entities"])
+        graph = GraphStore(db_path=None)
+        graph.add_code_entity(CodeEntity(
+            id="src/auth.py", type=EntityType.FILE, repo="my-repo",
+        ))
+        graph.add_code_entity(CodeEntity(
+            id="src/models/user.py", type=EntityType.FILE, repo="my-repo",
+        ))
+
+        with patch("mementic.cli._resolve_graph", return_value=graph):
+            result = runner.invoke(app, ["list", "entities"])
+
         assert result.exit_code == 0
-        output = result.stdout
+        output = _strip_ansi(result.stdout)
         assert "src/auth.py" in output
         assert "my-repo" in output
 
     def test_list_entities_stale(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        config_path, _graph_path = _write_config_and_graph(
-            tmp_path,
-            entities=[
-                {
-                    "id": str(tmp_path / "does_not_exist.py"),
-                    "type": "file",
-                    "repo": "",
-                },
-            ],
-        )
-        monkeypatch.chdir(tmp_path)
+        from mementic.graph import GraphStore
+        from mementic.models import CodeEntity, EntityType
 
-        result = runner.invoke(app, ["list", "entities", "--stale"])
+        monkeypatch.chdir(tmp_path)
+        stale_id = str(tmp_path / "does_not_exist.py")
+
+        graph = GraphStore(db_path=None)
+        graph.add_code_entity(CodeEntity(
+            id=stale_id, type=EntityType.FILE, repo="",
+        ))
+
+        with patch("mementic.cli._resolve_graph", return_value=graph):
+            result = runner.invoke(app, ["list", "entities", "--stale"])
+
         assert result.exit_code == 0
-        output = result.stdout
+        output = _strip_ansi(result.stdout)
         assert "does_not_exist.py" in output
 
 
 # ── 06c F4: deprecate command ──────────────────────────────────────
 
 
-@pytest.mark.skip(reason="Spec 22: _resolve_graph uses SQLite; _write_config_and_graph writes JSON. Incompatible.")
 class TestDeprecateCommand:
     """Tests for mementic deprecate command (Spec 06c F4)."""
 
     def test_deprecate_marks_decision_deprecated(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        config_path, graph_path = _write_config_and_graph(
-            tmp_path,
-            decisions=[{
-                "id": "use-old-auth",
-                "title": "Use Old Auth",
-                "rationale": "Basic session auth",
-                "source": "test",
-                "status": "accepted",
-                "created_at": "2024-01-01T00:00:00Z",
-                "modified_at": "2024-01-01T00:00:00Z",
-                "tags": [],
-                "rejected_alternatives": [],
-                "author": "test",
-            }],
-        )
-        monkeypatch.chdir(tmp_path)
+        from mementic.graph import GraphStore
+        from mementic.models import Decision, DecisionStatus
 
-        result = runner.invoke(app, ["deprecate", "use-old-auth"])
+        graph = GraphStore(db_path=None)
+        graph.add_decision(Decision(
+            id="use-old-auth",
+            title="Use Old Auth",
+            rationale="Basic session auth",
+            source="test",
+            status=DecisionStatus.ACCEPTED,
+            created_at="2024-01-01T00:00:00Z",
+            modified_at="2024-01-01T00:00:00Z",
+        ))
+
+        with patch("mementic.cli._resolve_graph", return_value=graph):
+            result = runner.invoke(app, ["deprecate", "use-old-auth"])
+
         assert result.exit_code == 0
-        output = result.stdout
+        output = _strip_ansi(result.stdout)
         assert "Deprecated" in output or "deprecated" in output.lower()
         assert "use-old-auth" in output
 
     def test_deprecate_with_reason_appends_to_rationale(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        config_path, graph_path = _write_config_and_graph(
-            tmp_path,
-            decisions=[{
-                "id": "use-old-auth",
-                "title": "Use Old Auth",
-                "rationale": "Basic session auth",
-                "source": "test",
-                "status": "accepted",
-                "created_at": "2024-01-01T00:00:00Z",
-                "modified_at": "2024-01-01T00:00:00Z",
-                "tags": [],
-                "rejected_alternatives": [],
-                "author": "test",
-            }],
-        )
-        monkeypatch.chdir(tmp_path)
+        from mementic.graph import GraphStore
+        from mementic.models import Decision, DecisionStatus
 
-        result = runner.invoke(
-            app, ["deprecate", "use-old-auth", "--reason", "Migrated to JWT"]
-        )
+        graph = GraphStore(db_path=None)
+        graph.add_decision(Decision(
+            id="use-old-auth",
+            title="Use Old Auth",
+            rationale="Basic session auth",
+            source="test",
+            status=DecisionStatus.ACCEPTED,
+            created_at="2024-01-01T00:00:00Z",
+            modified_at="2024-01-01T00:00:00Z",
+        ))
+
+        with patch("mementic.cli._resolve_graph", return_value=graph):
+            result = runner.invoke(
+                app, ["deprecate", "use-old-auth", "--reason", "Migrated to JWT"]
+            )
+
         assert result.exit_code == 0
-        output = result.stdout
+        output = _strip_ansi(result.stdout)
         assert "Deprecated" in output
 
     def test_deprecate_nonexistent_shows_error(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        config_path, graph_path = _write_config_and_graph(tmp_path)
-        monkeypatch.chdir(tmp_path)
+        from mementic.graph import GraphStore
 
-        result = runner.invoke(app, ["deprecate", "nonexistent-id"])
+        graph = GraphStore(db_path=None)
+
+        with patch("mementic.cli._resolve_graph", return_value=graph):
+            result = runner.invoke(app, ["deprecate", "nonexistent-id"])
+
         assert result.exit_code == 1
         output = result.stdout + result.stderr
         assert "not found" in output.lower()
@@ -613,24 +478,23 @@ class TestDeprecateCommand:
     def test_deprecate_already_deprecated_shows_message(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        config_path, graph_path = _write_config_and_graph(
-            tmp_path,
-            decisions=[{
-                "id": "already-dep",
-                "title": "Already Deprecated",
-                "rationale": "Old stuff",
-                "source": "test",
-                "status": "deprecated",
-                "created_at": "2024-01-01T00:00:00Z",
-                "modified_at": "2024-01-01T00:00:00Z",
-                "tags": [],
-                "rejected_alternatives": [],
-                "author": "test",
-            }],
-        )
-        monkeypatch.chdir(tmp_path)
+        from mementic.graph import GraphStore
+        from mementic.models import Decision, DecisionStatus
 
-        result = runner.invoke(app, ["deprecate", "already-dep"])
+        graph = GraphStore(db_path=None)
+        graph.add_decision(Decision(
+            id="already-dep",
+            title="Already Deprecated",
+            rationale="Old stuff",
+            source="test",
+            status=DecisionStatus.DEPRECATED,
+            created_at="2024-01-01T00:00:00Z",
+            modified_at="2024-01-01T00:00:00Z",
+        ))
+
+        with patch("mementic.cli._resolve_graph", return_value=graph):
+            result = runner.invoke(app, ["deprecate", "already-dep"])
+
         output = result.stdout + result.stderr
         assert "already deprecated" in output.lower()
 
@@ -848,77 +712,6 @@ class TestCaptureNoGit:
         output = result.stdout + result.stderr
         assert result.exit_code == 0
         assert "no changes" in output.lower()
-
-
-# ── Spec 12a: Codebase Scanner CLI Tests ────────────────────────────
-
-
-@pytest.mark.skip(reason="Spec 22: --repo flag removed from init; repo auto-detected")
-class TestInitRepoFlag:
-    """Tests for mementic init --repo and --no-scan flags (Spec 12a)."""
-
-    def test_init_repo_flag_passed_to_pipeline(
-        self, tmp_path: Path
-    ) -> None:
-        """mementic init --repo passes repo_path to run_init."""
-        old_cwd = os.getcwd()
-        try:
-            os.chdir(tmp_path)
-
-            with patch("mementic.cli.run_init", return_value=_make_mock_graph()) as mock_run_init:
-                result = runner.invoke(app, ["init", "--repo", "/some/path"])
-
-            assert result.exit_code == 0
-            mock_run_init.assert_called_once()
-            call_kwargs = mock_run_init.call_args.kwargs
-            assert call_kwargs["repo_path"] == "/some/path"
-        finally:
-            os.chdir(old_cwd)
-
-    def test_init_no_scan_flag_passed_to_pipeline(
-        self, tmp_path: Path
-    ) -> None:
-        """mementic init --no-scan passes no_scan=True to run_init."""
-        old_cwd = os.getcwd()
-        try:
-            os.chdir(tmp_path)
-
-            with patch("mementic.cli.run_init", return_value=_make_mock_graph()) as mock_run_init:
-                result = runner.invoke(app, ["init", "--no-scan"])
-
-            assert result.exit_code == 0
-            mock_run_init.assert_called_once()
-            call_kwargs = mock_run_init.call_args.kwargs
-            assert call_kwargs["no_scan"] is True
-        finally:
-            os.chdir(old_cwd)
-
-    def test_init_help_shows_repo_and_no_scan(self) -> None:
-        """mementic init --help shows --repo and --no-scan options."""
-        result = runner.invoke(app, ["init", "--help"])
-
-        assert result.exit_code == 0
-        output = _strip_ansi(result.stdout)
-        assert "--repo" in output
-        assert "--no-scan" in output
-
-
-# ── Spec 12b: Project management CLI commands ──────────────────────
-
-
-@pytest.mark.skip(reason="Spec 22: 'mementic project' subcommand removed")
-class TestProjectCommands:
-    """Tests for 'mementic project create|list|set-default' commands. (Skipped — Spec 22)"""
-    pass
-
-
-# ── Spec 12d: Audit Mutation Log ────────────────────────────────────
-
-
-@pytest.mark.skip(reason="Spec 22: SQLite audit log from global config-based project DB removed")
-class TestLogCommand:
-    """Tests for mementic log command. (Skipped — Spec 22)"""
-    pass
 
 
 # ── JSON output modes ───────────────────────────────────────────────
@@ -1220,4 +1013,18 @@ class TestDeprecateMultiId:
         output = _strip_ansi(result.stdout)
         assert "1 deprecated" in output
         assert "1 errors" in output
+
+
+class TestInitCommand:
+    """Tests for mementic init command."""
+
+    def test_init_help_shows_provider_and_model_flags(
+        self,
+    ) -> None:
+        """init --help shows --provider and --model flags."""
+        result = runner.invoke(app, ["init", "--help"])
+        assert result.exit_code == 0, f"stderr: {result.stderr}"
+        output = result.stdout
+        assert "--provider" in output
+        assert "--model" in output
 
