@@ -511,50 +511,14 @@ def run_init(
                 force_deterministic=force_deterministic, advance=advance,
             )
 
-        # ADR sources (when llm_cfg is available)
-        if llm_cfg:
-            adr_source: Any
-            for adr_source in ():  # sources configured externally via Spec 22
-                if advance:
-                    advance("Ingesting ADR sources...", 1)
-                _ingest_adr_source(
-                    graph, adr_source.path, llm_cfg,
-                    force_deterministic=force_deterministic, repo_path=repo_path,
-                )
-
-            # Instruction sources
-            oc_src: Any
-            for oc_src in ():  # sources configured externally via Spec 22
-                if advance:
-                    advance("Ingesting OpenCode instructions...", 1)
-                _ingest_instruction_source(
-                    graph, oc_src.path, llm_cfg,
-                    force_deterministic=force_deterministic, repo_path=repo_path,
-                )
-            cl_src: Any
-            for cl_src in ():  # sources configured externally via Spec 22
-                if advance:
-                    advance("Ingesting Claude instructions...", 1)
-                _ingest_instruction_source(
-                    graph, cl_src.path, llm_cfg,
-                    force_deterministic=force_deterministic, repo_path=repo_path,
-                )
-            cu_src: Any
-            for cu_src in ():  # sources configured externally via Spec 22
-                if advance:
-                    advance("Ingesting Cursor instructions...", 1)
-                _ingest_instruction_source(
-                    graph, cu_src.path, llm_cfg,
-                    force_deterministic=force_deterministic, repo_path=repo_path,
-                )
-            ws_src: Any
-            for ws_src in ():  # sources configured externally via Spec 22
-                if advance:
-                    advance("Ingesting Windsurf instructions...", 1)
-                _ingest_instruction_source(
-                    graph, ws_src.path, llm_cfg,
-                    force_deterministic=force_deterministic, repo_path=repo_path,
-                )
+        # ADR / instruction ingestion is handled by the Phase 0 repo-wide
+        # markdown scan (_run_markdown_scan) and the codebase structural
+        # scan (Spec 12a / Spec 15). The codebase-first architecture auto-
+        # discovers all *.md files (.cursor, .windsurf, .opencode, .claude)
+        # and detects ADRs by format, so no explicit per-source loops are
+        # required here. ADR `## Status` parsing was intentionally dropped
+        # because DecisionStatus is limited to ACCEPTED/DEPRECATED/REJECTED
+        # (see #decisionstatus-enum-must-only-contain).
 
         # Backfill edges + persist
         has_sources = (
