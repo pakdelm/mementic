@@ -18,10 +18,6 @@ from datetime import date
 from pathlib import Path
 from typing import NoReturn
 
-from rich.console import Console
-from rich.panel import Panel
-
-console = Console()
 ROOT = Path(__file__).resolve().parent.parent
 PYPROJECT = ROOT / "pyproject.toml"
 CHANGELOG = ROOT / "CHANGELOG.md"
@@ -31,20 +27,20 @@ VERSION_RE = re.compile(r'^version\s*=\s*"([^"]+)"', re.MULTILINE)
 
 
 def die(msg: str) -> NoReturn:
-    console.print(f"[red]ERROR:[/] {msg}")
+    print(f"ERROR: {msg}")
     sys.exit(1)
 
 
 def ok(msg: str) -> None:
-    console.print(f"  [green]>[/] {msg}")
+    print(f"  > {msg}")
 
 
 def warn(msg: str) -> None:
-    console.print(f"  [yellow]![/] {msg}")
+    print(f"  ! {msg}")
 
 
 def dry(msg: str) -> None:
-    console.print(f"  [dim][DRY RUN][/] {msg}")
+    print(f"  [DRY RUN] {msg}")
 
 
 def run(*args: str, capture: bool = False) -> subprocess.CompletedProcess[str]:
@@ -140,7 +136,6 @@ def get_merge_messages_since(tag: str) -> list[str]:
         msg = line.strip()
         if not msg:
             continue
-        # Skip release branch merges (e.g. "Merge pull request #X from .../release/...")
         if "release/" in msg:
             continue
         messages.append(msg)
@@ -153,7 +148,7 @@ def update_changelog(version: str, dry_run: bool) -> None:
 
     last_tag = get_last_version_tag()
     if last_tag is None:
-        die("No previous version tag found. Can't determine which commits to include.")
+        die("No previous version tag found; can't determine which commits to include.")
     merge_messages = get_merge_messages_since(last_tag)
     if not merge_messages:
         die(f"No merge commits found since {last_tag}. Nothing to include in changelog.")
@@ -162,24 +157,23 @@ def update_changelog(version: str, dry_run: bool) -> None:
     header = f"## [{version}] - {today}"
 
     if dry_run:
-        console.print("\n[dim]Would add changelog section:[/]")
-        console.print(f"  [bold]{header}[/]")
+        print()
+        print("[DRY RUN] Would add changelog section:")
+        print(f"  {header}")
         for msg in merge_messages:
-            console.print(f"  [dim]- {msg}[/]")
+            print(f"  - {msg}")
         return
 
     # Build section and insert after preamble, before first existing version header.
     content = CHANGELOG.read_text(encoding="utf-8")
-    nl = "\r\n" if "\r\n" in content else "\n"
-
-    section_lines = [header, ""] + [f"- {msg}" for msg in merge_messages] + [""]
-    new_section = nl.join(section_lines)
+    section_lines = [header, ""] + [f"- {msg}" for msg in merge_messages]
+    new_section = "\n".join(section_lines)
 
     first_version = re.search(r"^## \[", content, re.MULTILINE)
     if first_version:
         new_content = content[: first_version.start()] + new_section + content[first_version.start() :]
     else:
-        new_content = content.rstrip() + nl + nl + new_section
+        new_content = content.rstrip() + "\n\n" + new_section
 
     CHANGELOG.write_text(new_content, encoding="utf-8")
     ok(f"CHANGELOG.md -> [{version}] - {today} ({len(merge_messages)} merge commits)")
@@ -198,8 +192,8 @@ def main() -> None:
     branch = f"release/{tag}"
     dry_run: bool = args.dry_run
 
-    # ── Pre-flight ──────────────────────────────────────────────────
-    console.print("[bold]Pre-flight checks[/]")
+    # -- Pre-flight --
+    print("Pre-flight checks")
     check_main_branch(dry_run=dry_run)
     check_clean_tree()
     ok("Working tree clean")
@@ -213,50 +207,51 @@ def main() -> None:
     check_branch_absent(branch)
     ok(f"Branch {branch} does not exist")
 
-    # ── Create branch ───────────────────────────────────────────────
-    console.print()
+    # -- Create branch --
+    print()
     if dry_run:
         dry(f"Would create branch: {branch}")
     else:
         run("git", "checkout", "-b", branch)
-        ok(f"Created branch: [bold]{branch}[/]")
+        ok(f"Created branch: {branch}")
 
-    # ── Bump & changelog ────────────────────────────────────────────
+    # -- Bump & changelog --
     bump_pyproject(version, dry_run)
     update_changelog(version, dry_run)
 
     if dry_run:
-        console.print()
-        console.print(f"[dim]Would commit on {branch}, tag {tag}, and push.[/]")
-        console.print("[dim]Done -- no changes made.[/]")
+        print()
+        print(f"[DRY RUN] Would commit on {branch}, tag {tag}, and push.")
+        print("[DRY RUN] Done -- no changes made.")
         return
 
-    # ── Commit & tag ────────────────────────────────────────────────
+    # -- Commit & tag --
     run("git", "add", "pyproject.toml", "CHANGELOG.md")
     run("git", "commit", "-m", f"Release {tag}")
     ok(f"Committed: Release {tag}")
     run("git", "tag", tag)
-    ok(f"Tagged: [bold]{tag}[/]")
+    ok(f"Tagged: {tag}")
 
-    # ── Push ────────────────────────────────────────────────────────
+    # -- Push --
     run("git", "push", "-u", "origin", branch)
-    ok(f"Pushed branch: [bold]{branch}[/]")
+    ok(f"Pushed branch: {branch}")
     run("git", "push", "origin", tag)
-    ok(f"Pushed tag: [bold]{tag}[/]")
+    ok(f"Pushed tag: {tag}")
 
-    # ── Done ────────────────────────────────────────────────────────
-    summary = (
-        f"[bold]Release {version} prepared![/]\n\n"
-        f"  Branch : [bold]{branch}[/]\n"
-        f"  Tag    : [bold]{tag}[/]\n\n"
-        f"[bold]Next steps:[/]\n"
-        f"  1. Create a PR: {branch} -> main\n"
-        f"  2. Review & merge using [bold]MERGE COMMIT[/] (not squash or rebase)\n"
-        f"  3. Delete [bold]{branch}[/] after merge\n\n"
-        f"[yellow]!  Squash/rebase will orphan the tag -- use merge commit only.[/]"
-    )
-    console.print()
-    console.print(Panel(summary, title="Release", border_style="green"))
+    # -- Done --
+    print(f"""
++--- Release {version} prepared! ---+
+
+  Branch : {branch}
+  Tag    : {tag}
+
+  Next steps:
+    1. Create a PR: {branch} -> main
+    2. Review & merge using MERGE COMMIT (not squash or rebase)
+    3. Delete {branch} after merge
+
+  !  Squash/rebase will orphan the tag -- use merge commit only.
+""")
 
 
 if __name__ == "__main__":
