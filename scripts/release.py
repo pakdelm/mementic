@@ -21,7 +21,7 @@ from typing import NoReturn
 from rich.console import Console
 from rich.panel import Panel
 
-console = Console()
+console = Console(force_terminal=True)
 ROOT = Path(__file__).resolve().parent.parent
 PYPROJECT = ROOT / "pyproject.toml"
 CHANGELOG = ROOT / "CHANGELOG.md"
@@ -122,23 +122,68 @@ def bump_pyproject(version: str, dry_run: bool) -> None:
     ok(f'pyproject.toml -> version = "{version}"')
 
 
-def update_changelog(version: str, dry_run: bool) -> bool:
+def get_last_version_tag() -> str | None:
+    """Return the most recent v* tag reachable from main, or None."""
+    result = run("git", "tag", "--sort=-creatordate", "--merged", "main", capture=True)
+    for line in result.stdout.splitlines():
+        tag = line.strip()
+        if tag.startswith("v") and SEMVER_RE.match(tag[1:]):
+            return tag
+    return None
+
+
+def get_merge_messages_since(tag: str) -> list[str]:
+    """Return merge commit subjects between tag and main, excluding release PRs."""
+    result = run("git", "log", f"{tag}..main", "--merges", "--format=%s", capture=True)
+    messages: list[str] = []
+    for line in result.stdout.splitlines():
+        msg = line.strip()
+        if not msg:
+            continue
+        # Skip release branch merges (e.g. "Merge pull request #X from .../release/...")
+        if "release/" in msg:
+            continue
+        messages.append(msg)
+    return messages
+
+
+def update_changelog(version: str, dry_run: bool) -> None:
     if not CHANGELOG.exists():
-        warn("CHANGELOG.md not found -- skipping.")
-        return False
-    content = CHANGELOG.read_text(encoding="utf-8")
-    if "[Unreleased]" not in content:
-        warn("[Unreleased] section not found in CHANGELOG.md -- skipping.")
-        return False
+        die("CHANGELOG.md not found.")
+
+    last_tag = get_last_version_tag()
+    if last_tag is None:
+        die("No previous version tag found. Can't determine which commits to include.")
+    merge_messages = get_merge_messages_since(last_tag)
+    if not merge_messages:
+        die(f"No merge commits found since {last_tag}. Nothing to include in changelog.")
+
     today = date.today().isoformat()
-    new_header = f"## [{version}] - {today}"
-    new_content = content.replace("[Unreleased]", new_header, 1)
+    header = f"## [{version}] - {today}"
+
     if dry_run:
-        dry(f"Would update CHANGELOG.md: [Unreleased] -> [{version}] - {today}")
-        return True
+        console.print("\n[dim]Would add changelog section:[/]")
+        console.print(f"  [bold]{header}[/]")
+        for msg in merge_messages:
+            console.print(f"  [dim]- {msg}[/]")
+        return
+
+    # Build section and insert after preamble, before first existing version header.
+    section_lines = [header, ""]
+    for msg in merge_messages:
+        section_lines.append(f"- {msg}")
+    section_lines.append("")
+    new_section = "\n".join(section_lines)
+
+    content = CHANGELOG.read_text(encoding="utf-8")
+    first_version = re.search(r"^## \[", content, re.MULTILINE)
+    if first_version:
+        new_content = content[: first_version.start()] + new_section + content[first_version.start() :]
+    else:
+        new_content = content.rstrip() + "\n\n" + new_section
+
     CHANGELOG.write_text(new_content, encoding="utf-8")
-    ok(f"CHANGELOG.md -> [{version}] - {today}")
-    return True
+    ok(f"CHANGELOG.md -> [{version}] - {today} ({len(merge_messages)} merge commits)")
 
 
 def main() -> None:
@@ -179,7 +224,7 @@ def main() -> None:
 
     # ── Bump & changelog ────────────────────────────────────────────
     bump_pyproject(version, dry_run)
-    changelog_updated = update_changelog(version, dry_run)
+    update_changelog(version, dry_run)
 
     if dry_run:
         console.print()
@@ -188,10 +233,7 @@ def main() -> None:
         return
 
     # ── Commit & tag ────────────────────────────────────────────────
-    files = ["pyproject.toml"]
-    if changelog_updated:
-        files.append("CHANGELOG.md")
-    run("git", "add", *files)
+    run("git", "add", "pyproject.toml", "CHANGELOG.md")
     run("git", "commit", "-m", f"Release {tag}")
     ok(f"Committed: Release {tag}")
     run("git", "tag", tag)
