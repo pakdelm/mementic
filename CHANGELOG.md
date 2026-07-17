@@ -9,7 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Merge pull request #47 from pakdelm/fix/more-release-fixes
 - Merge pull request #46 from pakdelm/fix/release-bugs
-- Merge pull request #45 from pakdelm/fix/release-bugs## [0.2.2] - 2026-07-12
+- Merge pull request #45 from pakdelm/fix/release-bugs
+
+## [0.2.3] - 2026-07-17
+
+- Add release script
+
+## [0.2.2] - 2026-07-12
 
 ### Fixed
 - `mementic init --provider`/`--model` now preserves existing `sessions` overrides instead of silently dropping them.
