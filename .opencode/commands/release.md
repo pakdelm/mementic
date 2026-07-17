@@ -1,67 +1,31 @@
 ---
-description: Release a new version (bump pyproject.toml, update CHANGELOG, commit, tag)
+description: Release a new version — deterministic, no hand-editing files
 ---
 
-Release the project at version $ARGUMENTS (e.g. `0.2.0`). Execute the following
-steps in order, stopping on any failure:
+Release the project at version `$ARGUMENTS`.
 
-## 1. Validate version
+## Execution
 
-- Strip a leading `v` if present.
-- Confirm the version matches the pattern `X.Y.Z` (semver).
-- If not valid, report the error and stop.
+Run the deterministic release script. It handles ALL mechanical work: branch
+creation, version bump, changelog update, commit, tag, and push.
 
-## 2. Pre-flight checks
+```
+uv run python scripts/release.py $ARGUMENTS
+```
 
-- Confirm we are in a git repository (`git rev-parse --git-dir`).
-- Confirm the working directory is clean (`git status --porcelain` produces no output).
-- Confirm the tag `v{version}` does not already exist locally (`git tag --list v{version}`).
+If the user asks for a preview first:
+```
+uv run python scripts/release.py $ARGUMENTS --dry-run
+```
 
-## 3. Read current version
+The script will:
+1. Validate: on `main`, clean tree, valid semver, version > current, no duplicate tag/branch
+2. Create branch `release/v{version}`
+3. Bump `pyproject.toml` and update `CHANGELOG.md`
+4. Commit, tag, push branch + tag
 
-Parse `pyproject.toml` to get the current `[project] version`.
+## After the script
 
-## 4. Two scenarios
-
-### Scenario A: version matches current version (first tag)
-
-This means we are tagging the current state without bumping anything.
-
-- Run: `git tag v{version}`
-- If user requested push: `git push origin v{version}`
-- Report what was done and stop.
-
-### Scenario B: version is greater than current version (normal release)
-
-Confirm the new version is strictly greater than the current version. If not, error.
-
-**Update pyproject.toml:**
-- Replace the `version = "..."` line under `[project]` with the new version.
-- Use a regex or string replace that is precise enough to only match the version line.
-
-**Update CHANGELOG.md:**
-- If `CHANGELOG.md` does not exist, warn but continue (do not block).
-- If it exists, replace the first occurrence of `[Unreleased]` with
-  `[{new_version}] - {today's date in YYYY-MM-DD}`.
-- If `[Unreleased]` is not found, warn but continue.
-
-**Commit and tag:**
-- `git add pyproject.toml` (and CHANGELOG.md if it was updated)
-- `git commit -m "Release v{version}"`
-- `git tag v{version}`
-
-**Push (only if user explicitly requested):**
-- `git push`
-- `git push origin v{version}`
-
-## 5. Report
-
-Summarize every action taken. If the user asked for push and it was done,
-remind them that the tag is now on the remote.
-
-## Safety notes
-
-- Never push unless the user explicitly asks for it (e.g. "release 0.2.0 and push").
-- Never proceed if the working directory is dirty — tell the user to commit or stash first.
-- Never force-overwrite an existing tag.
-- If CHANGELOG.md is missing or has no `[Unreleased]` section, warn but don't block.
+Inform the user: a PR needs to be created manually from the pushed release
+branch to `main`. **Must use merge commit** (not squash or rebase) or the tag
+becomes orphaned.
