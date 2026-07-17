@@ -21,7 +21,7 @@ from typing import NoReturn
 from rich.console import Console
 from rich.panel import Panel
 
-console = Console(force_terminal=True)
+console = Console()
 ROOT = Path(__file__).resolve().parent.parent
 PYPROJECT = ROOT / "pyproject.toml"
 CHANGELOG = ROOT / "CHANGELOG.md"
@@ -169,18 +169,17 @@ def update_changelog(version: str, dry_run: bool) -> None:
         return
 
     # Build section and insert after preamble, before first existing version header.
-    section_lines = [header, ""]
-    for msg in merge_messages:
-        section_lines.append(f"- {msg}")
-    section_lines.append("")
-    new_section = "\n".join(section_lines)
-
     content = CHANGELOG.read_text(encoding="utf-8")
+    nl = "\r\n" if "\r\n" in content else "\n"
+
+    section_lines = [header, ""] + [f"- {msg}" for msg in merge_messages] + [""]
+    new_section = nl.join(section_lines)
+
     first_version = re.search(r"^## \[", content, re.MULTILINE)
     if first_version:
         new_content = content[: first_version.start()] + new_section + content[first_version.start() :]
     else:
-        new_content = content.rstrip() + "\n\n" + new_section
+        new_content = content.rstrip() + nl + nl + new_section
 
     CHANGELOG.write_text(new_content, encoding="utf-8")
     ok(f"CHANGELOG.md -> [{version}] - {today} ({len(merge_messages)} merge commits)")
