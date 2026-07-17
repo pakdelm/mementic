@@ -82,11 +82,16 @@ def check_clean_tree() -> None:
         die("Working directory is not clean. Commit or stash changes first.")
 
 
-def check_main_branch() -> None:
+def check_main_branch(*, dry_run: bool = False) -> None:
     result = run("git", "branch", "--show-current", capture=True)
     branch = result.stdout.strip()
-    if branch != "main":
-        die(f"Must be on 'main' branch to release. Current: '{branch}'.")
+    if branch == "main":
+        ok("On main branch")
+        return
+    if dry_run:
+        warn(f"Not on main (current: '{branch}'). Skipped for dry-run.")
+        return
+    die(f"Must be on 'main' branch to release. Current: '{branch}'.")
 
 
 def check_tag_absent(version: str) -> None:
@@ -151,8 +156,7 @@ def main() -> None:
 
     # ── Pre-flight ──────────────────────────────────────────────────
     console.print("[bold]Pre-flight checks[/]")
-    check_main_branch()
-    ok("On main branch")
+    check_main_branch(dry_run=dry_run)
     check_clean_tree()
     ok("Working tree clean")
 
