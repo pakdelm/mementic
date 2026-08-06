@@ -1,311 +1,218 @@
 # Mementic
 
-Semantic memory layer for engineering teams and AI coding agents.
+Mementic gives your AI coding agent the architectural rules it needs before it
+starts working.
 
-Mementic ingests architectural decisions (ADRs), constraints, and project
-conventions from repositories and agent instruction files into a structured
-knowledge graph. Agents (OpenCode, Claude Code, Cursor, Windsurf) query it
-via CLI commands to inherit the team's architectural context in every session.
+Without Mementic, agents re-read the same ADRs and instruction files before every
+task. That wastes tokens, and every agent does the same work separately. Mementic
+fixes this:
+
+- Store your project's decisions and constraints in a local SQLite graph.
+- Before a task, the agent queries the graph and gets a ranked list of the rules
+  that apply.
+- Everything stays local.
+
+It works with OpenCode, Claude Code, Cursor, and Windsurf.
+
+This is a personal project, not a product. I use it daily, but it is not
+recommended for production use. This project is my experiment in agentic
+development. I build it with AI agents and improve it through feedback cycles.
 
 ## Install
-
-### One-command install (recommended)
 
 ```bash
 uv tool install git+https://github.com/pakdelm/mementic.git
 ```
 
-This gives you a system-wide `mementic` binary. Update with:
+That's it. One command. You now have a `mementic` binary. Upgrade with
+`uv tool upgrade mementic`.
+
+### Pick an LLM provider
+
+Mementic needs an LLM to extract decisions from sessions and docs. It supports
+OpenRouter (default), OpenAI, DeepSeek, and Ollama (local, no key needed).
+
+Easiest way:
 
 ```bash
-uv tool upgrade mementic
+mementic init           # prompts you for provider, model, API key
 ```
 
-### From source
-
-```bash
-git clone https://github.com/pakdelm/mementic.git
-cd mementic
-uv sync
-```
-
-### Provider selection
-
-Mementic needs an LLM provider for extraction. Provider resolution follows
-this order:
-
-1. **`--provider` flag** (explicit): `mementic init --provider openrouter`
-2. **Environment variable auto-detect:** If any of `OPENROUTER_API_KEY`,
-   `OPENAI_API_KEY`, `DEEPSEEK_API_KEY` is set, that provider is used.
-3. **Interactive prompt:** When no flag and no env var, `mementic init` asks
-   which provider to use.
-
-Supported providers:
-
-| Provider | API key env var | Model example |
-|---|---|---|
-| OpenRouter (default) | `OPENROUTER_API_KEY` | `deepseek/deepseek-v4-pro` |
-| OpenAI | `OPENAI_API_KEY` | `gpt-4o` |
-| DeepSeek | `DEEPSEEK_API_KEY` | `deepseek-v4-pro` |
-| Ollama (local) | none required | `llama3` |
-
-**Interactive setup (recommended):** `mementic init` prompts for provider,
-model, and API key. The key is stored in your OS keychain (Windows Credential
-Locker, macOS Keychain, Linux Secret Service) — never in a file.
-
-```bash
-mementic init           # interactive: choose provider, enter key
-mementic init --key     # rotate an existing key
-```
-
-**CI / headless environments:** set the environment variable for your provider.
+The key goes to your OS keychain, never to a file. For CI or headless:
 
 ```bash
 export OPENROUTER_API_KEY="sk-..."
 mementic init --provider openrouter
 ```
 
-If no API key is available from keyring or env, mementic exits with a clear
-error naming the required environment variable and suggesting `mementic init --key`.
+Supported providers and their env vars:
+
+| Provider | Env var | Example model |
+|---|---|---|
+| OpenRouter | `OPENROUTER_API_KEY` | `deepseek/deepseek-v4-pro` |
+| OpenAI | `OPENAI_API_KEY` | `gpt-4o` |
+| DeepSeek | `DEEPSEEK_API_KEY` | `deepseek-v4-pro` |
+| Ollama | none (local) | `llama3` |
 
 ## Quick start
 
-### 1. Initialize the graph
-
 ```bash
-cd ~/dev/my-app
+cd ~/dev/my-project
+
+# 1. Scan the project and build the graph
 mementic init --provider openrouter
-```
 
-Creates a local `.mementic/` directory with the graph database and config.
-Auto-discovers `./docs/adr/`, `./docs/instructions/`, `.cursor/instructions/`,
-and `.windsurf/instructions/` directories. No global config, no project
-registration — everything lives in `.mementic/`.
-
-Scans all configured sources, extracts decisions and constraints via LLM, and
-populates the knowledge graph.
-
-### 2. Query the graph
-
-```bash
+# 2. See what's in there
 mementic status
 mementic query search auth
-mementic query file src/auth/handler.py
-```
 
-### 3. Load context before tasks
+# 3. Before a coding task, ask "what rules apply here?"
+mementic query keywords auth rate limit session
 
-```bash
-mementic query keywords auth rate limit security
-```
-
-Outputs a mementic memory with constraints and decisions ranked by keyword overlap.
-Agents generate 5-12 narrow, single-word technical keywords per task for best results.
-
-### 4. Capture decisions after tasks
-
-```bash
-# Auto-discovers latest session from any supported agent
+# 4. After a session, capture what changed
 mementic capture
 
-# With manual session path and agent hint
-mementic capture --session /path/to/session.log --agent opencode
-```
-
-Extracts architectural decisions from the agent session log + git diff.
-Decisions are auto-resolved against the existing graph: new slugs are
-accepted, duplicates are skipped, and conflicting changes deprecate existing
-entries. No manual review required.
-Tracks the last captured commit so subsequent captures only diff new changes.
-Runs without git (warns and uses session-only extraction).
-
-### 5. View audit log
-
-```bash
+# 5. See what happened
 mementic log
 ```
 
-Shows recent graph mutations with timestamps.
+`mementic init` scans all markdown files in the repo — ADRs, agent instructions,
+docs — and detects ADRs by their format. Everything lives in `.mementic/` — no
+global config, no registration.
 
-## Agent integration
+`mementic capture` reads your latest agent session log plus the git diff, extracts
+architectural decisions via LLM, and auto-resolves them against the existing graph.
+New things get accepted, duplicates get skipped, conflicts get handled. It works
+without git too (just warns and uses session-only extraction).
 
-`mementic init` automatically detects your agent (OpenCode, Claude Code,
-Cursor, or Windsurf) and injects enforcement instructions into `AGENTS.md`.
-No per-harness configuration files needed — it works the same across all
-agents.
+## Agent setup
 
-Agents invoke mementic as CLI commands:
+`mementic init` detects your agent and injects enforcement instructions into
+`AGENTS.md` (or the equivalent for Claude Code, Cursor, Windsurf). After that,
+your agent will query the graph before every task automatically.
 
-| Agent action | CLI command |
+Agents use these CLI commands:
+
+| Action | Command |
 |---|---|
-| Load context before every task | `mementic query keywords kw1 kw2 ...` |
-| Trace file history | `mementic query file path/to/file.py` |
-| Record architectural decisions | `mementic add decision TITLE --rationale "..."` |
-| Record new constraints | `mementic add constraint DESC -e PATH` |
+| Load context before a task | `mementic query keywords kw1 kw2 ...` |
+| Check what affects a file | `mementic query file path/to/file.py` |
+| Record a decision | `mementic add decision TITLE --rationale "..."` |
+| Record a constraint | `mementic add constraint DESC -e PATH` |
 | Retire outdated rules | `mementic deprecate ID1 ID2 ... -r "reason"` |
-| Capture session decisions | `mementic capture` (user-triggered only) |
+| Search the graph | `mementic query search <term>` |
+| Capture session | `mementic capture` (you run this, not the agent) |
 
-All commands support `--json` for programmatic output.
+`query keywords` and `query file` support `--json` for programmatic use.
 
+### The enforcement instruction (summary)
 
-## Agent enforcement
-
-For mementic to work, your agent must be instructed to use it. Add this to your
-project's `AGENTS.md` or equivalent instruction file (Claude Code, Cursor, etc.):
+This is a shortened summary of what gets injected into your agent's instruction
+file. Your agent follows these rules to keep the graph current:
 
 ```markdown
 ## Mementic Memory (HARD CONSTRAINT)
 
-This project uses Mementic as its architectural memory layer. These rules apply
-to every task, every session.
+This project uses Mementic as its architectural memory layer.
 
-**Token discipline — primary vs. secondary sources:**
-1. **Primary (always):** the mementic memory from `mementic query keywords`.
-   It is the compressed index — a fraction of the token cost of reading raw
-   ADRs. Read it first, every time.
-2. **Secondary (only when needed):** raw ADR and instruction files on disk.
-   Read them to resolve ambiguity, not to check for things the mementic memory
-   didn't mention.
-3. **Never:** read all ADRs and instruction files as a batch before every task.
-
-**After EVERY user message** (not just "before a task" — each message is a new
-context window):
-1. Think about the task: what domains, concepts, and concerns are relevant?
-   Generate 5-12 narrow, single-word technical keywords
-   (e.g., for "fix authentication bug" → ["argon2", "token", "login",
-   "session"] — skip "security", "password", "hashing" because they match too
-   many items).
-2. Run `mementic query keywords kw1 kw2 ...` with those keywords.
+**After EVERY user message:**
+1. Generate 5-12 narrow keywords for the task (e.g., "argon2 token login
+   session" — skip generic terms like "security" or "password").
+2. Run `mementic query keywords <kw1> <kw2> ...`
 3. Run `mementic query file <path>` for each file being modified.
-4. Validate your plan against every returned constraint. Do NOT write code
-   that violates an active constraint.
-5. Only read raw ADR or instruction files if the mementic memory leaves ambiguity
-   you must resolve to proceed safely.
-
-**Why every message, not just "before a task":** Context packs are free (no LLM
-calls, just SQLite reads). Architectural constraints can change between messages.
-Assuming previous context is still valid is how violations happen.
+4. Validate your plan against every returned constraint.
 
 **After architecturally significant changes:**
-1. Run `mementic add decision TITLE --rationale "..."` with title, rationale,
-   rejected alternatives, and affected entities.
-2. Run `mementic add constraint DESC -e PATH` for any new rules.
-3. Run `mementic deprecate ID1 ID2 ...` to retire any rules the new ones supersede.
+1. `mementic add decision TITLE --rationale "..."` for new decisions.
+2. `mementic add constraint DESC -e PATH` for new rules.
+3. `mementic deprecate ID1 ID2 ...` to retire superseded rules.
 
-**After the task:**
-Run `mementic capture` in the terminal. Decisions are auto-resolved —
-no manual review step.
+**After the task:** Run `mementic capture` in your terminal.
 ```
 
-## CLI reference
+## Why I built this
 
-| Command | Description |
-|---|---|
-| `mementic init [--provider X] [--model X] [--key] [--deep] [--no-scan]` | Initialize graph from configured sources |
-| `mementic capture [--agent X] [--session PATH] [--keyword X]` | Extract decisions from session (auto-resolves: new/skip/update) |
-| `mementic query keywords <kw...> [--json]` | Return ranked context pack of constraints and decisions matched by keywords |
-| `mementic query file <path> [--json]` | Show constraints and decisions affecting a specific file |
-| `mementic query search <term>` | Full-text search across decision titles, rationales, and constraint descriptions |
-| `mementic query stats` | Show graph statistics (decisions, constraints, entities, edges) |
-| `mementic add decision <title> --rationale TEXT [-e PATH]` | Record a new architectural decision |
-| `mementic add constraint <desc> -e PATH` | Record a new constraint |
-| `mementic deprecate <id...> [-r REASON]` | Retire decisions or constraints (accepts multiple IDs) |
-| `mementic status` | Show health checklist (config, API key, graph, session provider) |
-| `mementic list [decisions\|constraints\|entities]` | List decisions, constraints, or entities |
-| `mementic log [-n N]` | Show recent graph mutations |
+I ran two real implementation tasks in OpenCode — same tasks, same quality bar
+(tests + lint + typecheck), with and without mementic. The graph at the time had
+330 decisions, 215 constraints.
 
-## Config file reference
+Without mementic, the agent kept re-reading the same ADRs and instruction files,
+spawning subagents that each did the same discovery work independently. With
+mementic, the context pack answered "what rules apply here?" before the agent
+started — so it went straight to implementation.
 
-`mementic init` creates a local `.mementic/` directory with the knowledge
-graph database and a minimal `config.json`:
+A single-module change:
 
-```json
-{
-  "llm": {
-    "provider": "openrouter",
-    "model": "deepseek/deepseek-v4-pro"
-  }
-}
-```
-
-All configuration lives in `.mementic/config.json` alongside `graph.db`.
-No global config files, no `~/.mementic/`. API keys are never stored here —
-they live in your OS keyring (or environment variable for CI / Docker).
-
-### Sessions and log directories
-
-Mementic auto-discovers agent session logs from standard locations. By
-default, each supported agent uses its own built-in platform paths.
-
-Adding a `sessions` key to the config is optional — only needed when your
-session logs live in non-standard locations. The `log_dirs` entries are
-**additive**: they extend the defaults, not replace them.
-
-```json
-{
-  "llm": {
-    "provider": "openrouter",
-    "model": "deepseek/deepseek-v4-pro"
-  },
-  "sessions": {
-    "opencode": {
-      "log_dirs": ["/mnt/nfs-shared/sessions"]
-    }
-  }
-}
-```
-
-With this config, mementic searches the standard OpenCode log directory
-**plus** `/mnt/nfs-shared/sessions`. All other agents (Claude, Cursor,
-Windsurf) continue using their built-in defaults unchanged.
-
-## Why Mementic
-
-We ran two real implementation tasks in OpenCode sessions — without mementic
-vs. with keyword-ranked context packs via CLI. Both conditions passed the same
-tests + lint + typecheck. The graph held 330 decisions, 215 constraints, and
-113 code entities at measurement time.
-
-- **51% fewer LLM tokens** (430K → 209K). Context arrives in a ranked pack
-  instead of the agent hunting through files for architectural rules.
-- **75% fewer subagents** (8 → 2). Without mementic, each subagent re-reads
-  ADRs and instruction files independently. Mementic delivers context once,
-  eliminating redundant discovery.
-- **47% fewer file reads** (139 → 73). Known constraints mean navigating
-  straight to implementation files — no scanning the repo for conventions.
-- **Small tasks win too.** A single-module edit eliminated its subagent
-  entirely (1 → 0). The context pack answered "what rules apply here?"
-  in the prompt — no subagent was needed.
-
-**Localized feature** (single module):
-
-| | Without | With |
+| Metric | Without | With |
 |---|---|---|
 | Unique files read | 9 | 4 |
 | Total file reads | 19 | 14 |
 | LLM tokens | 106K | 59K |
-| Subagents | 1 | 0 |
+| Subagents spawned | 1 | 0 |
 
-**Cross-cutting feature** (multiple modules, new subcommand):
+A cross-cutting feature spanning multiple modules:
 
-| | Without | With |
+| Metric | Without | With |
 |---|---|---|
 | Unique files read | 20 | 14 |
 | Total file reads | 120 | 59 |
 | LLM tokens | 324K | 149K |
-| Subagents | 7 | 2 |
+| Subagents spawned | 7 | 2 |
 
-Mementic eliminates the *context discovery loop* — the most token-expensive
-phase of agent coding, where agents repeatedly read files to answer "what
-architectural rules apply to this change?"
+Across both: **51% fewer tokens, 75% fewer subagents, 47% fewer file reads.**
 
-Numbers are from mementic's own codebase.
+This is on _my_ codebase with _my_ graph, using _my_ setup. Your mileage will
+vary depending on how dense your project's architectural rules are. But the
+pattern held — the agent spent way less time doing discovery and more time
+doing the actual work.
 
-## Development
+## What's missing (honest answer)
 
-```bash
-uv sync                           # install dependencies
-uv run pytest                     # run tests (parallel)
-uv run ruff check .               # lint
-uv run mypy .                     # type check
-```
+This is not production software. It's a personal tool that I open-sourced because
+it might be useful to someone else. Here's what you should know before trying it:
+
+- **Tested on one setup.** The code supports OpenCode, Claude Code, Cursor, and
+  Windsurf — and OpenRouter, OpenAI, DeepSeek, and Ollama. But I've only actually
+  tested it with **OpenCode + DeepSeek-v4**. The other combinations _should_ work
+  (there are providers and session readers for all of them) but they haven't been
+  through the same daily use. If you hit issues with another agent or model, open
+  an issue — I'll fix it.
+- **Edge cases exist.** It handles the happy paths well. Weird session formats,
+  corrupted graphs, and unusual repo structures may break.
+- **Single user, local-only.** The graph lives on your machine. It is not built
+  for team sharing and has no sync feature.
+- **No PyPI package yet.** It installs directly from the GitHub repo. It works,
+  but it's not polished.
+- **LLM extraction costs money.** Every `mementic capture` makes an API call
+  (unless you use Ollama). With current models it's cheap, but it's not zero.
+- **Agent setup is not fully automated.** `mementic init` handles most of it, but
+  not every edge case across all four supported agents.
+
+If any of this sounds like fun to fix, [contributions are welcome](CONTRIBUTING.md).
+
+## CLI reference
+
+| Command | What it does |
+|---|---|
+| `mementic init [--provider X] [--model X] [--key]` | Scan project, build the graph |
+| `mementic capture [--agent X] [--session PATH]` | Extract decisions from a session |
+| `mementic query keywords <kw...> [--json]` | Get ranked context for a task |
+| `mementic query file <path> [--json]` | Constraints/decisions for a file |
+| `mementic query search <term>` | Full-text search the graph |
+| `mementic query stats` | Graph statistics |
+| `mementic add decision <title> --rationale TEXT` | Record a decision |
+| `mementic add constraint <desc> -e PATH` | Record a constraint |
+| `mementic deprecate <id...> [-r REASON]` | Retire rules |
+| `mementic status` | Health checklist |
+| `mementic list [decisions\|constraints\|entities]` | List everything |
+| `mementic log [-n N]` | Recent mutations |
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md). The short version: PRs welcome, DCO
+sign-off required (`git commit -s`), tests must pass, lint and typecheck must
+be clean.
+
+## License
+
+Apache 2.0. See [LICENSE](LICENSE).
