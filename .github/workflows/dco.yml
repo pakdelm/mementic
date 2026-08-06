@@ -1,0 +1,33 @@
+name: DCO
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  dco:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Fetch base ref
+        run: git fetch --no-tags origin "+refs/heads/${{ github.event.pull_request.base.ref }}:refs/remotes/origin/${{ github.event.pull_request.base.ref }}"
+
+      - name: Check Signed-off-by on all commits
+        run: |
+          base=origin/${{ github.event.pull_request.base.ref }}
+          rc=0
+          for commit in $(git rev-list "$base..HEAD"); do
+            if ! git show -s --format=%B "$commit" | grep -q '^Signed-off-by:'; then
+              echo "::error::Commit $commit is missing a Signed-off-by line: $(git show -s --format=%s "$commit")"
+              rc=1
+            fi
+          done
+          if [ "$rc" -ne 0 ]; then
+            echo "Fix with: git commit --amend -s (per commit) — see CONTRIBUTING.md"
+          else
+            echo "All commits are signed off."
+          fi
+          exit "$rc"
