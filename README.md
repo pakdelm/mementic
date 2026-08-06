@@ -1,7 +1,9 @@
 # Mementic
 
 Mementic gives your AI coding agent the architectural rules it needs before it
-starts working.
+starts working. It is declarative architectural memory — the decisions and
+constraints your project made, stored as an explicit local graph — not a
+behavioral trace of past sessions.
 
 Without Mementic, agents re-read the same ADRs and instruction files before every
 task. That wastes tokens, and every agent does the same work separately. Mementic
@@ -18,6 +20,29 @@ This is a personal project, not a product. I use it daily, but it is not
 recommended for production use. This project is my experiment in agentic
 development. I build it with AI agents and improve it through feedback cycles.
 
+## How mementic differs
+
+Most AI coding tools that remember your project use **trace-derived behavioral
+memory**: they observe what the agent did in past sessions and replay or
+summarize that behavior. The result is a statistical picture of how the agent
+behaved, not a record of what the project decided and why.
+
+mementic stores **declarative architectural memory**: the decisions your
+project made and the rules that follow from them, as explicit, queryable
+entries in a graph. When an agent asks "what rules apply to this task?", the
+answer comes from what the project decided — not from what a past session
+happened to do.
+
+That difference has practical consequences:
+
+- **Every entry has a rationale.** You can ask why a rule exists, not just
+  whether it was seen before.
+- **The graph is curated, not inferred.** Extracted findings are proposed and
+  explicitly accepted or deprecated, so stale behavior from abandoned
+  experiments does not linger as "memory."
+- **Local and inspectable.** The graph is a SQLite file on your machine. No
+  cloud processing, no behavioral telemetry.
+
 ## Install
 
 ```bash
@@ -29,8 +54,10 @@ That's it. One command. You now have a `mementic` binary. Upgrade with
 
 ### Pick an LLM provider
 
-Mementic needs an LLM to extract decisions from sessions and docs. It supports
+Mementic uses an LLM to extract decisions from sessions and docs. It supports
 OpenRouter (default), OpenAI, DeepSeek, and Ollama (local, no key needed).
+Without an API key, extraction falls back to deterministic local parsing —
+no LLM calls, no network.
 
 Easiest way:
 
@@ -80,16 +107,17 @@ mementic log
 docs — and detects ADRs by their format. Everything lives in `.mementic/` — no
 global config, no registration.
 
-`mementic capture` reads your latest agent session log plus the git diff, extracts
-architectural decisions via LLM, and auto-resolves them against the existing graph.
-New things get accepted, duplicates get skipped, conflicts get handled. It works
-without git too (just warns and uses session-only extraction).
+`mementic capture` reads your latest agent session log plus the git diff,
+extracts architectural decisions, and auto-resolves them against the existing
+graph. New things get accepted, duplicates get skipped, conflicts get handled.
+It works without git too (just warns and uses session-only extraction).
 
 ## Agent setup
 
 `mementic init` detects your agent and injects enforcement instructions into
-`AGENTS.md` (or the equivalent for Claude Code, Cursor, Windsurf). After that,
-your agent will query the graph before every task automatically.
+`AGENTS.md`. Agents that read `AGENTS.md` — OpenCode and Claude Code — pick
+the instructions up automatically. For Cursor and Windsurf, copy the
+enforcement block from `AGENTS.md` into your agent's own instruction file.
 
 Agents use these CLI commands:
 
@@ -194,8 +222,8 @@ If any of this sounds like fun to fix, [contributions are welcome](CONTRIBUTING.
 
 | Command | What it does |
 |---|---|
-| `mementic init [--provider X] [--model X] [--key]` | Scan project, build the graph |
-| `mementic capture [--agent X] [--session PATH]` | Extract decisions from a session |
+| `mementic init [--provider X] [--model X] [--key] [--deep] [--no-scan]` | Scan project, build the graph (deterministic by default; `--deep` adds full LLM extraction) |
+| `mementic capture [--agent X] [--session PATH] [--tail N] [--keyword X]` | Extract decisions from a session (`--tail` limits session messages, `--keyword` adds scan keywords) |
 | `mementic query keywords <kw...> [--json]` | Get ranked context for a task |
 | `mementic query file <path> [--json]` | Constraints/decisions for a file |
 | `mementic query search <term>` | Full-text search the graph |
@@ -206,6 +234,58 @@ If any of this sounds like fun to fix, [contributions are welcome](CONTRIBUTING.
 | `mementic status` | Health checklist |
 | `mementic list [decisions\|constraints\|entities]` | List everything |
 | `mementic log [-n N]` | Recent mutations |
+
+## Config file reference
+
+`mementic init` creates a local `.mementic/` directory with the graph database
+(`graph.db`) and a minimal `config.json`:
+
+```json
+{
+  "llm": {
+    "provider": "openrouter",
+    "model": "deepseek/deepseek-v4-pro"
+  }
+}
+```
+
+All configuration lives in `.mementic/config.json` alongside `graph.db`. API
+keys are never stored here — they live in your OS keyring (or an environment
+variable for CI).
+
+### Sessions and log directories
+
+By default, each supported agent uses its own built-in platform paths. Adding
+a `sessions` key is optional — only needed when your session logs live in
+non-standard locations. The `log_dirs` entries are **additive**: they extend
+the defaults, not replace them.
+
+```json
+{
+  "sessions": {
+    "opencode": {
+      "log_dirs": ["/mnt/nfs-shared/sessions"]
+    }
+  }
+}
+```
+
+With this config, mementic searches the standard OpenCode log directory plus
+`/mnt/nfs-shared/sessions`. All other agents (Claude Code, Cursor, Windsurf,
+generic) continue using their built-in defaults unchanged.
+
+## Project status & roadmap
+
+Active development, used daily by the maintainer. The core loop — init, query,
+capture, enforce — works end to end. Next milestones:
+
+- **First PyPI release.** Install is currently from the GitHub repo only.
+- **Broader testing.** Most verified on OpenCode + DeepSeek; other agents and
+  providers have support but less battle testing (details in "What's missing").
+- **Polish.** Good-first-issue-sized work: docs, error messages, examples.
+
+Contributions in any of those areas are welcome — see
+[CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Contributing
 

@@ -19,19 +19,28 @@ in the release notes.
 
 ## Supported Versions
 
-Only the latest release line receives security updates.
+There are no public releases yet. Once the first release ships, only the latest
+release line receives security updates.
 
-| Version | Supported          |
-| ------- | ------------------ |
-| 0.2.x   | :white_check_mark: |
-| < 0.2   | :x:                |
+| Version          | Supported          |
+| ---------------- | ------------------ |
+| Latest release   | :white_check_mark: |
+| Older releases   | :x:                |
 
 ## Security Model
 
-mementic is a local CLI. It never sends your source code, project data, or personal 
-files to any remote server. LLM API calls go directly from your machine to the
-configured provider (e.g., OpenAI, Anthropic) using your own API keys. API keys are 
-stored in the operating system keychain — they are never written to disk or transmitted 
-anywhere except to the provider you configured. The mementic knowledge graph is a local 
-SQLite database that lives entirely on your machine. No analytics, telemetry, or usage 
-data is ever collected or transmitted.
+mementic is a local CLI. It runs no servers and collects no telemetry. The
+knowledge graph is a local SQLite database that lives entirely on your machine.
+API keys are stored in your operating system keychain (with environment
+variables as a CI fallback) and are never written to disk.
+
+LLM extraction is the only network activity, and it is always direct: requests
+go straight from your machine to the provider you configured (e.g., OpenAI,
+DeepSeek, OpenRouter) using your own API key. Depending on the command, a
+request can include session-log excerpts, the current git diff (`mementic
+capture`), or repository markdown and a codebase summary (`mementic init
+--deep`). Nothing is ever sent to a mementic-hosted server — mementic has none.
+
+If your code must not leave your machine, run mementic without an API key:
+extraction then runs fully locally in deterministic mode (no LLM calls), or
+point the provider at a local model such as Ollama.
