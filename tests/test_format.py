@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import re
-from unittest.mock import patch
 
 import pytest
 
@@ -662,22 +661,12 @@ class TestCountTokens:
     def test_longer_text(self) -> None:
         """A 100-character string returns a reasonable estimate."""
         result = count_tokens("a" * 100)
-        # With fallback: len//4 == 25. With tiktoken: ~100 (1 token/char).
-        # Both are > 0 and <= 100.
-        assert 0 < result <= 100
+        # len//4 heuristic: 25 tokens.
+        assert result == 25
 
-    def test_fallback_on_tiktoken_error(self) -> None:
-        """Falls back to len//4 when tiktoken raises an exception."""
-        pytest.importorskip("tiktoken")
-        text = "hello " * 20  # 120 chars → 30 tokens
-        with patch("tiktoken.get_encoding", side_effect=Exception("fail")):
-            result = count_tokens(text)
-        assert result == len(text) // 4
-
-    def test_with_tiktoken_accurate(self) -> None:
-        """With tiktoken available, returns a positive count for real text."""
-        result = count_tokens("the quick brown fox jumps over the lazy dog")
-        assert result > 0
+    def test_exact_quotient(self) -> None:
+        """count_tokens uses the len(text) // 4 estimate exactly."""
+        assert count_tokens("hello world foo") == len("hello world foo") // 4
 
 
 # ======================================================================

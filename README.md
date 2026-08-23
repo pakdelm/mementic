@@ -37,11 +37,11 @@ That difference has practical consequences:
 
 - **Every entry has a rationale.** You can ask why a rule exists, not just
   whether it was seen before.
-- **The graph is curated, not inferred.** Extracted findings are proposed and
-  explicitly accepted or deprecated, so stale behavior from abandoned
-  experiments does not linger as "memory."
+- **Nothing is inferred.** Mementic performs no LLM extraction. The only write
+  path is `mementic add decision|constraint` — the agent (or human) states the
+  decision and its rationale directly.
 - **Local and inspectable.** The graph is a SQLite file on your machine. No
-  cloud processing, no behavioral telemetry.
+  cloud processing, no API keys, no telemetry.
 
 ## Install
 
@@ -50,67 +50,35 @@ uv tool install git+https://github.com/pakdelm/mementic.git
 ```
 
 That's it. One command. You now have a `mementic` binary. Upgrade with
-`uv tool upgrade mementic`.
-
-### Pick an LLM provider
-
-Mementic uses an LLM to extract decisions from sessions and docs. It supports
-OpenRouter (default), OpenAI, DeepSeek, and Ollama (local, no key needed).
-Without an API key, extraction falls back to deterministic local parsing —
-no LLM calls, no network.
-
-Easiest way:
-
-```bash
-mementic init           # prompts you for provider, model, API key
-```
-
-The key goes to your OS keychain, never to a file. For CI or headless:
-
-```bash
-export OPENROUTER_API_KEY="sk-..."
-mementic init --provider openrouter
-```
-
-Supported providers and their env vars:
-
-| Provider | Env var | Example model |
-|---|---|---|
-| OpenRouter | `OPENROUTER_API_KEY` | `deepseek/deepseek-v4-pro` |
-| OpenAI | `OPENAI_API_KEY` | `gpt-4o` |
-| DeepSeek | `DEEPSEEK_API_KEY` | `deepseek-v4-pro` |
-| Ollama | none (local) | `llama3` |
+`uv tool upgrade mementic`. No LLM provider, API key, or config file needed —
+mementic is zero-config by design.
 
 ## Quick start
 
 ```bash
 cd ~/dev/my-project
 
-# 1. Scan the project and build the graph
-mementic init --provider openrouter
+# 1. Create an empty graph at .mementic/graph.db (idempotent)
+mementic init
 
-# 2. See what's in there
-mementic status
-mementic query search auth
+# 2. Your agent records decisions and constraints inline as it works:
+#    mementic add decision "Use JWT Auth" --rationale "Token-based auth for APIs"
+#    mementic add constraint "Services must be stateless" -e src/services.py
 
 # 3. Before a coding task, ask "what rules apply here?"
 mementic query keywords auth rate limit session
 
-# 4. After a session, capture what changed
-mementic capture
-
-# 5. See what happened
+# 4. See what happened
 mementic log
 ```
 
-`mementic init` scans all markdown files in the repo — ADRs, agent instructions,
-docs — and detects ADRs by their format. Everything lives in `.mementic/` — no
-global config, no registration.
+`init` also injects enforcement instructions into `AGENTS.md` so your agent
+knows to query before working and to record new rules inline via
+`mementic add`. Duplicate adds are skipped automatically; changed content
+under the same title deprecates the old entry and accepts the new one.
 
-`mementic capture` reads your latest agent session log plus the git diff,
-extracts architectural decisions, and auto-resolves them against the existing
-graph. New things get accepted, duplicates get skipped, conflicts get handled.
-It works without git too (just warns and uses session-only extraction).
+Everything lives in `.mementic/` — no global config, no registration,
+no API keys.
 
 ## Agent setup
 
@@ -129,7 +97,6 @@ Agents use these CLI commands:
 | Record a constraint | `mementic add constraint DESC -e PATH` |
 | Retire outdated rules | `mementic deprecate ID1 ID2 ... -r "reason"` |
 | Search the graph | `mementic query search <term>` |
-| Capture session | `mementic capture` (you run this, not the agent) |
 
 `query keywords` and `query file` support `--json` for programmatic use.
 
@@ -150,12 +117,10 @@ This project uses Mementic as its architectural memory layer.
 3. Run `mementic query file <path>` for each file being modified.
 4. Validate your plan against every returned constraint.
 
-**After architecturally significant changes:**
-1. `mementic add decision TITLE --rationale "..."` for new decisions.
-2. `mementic add constraint DESC -e PATH` for new rules.
+**When you make a decision or establish a rule:**
+1. `mementic add decision TITLE --rationale "..."` immediately — no gate.
+2. `mementic add constraint DESC -e PATH` immediately.
 3. `mementic deprecate ID1 ID2 ...` to retire superseded rules.
-
-**After the task:** Run `mementic capture` in your terminal.
 ```
 
 ## Why I built this
@@ -199,22 +164,19 @@ doing the actual work.
 This is not production software. It's a personal tool that I open-sourced because
 it might be useful to someone else. Here's what you should know before trying it:
 
-- **Tested on one setup.** The code supports OpenCode, Claude Code, Cursor, and
-  Windsurf — and OpenRouter, OpenAI, DeepSeek, and Ollama. But I've only actually
-  tested it with **OpenCode + DeepSeek-v4**. The other combinations _should_ work
-  (there are providers and session readers for all of them) but they haven't been
-  through the same daily use. If you hit issues with another agent or model, open
-  an issue — I'll fix it.
-- **Edge cases exist.** It handles the happy paths well. Weird session formats,
-  corrupted graphs, and unusual repo structures may break.
+- **Tested on one setup.** I've only actually tested this daily with
+  **OpenCode**. Other agents that read `AGENTS.md` should work, but they
+  haven't been through the same use. If you hit issues, open an issue — I'll
+  fix it.
+- **Cold start is empty.** `init` creates an empty graph and scans nothing.
+  The graph fills up as you (or your agent) record decisions and constraints
+  inline while working.
+- **Edge cases exist.** It handles the happy paths well. Weird repo structures
+  or corrupted graphs may break.
 - **Single user, local-only.** The graph lives on your machine. It is not built
   for team sharing and has no sync feature.
 - **No PyPI package yet.** It installs directly from the GitHub repo. It works,
   but it's not polished.
-- **LLM extraction costs money.** Every `mementic capture` makes an API call
-  (unless you use Ollama). With current models it's cheap, but it's not zero.
-- **Agent setup is not fully automated.** `mementic init` handles most of it, but
-  not every edge case across all four supported agents.
 
 If any of this sounds like fun to fix, [contributions are welcome](CONTRIBUTING.md).
 
@@ -222,66 +184,26 @@ If any of this sounds like fun to fix, [contributions are welcome](CONTRIBUTING.
 
 | Command | What it does |
 |---|---|
-| `mementic init [--provider X] [--model X] [--key] [--deep] [--no-scan]` | Scan project, build the graph (deterministic by default; `--deep` adds full LLM extraction) |
-| `mementic capture [--agent X] [--session PATH] [--tail N] [--keyword X]` | Extract decisions from a session (`--tail` limits session messages, `--keyword` adds scan keywords) |
+| `mementic init` | Create `.mementic/graph.db` when missing (idempotent) + inject AGENTS.md enforcement |
 | `mementic query keywords <kw...> [--json]` | Get ranked context for a task |
 | `mementic query file <path> [--json]` | Constraints/decisions for a file |
 | `mementic query search <term>` | Full-text search the graph |
 | `mementic query stats` | Graph statistics |
-| `mementic add decision <title> --rationale TEXT` | Record a decision |
-| `mementic add constraint <desc> -e PATH` | Record a constraint |
+| `mementic add decision <title> --rationale TEXT` | Record a decision (auto-resolves duplicates) |
+| `mementic add constraint <desc> -e PATH` | Record a constraint (auto-resolves duplicates) |
 | `mementic deprecate <id...> [-r REASON]` | Retire rules |
 | `mementic status` | Health checklist |
 | `mementic list [decisions\|constraints\|entities]` | List everything |
 | `mementic log [-n N]` | Recent mutations |
 
-## Config file reference
-
-`mementic init` creates a local `.mementic/` directory with the graph database
-(`graph.db`) and a minimal `config.json`:
-
-```json
-{
-  "llm": {
-    "provider": "openrouter",
-    "model": "deepseek/deepseek-v4-pro"
-  }
-}
-```
-
-All configuration lives in `.mementic/config.json` alongside `graph.db`. API
-keys are never stored here — they live in your OS keyring (or an environment
-variable for CI).
-
-### Sessions and log directories
-
-By default, each supported agent uses its own built-in platform paths. Adding
-a `sessions` key is optional — only needed when your session logs live in
-non-standard locations. The `log_dirs` entries are **additive**: they extend
-the defaults, not replace them.
-
-```json
-{
-  "sessions": {
-    "opencode": {
-      "log_dirs": ["/mnt/nfs-shared/sessions"]
-    }
-  }
-}
-```
-
-With this config, mementic searches the standard OpenCode log directory plus
-`/mnt/nfs-shared/sessions`. All other agents (Claude Code, Cursor, Windsurf,
-generic) continue using their built-in defaults unchanged.
-
 ## Project status & roadmap
 
-Active development, used daily by the maintainer. The core loop — init, query,
-capture, enforce — works end to end. Next milestones:
+Active development, used daily by the maintainer. The core loop — init,
+query, inline add — works end to end. Next milestones:
 
 - **First PyPI release.** Install is currently from the GitHub repo only.
-- **Broader testing.** Most verified on OpenCode + DeepSeek; other agents and
-  providers have support but less battle testing (details in "What's missing").
+- **Storage format pivot.** A portable bundle format is being designed
+  (Spec 29).
 - **Polish.** Good-first-issue-sized work: docs, error messages, examples.
 
 Contributions in any of those areas are welcome — see

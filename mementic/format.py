@@ -15,10 +15,12 @@ CONSTRAINT_ID_MAX_LENGTH: int = 40
 
 
 def count_tokens(text: str) -> int:
-    """Count the number of tokens in a text string.
+    """Estimate the number of tokens in a text string.
 
-    Uses tiktoken if installed for accurate counting; falls back to
-    ``len(text) // 4`` (reasonable estimate for English text).
+    Uses the coarse ``len(text) // 4`` heuristic (reasonable estimate for
+    English text). Applied uniformly to every line, so ranking order and
+    truncation semantics are unaffected; budgets coarsen slightly versus
+    exact tokenization.
 
     Args:
         text: The text to count tokens for.
@@ -26,26 +28,7 @@ def count_tokens(text: str) -> int:
     Returns:
         Estimated token count as an integer.
     """
-    try:
-        import tiktoken
-
-        enc = tiktoken.get_encoding("cl100k_base")
-        return len(enc.encode(text))
-    except (ImportError, Exception):
-        return len(text) // 4
-
-
-def find_file_paths(text: str) -> list[str]:
-    """Find potential file paths in text matching common source file patterns.
-
-    Args:
-        text: The text to scan for file paths.
-
-    Returns:
-        A list of unique file path strings found in the text.
-    """
-    pattern = r"[\w/\-]+\.(?:py|ts|js|java|go|rs|rb|yaml|yml|json|toml|md)\b"
-    return list(set(re.findall(pattern, text)))
+    return len(text) // 4
 
 
 def slugify(text: str, max_length: int | None = None) -> str:

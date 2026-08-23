@@ -19,7 +19,11 @@ jobs:
         run: |
           base=origin/${{ github.event.pull_request.base.ref }}
           rc=0
-          for commit in $(git rev-list "$base..HEAD"); do
+          # --no-merges: DCO applies to authored commits only. Merge
+          # commits (including the ephemeral PR merge ref that CI checks
+          # out) have no author sign-off and would fail every PR whose
+          # branch needs a real merge with base.
+          for commit in $(git rev-list --no-merges "$base..HEAD"); do
             if ! git show -s --format=%B "$commit" | grep -q '^Signed-off-by:'; then
               echo "::error::Commit $commit is missing a Signed-off-by line: $(git show -s --format=%s "$commit")"
               rc=1

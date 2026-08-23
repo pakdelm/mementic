@@ -12,7 +12,17 @@
       "**/.env": "deny",
       "**/.env.*": "deny",
       "*": "allow"
-    }
+    },
+    "edit": "allow",
+    "bash": {
+      "rm -rf /": "deny",
+      "rm -rf ~": "deny",
+      "*": "allow"
+    },
+    "task": "allow",
+    "external_directory": "allow",
+    "webfetch": "allow",
+    "websearch": "allow"
   },
   "mcp": {
     "github": {

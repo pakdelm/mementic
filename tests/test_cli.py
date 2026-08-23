@@ -1,12 +1,11 @@
-"""Tests for mementic CLI commands (Spec 06a D2, D4, 06c)."""
+"""Tests for mementic CLI commands (Spec 06a D2, D4, 06c, Spec 28)."""
 
 from __future__ import annotations
 
 import json
 import re
-import subprocess
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 from typer.testing import CliRunner
@@ -14,18 +13,6 @@ from typer.testing import CliRunner
 from mementic.cli import app
 
 runner = CliRunner()
-
-
-def _make_mock_graph(**stats_overrides: int) -> MagicMock:
-    """Build a MagicMock GraphStore that supports stats() and is not None."""
-    mock_graph = MagicMock()
-    mock_graph.stats.return_value = {
-        "decisions": stats_overrides.get("decisions", 0),
-        "constraints": stats_overrides.get("constraints", 0),
-        "entities": stats_overrides.get("entities", 0),
-        "edges": stats_overrides.get("edges", 0),
-    }
-    return mock_graph
 
 
 def _strip_ansi(text: str) -> str:
@@ -39,198 +26,7 @@ def _strip_ansi(text: str) -> str:
     return re.sub(r"\x1b\[[0-9;]*[a-zA-Z]", "", text)
 
 
-
-
-# ── D4: graph corrupt error message (removed — Spec 22) ──────────
-# _load_graph_safe and graph.json fallback were removed.
-# SQLite is crash-safe by design; no corrupt JSON edge case to handle.
-
-
-# ── D4: git error message in capture ──────────────────────────────
-
-
-class TestCaptureGitErrorMessage:
-    """Tests for D4: clear git error message in capture command."""
-
-    def test_capture_without_git_shows_warning(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """capture without a git repo shows a clear warning about git."""
-        monkeypatch.chdir(tmp_path)
-        monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-fake-key")
-
-        # Create a fake session file to avoid "No session found"
-        session_file = tmp_path / "session.log"
-        session_file.write_text("Fake agent session log content.\n")
-
-        from mementic.models import ExtractionResult
-
-        with patch(
-            "mementic.cli._extract_session",
-            return_value=ExtractionResult(),
-        ):
-            result = runner.invoke(
-                app, ["capture", "--session", str(session_file)],
-            )
-
-        output = result.stdout + result.stderr
-        assert "git" in output.lower()
-
-
-# ── 06c F1: capture auto-accept ────────────────────────────────────
-
-
-class TestCaptureAutoAccept:
-    """Tests for capture auto-accept behaviour (Spec 06c F1)."""
-
-    def test_capture_auto_accepts_non_conflicting_decisions(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """Decisions with no conflicts are auto-accepted without prompts."""
-        monkeypatch.chdir(tmp_path)
-        monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-fake-key")
-
-        from mementic.graph import GraphStore
-        from mementic.models import Decision, DecisionStatus, ExtractionResult
-
-        graph = GraphStore(db_path=None)
-
-        session_file = tmp_path / "session.log"
-        session_file.write_text("Agent session about adding auth.\n")
-
-        mock_result = ExtractionResult(
-            decisions=[
-                Decision(
-                    id="add-jwt-auth",
-                    title="Add JWT Auth",
-                    rationale="Secure API with tokens",
-                    source="session",
-                    status=DecisionStatus.ACCEPTED,
-                    created_at="2024-01-01T00:00:00Z",
-                    modified_at="2024-01-01T00:00:00Z",
-                ),
-            ],
-            affected_entities=["src/auth.py"],
-        )
-
-        with patch(
-            "mementic.cli._resolve_graph", return_value=graph,
-        ), patch(
-            "mementic.cli._extract_session",
-            return_value=mock_result,
-        ), patch(
-            "mementic.cli._run_git_diff", return_value=("", 0),
-        ):
-            result = runner.invoke(
-                app, ["capture", "--session", str(session_file)],
-            )
-
-        output = result.stdout + result.stderr
-        # Should show new decisions
-        assert "New" in output
-        assert "1 decisions" in output
-        # No duplicates flagged
-        assert "Flagged" not in output
-
-    def test_capture_updates_conflicting_decisions(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """Decisions with same slug but different rationale auto-update (deprecate existing)."""
-        monkeypatch.chdir(tmp_path)
-        monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-fake-key")
-
-        from mementic.graph import GraphStore
-        from mementic.models import Decision, DecisionStatus, ExtractionResult
-
-        graph = GraphStore(db_path=None)
-        existing = Decision(
-            id="use-jwt-auth",
-            title="Use JWT Auth",
-            rationale="Token-based auth for APIs",
-            source="ADR-001",
-            status=DecisionStatus.ACCEPTED,
-            created_at="2024-01-01T00:00:00Z",
-            modified_at="2024-01-01T00:00:00Z",
-        )
-        graph.add_decision(existing)
-
-        session_file = tmp_path / "session.log"
-        session_file.write_text("Session about JWT auth updates.\n")
-
-        mock_result = ExtractionResult(
-            decisions=[
-                Decision(
-                    id="new-jwt-approach",
-                    title="Use JWT Auth",  # slugifies to "use-jwt-auth" → update
-                    rationale="Completely different approach to JWT authentication with rotating keys",
-                    source="session",
-                    status=DecisionStatus.ACCEPTED,
-                    created_at="2024-01-02T00:00:00Z",
-                    modified_at="2024-01-02T00:00:00Z",
-                ),
-            ],
-            affected_entities=[],
-        )
-
-        with patch(
-            "mementic.cli._resolve_graph", return_value=graph,
-        ), patch(
-            "mementic.cli._extract_session",
-            return_value=mock_result,
-        ), patch(
-            "mementic.cli._run_git_diff", return_value=("", 0),
-        ):
-            result = runner.invoke(
-                app, ["capture", "--session", str(session_file)],
-            )
-
-        output = result.stdout + result.stderr
-        assert "Updated" in output
-        assert "(existing deprecated)" in output
-
-    def test_capture_no_interactive_prompts(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """Capture produces no interactive y/n prompts."""
-        monkeypatch.chdir(tmp_path)
-        monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-fake-key")
-
-        from mementic.graph import GraphStore
-        from mementic.models import Decision, DecisionStatus, ExtractionResult
-
-        graph = GraphStore(db_path=None)
-
-        session_file = tmp_path / "session.log"
-        session_file.write_text("Session log content.\n")
-
-        mock_result = ExtractionResult(
-            decisions=[
-                Decision(
-                    id="test-decision",
-                    title="Test Decision",
-                    rationale="Testing",
-                    source="session",
-                    status=DecisionStatus.ACCEPTED,
-                    created_at="2024-01-01T00:00:00Z",
-                    modified_at="2024-01-01T00:00:00Z",
-                ),
-            ],
-        )
-
-        with patch(
-            "mementic.cli._resolve_graph", return_value=graph,
-        ), patch(
-            "mementic.cli._extract_session",
-            return_value=mock_result,
-        ):
-            result = runner.invoke(
-                app, ["capture", "--session", str(session_file)],
-            )
-
-        output = result.stdout + result.stderr
-        # No y/n prompt
-        assert "Accept?" not in output
-        assert "[Y/n]" not in output
+# ── Spec 28: capture command removed; add is the only write path ──
 
 
 # ── 06c F3: list command ───────────────────────────────────────────
@@ -497,221 +293,6 @@ class TestDeprecateCommand:
 
         output = result.stdout + result.stderr
         assert "already deprecated" in output.lower()
-
-
-# ── 06c F7: lint command ───────────────────────────────────────────
-
-
-# ── Spec 09b B3: Graceful no-git capture ────────────────────────────
-
-
-class TestCaptureNoGit:
-    """Tests for graceful capture when git is unavailable."""
-
-    def test_capture_git_not_installed(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """capture when git is not on PATH prints warning and proceeds."""
-        monkeypatch.chdir(tmp_path)
-        monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-fake-key")
-
-        session_file = tmp_path / "session.log"
-        session_file.write_text("Fake agent session log content.\n")
-
-        from mementic.models import Decision, DecisionStatus, ExtractionResult
-
-        mock_result = ExtractionResult(
-            decisions=[
-                Decision(
-                    id="test-d",
-                    title="Test Decision",
-                    rationale="Testing",
-                    source="session",
-                    status=DecisionStatus.ACCEPTED,
-                    created_at="2024-01-01T00:00:00Z",
-                    modified_at="2024-01-01T00:00:00Z",
-                ),
-            ],
-        )
-
-        mock_registry = MagicMock()
-        mock_provider = MagicMock()
-        mock_provider.agent_name = "opencode"
-        mock_registry.detect.return_value = (mock_provider, str(session_file))
-
-        with patch(
-            "mementic.session.get_registry", return_value=mock_registry,
-        ), patch(
-            "mementic.cli._run_git_diff",
-            return_value=("", 1),  # git not found (rc=1)
-        ), patch(
-            "mementic.graph.GraphStore.get_capture_checkpoint", return_value="",
-        ), patch(
-            "mementic.cli._extract_session",
-            return_value=mock_result,
-        ):
-            result = runner.invoke(
-                app, ["capture", "--session", str(session_file)],
-            )
-
-        output = result.stdout + result.stderr
-        assert result.exit_code == 0
-        assert "git not found" in output.lower()
-
-    def test_capture_not_a_repo(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """capture outside a git repo shows 'Not a git repository' warning."""
-        monkeypatch.chdir(tmp_path)
-        monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-fake-key")
-
-        session_file = tmp_path / "session.log"
-        session_file.write_text("Fake agent session log content.\n")
-
-        from mementic.models import Decision, DecisionStatus, ExtractionResult
-
-        mock_result = ExtractionResult(
-            decisions=[
-                Decision(
-                    id="test-d",
-                    title="Test Decision",
-                    rationale="Testing",
-                    source="session",
-                    status=DecisionStatus.ACCEPTED,
-                    created_at="2024-01-01T00:00:00Z",
-                    modified_at="2024-01-01T00:00:00Z",
-                ),
-            ],
-        )
-
-        mock_registry = MagicMock()
-        mock_provider = MagicMock()
-        mock_provider.agent_name = "opencode"
-        mock_registry.detect.return_value = (mock_provider, str(session_file))
-
-        with patch(
-            "mementic.session.get_registry", return_value=mock_registry,
-        ), patch(
-            "mementic.cli._run_git_diff", return_value=("", 128),
-        ), patch(
-            "mementic.graph.GraphStore.get_capture_checkpoint", return_value="",
-        ), patch(
-            "mementic.cli._extract_session",
-            return_value=mock_result,
-        ):
-            result = runner.invoke(
-                app, ["capture", "--session", str(session_file)],
-            )
-
-        output = result.stdout + result.stderr
-        assert result.exit_code == 0
-        assert "not a git repository" in output.lower()
-
-    def test_capture_no_new_commits(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """capture when checkpoint matches HEAD shows informative message."""
-        monkeypatch.chdir(tmp_path)
-        monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-fake-key")
-
-        session_file = tmp_path / "session.log"
-        session_file.write_text("Fake agent session log content.\n")
-
-        from mementic.models import Decision, DecisionStatus, ExtractionResult
-
-        mock_result = ExtractionResult(
-            decisions=[
-                Decision(
-                    id="test-d",
-                    title="Test Decision",
-                    rationale="Testing",
-                    source="session",
-                    status=DecisionStatus.ACCEPTED,
-                    created_at="2024-01-01T00:00:00Z",
-                    modified_at="2024-01-01T00:00:00Z",
-                ),
-            ],
-        )
-
-        mock_registry = MagicMock()
-        mock_provider = MagicMock()
-        mock_provider.agent_name = "opencode"
-        mock_registry.detect.return_value = (mock_provider, str(session_file))
-
-        with patch(
-            "mementic.session.get_registry", return_value=mock_registry,
-        ), patch(
-            "mementic.graph.GraphStore.get_capture_checkpoint", return_value="abc123",
-        ), patch(
-            "mementic.cli.subprocess.run",
-            return_value=subprocess.CompletedProcess(
-                args=["git", "rev-parse", "HEAD"], returncode=0, stdout="abc123\n"
-            ),
-        ), patch(
-            "mementic.cli._extract_session",
-            return_value=mock_result,
-        ):
-            result = runner.invoke(
-                app, ["capture", "--session", str(session_file)],
-            )
-
-        output = result.stdout + result.stderr
-        assert result.exit_code == 0
-        assert "no new commits" in output.lower()
-
-    def test_capture_empty_diff(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """capture when git diff returns empty shows 'No changes' message."""
-        monkeypatch.chdir(tmp_path)
-        monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-fake-key")
-
-        session_file = tmp_path / "session.log"
-        session_file.write_text("Fake agent session log content.\n")
-
-        from mementic.models import Decision, DecisionStatus, ExtractionResult
-
-        mock_result = ExtractionResult(
-            decisions=[
-                Decision(
-                    id="test-d",
-                    title="Test Decision",
-                    rationale="Testing",
-                    source="session",
-                    status=DecisionStatus.ACCEPTED,
-                    created_at="2024-01-01T00:00:00Z",
-                    modified_at="2024-01-01T00:00:00Z",
-                ),
-            ],
-        )
-
-        mock_registry = MagicMock()
-        mock_provider = MagicMock()
-        mock_provider.agent_name = "opencode"
-        mock_registry.detect.return_value = (mock_provider, str(session_file))
-
-        with patch(
-            "mementic.session.get_registry", return_value=mock_registry,
-        ), patch(
-            "mementic.graph.GraphStore.get_capture_checkpoint", return_value="old123",
-        ), patch(
-            "mementic.cli.subprocess.run",
-            return_value=subprocess.CompletedProcess(
-                args=["git", "rev-parse", "HEAD"], returncode=0, stdout="new456\n"
-            ),
-        ), patch(
-            "mementic.cli._run_git_diff", return_value=("", 0),
-        ), patch(
-            "mementic.cli._extract_session",
-            return_value=mock_result,
-        ):
-            result = runner.invoke(
-                app, ["capture", "--session", str(session_file)],
-            )
-
-        output = result.stdout + result.stderr
-        assert result.exit_code == 0
-        assert "no changes" in output.lower()
 
 
 # ── JSON output modes ───────────────────────────────────────────────
@@ -1015,65 +596,277 @@ class TestDeprecateMultiId:
         assert "1 errors" in output
 
 
-class TestInitCommand:
-    """Tests for mementic init command."""
+# ── Spec 28 Phase 1: add auto-resolve rules ────────────────────────
 
-    def test_init_help_shows_provider_and_model_flags(
-        self,
+
+def _make_decision(
+    id: str,
+    title: str,
+    rationale: str,
+    created_at: str = "2024-01-01T00:00:00Z",
+) -> object:
+    """Build a Decision for add-command tests."""
+    from mementic.models import Decision, DecisionStatus
+
+    return Decision(
+        id=id,
+        title=title,
+        rationale=rationale,
+        source="test",
+        status=DecisionStatus.ACCEPTED,
+        created_at=created_at,
+        modified_at=created_at,
+    )
+
+
+class TestAddDecisionAutoResolve:
+    """Tests for `mementic add decision` auto-resolve rules (Spec 28)."""
+
+    def test_new_slug_accepted(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """init --help shows --provider and --model flags."""
+        """A decision with a new slug is accepted and stored."""
+        monkeypatch.chdir(tmp_path)
+
+        from mementic.graph import GraphStore
+
+        graph = GraphStore(db_path=None)
+        with patch("mementic.cli._resolve_graph", return_value=graph):
+            result = runner.invoke(
+                app, ["add", "decision", "Use JWT Auth",
+                      "--rationale", "Token-based auth for APIs"],
+            )
+
+        assert result.exit_code == 0, f"stderr: {result.stderr}"
+        assert graph.has_node("use-jwt-auth")
+        payload = graph.get_node_payload("use-jwt-auth")
+        assert payload["status"] == "accepted"
+
+    def test_duplicate_skipped(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Same slug + same rationale (>=80% overlap) is skipped as duplicate."""
+        monkeypatch.chdir(tmp_path)
+
+        from mementic.graph import GraphStore
+
+        graph = GraphStore(db_path=None)
+        existing = _make_decision(
+            "use-jwt-auth", "Use JWT Auth", "Token-based authentication for APIs"
+        )
+        graph.add_decision(existing)  # type: ignore[arg-type]
+
+        with patch("mementic.cli._resolve_graph", return_value=graph):
+            result = runner.invoke(
+                app, ["add", "decision", "Use JWT Auth",
+                      "--rationale", "Token-based authentication for APIs"],
+            )
+
+        assert result.exit_code == 0, f"stderr: {result.stderr}"
+        output = _strip_ansi(result.stdout + result.stderr)
+        assert "skipped" in output.lower()
+        # Original entry unchanged — still the earlier timestamp
+        payload = graph.get_node_payload("use-jwt-auth")
+        assert payload["created_at"] == "2024-01-01T00:00:00Z"
+
+    def test_same_slug_different_content_deprecates_and_accepts(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Same slug + different rationale deprecates existing, accepts new."""
+        monkeypatch.chdir(tmp_path)
+
+        from mementic.graph import GraphStore
+
+        graph = GraphStore(db_path=None)
+        existing = _make_decision(
+            "use-jwt-auth", "Use JWT Auth", "Token-based auth for APIs"
+        )
+        graph.add_decision(existing)  # type: ignore[arg-type]
+
+        with patch("mementic.cli._resolve_graph", return_value=graph):
+            result = runner.invoke(
+                app, ["add", "decision", "Use JWT Auth",
+                      "--rationale",
+                      "Completely different approach using rotating keys and refresh tokens"],
+            )
+
+        assert result.exit_code == 0, f"stderr: {result.stderr}"
+        output = _strip_ansi(result.stdout + result.stderr)
+        assert "deprecated" in output.lower()
+        # New entry accepted under the same slug
+        payload = graph.get_node_payload("use-jwt-auth")
+        assert payload["status"] == "accepted"
+        assert "rotating keys" in payload["rationale"]
+
+    def test_output_reports_counts(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Add output reports accepted/skipped/deprecated counts."""
+        monkeypatch.chdir(tmp_path)
+
+        from mementic.graph import GraphStore
+
+        graph = GraphStore(db_path=None)
+        with patch("mementic.cli._resolve_graph", return_value=graph):
+            result = runner.invoke(
+                app, ["add", "decision", "Some Decision", "--rationale", "Because"],
+            )
+
+        output = _strip_ansi(result.stdout + result.stderr)
+        assert "Counts:" in output
+        assert "1 accepted" in output
+        assert "0 skipped" in output
+        assert "0 deprecated" in output
+
+
+class TestAddConstraintAutoResolve:
+    """Tests for `mementic add constraint` auto-resolve rules (Spec 28)."""
+
+    def test_new_constraint_accepted(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A constraint with a new slug is accepted and stored."""
+        monkeypatch.chdir(tmp_path)
+
+        from mementic.graph import GraphStore
+
+        graph = GraphStore(db_path=None)
+        with patch("mementic.cli._resolve_graph", return_value=graph):
+            result = runner.invoke(
+                app, ["add", "constraint", "Services must be stateless",
+                      "-e", "src/services.py"],
+            )
+
+        assert result.exit_code == 0, f"stderr: {result.stderr}"
+        assert graph.has_node("services-must-be-stateless")
+
+    def test_duplicate_constraint_skipped(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Same slug + same description is skipped as duplicate."""
+        monkeypatch.chdir(tmp_path)
+
+        from mementic.graph import GraphStore
+        from mementic.models import Constraint
+
+        graph = GraphStore(db_path=None)
+        graph.add_constraint(Constraint(
+            id="services-must-be-stateless",
+            description="Services must be stateless",
+            bound_entities=["src/a.py"],
+            source="test",
+            status="active",
+            created_at="2024-01-01T00:00:00Z",
+        ))
+
+        with patch("mementic.cli._resolve_graph", return_value=graph):
+            result = runner.invoke(
+                app, ["add", "constraint", "Services must be stateless",
+                      "-e", "src/services.py"],
+            )
+
+        assert result.exit_code == 0, f"stderr: {result.stderr}"
+        output = _strip_ansi(result.stdout + result.stderr)
+        assert "skipped" in output.lower()
+
+    def test_same_slug_different_content_deprecates_and_accepts(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Same slug + different description deprecates existing, accepts new."""
+        monkeypatch.chdir(tmp_path)
+
+        from mementic.graph import GraphStore
+        from mementic.models import Constraint
+
+        graph = GraphStore(db_path=None)
+        graph.add_constraint(Constraint(
+            id="use-https",
+            description="All endpoints must use HTTPS",
+            bound_entities=["src/a.py"],
+            source="test",
+            status="active",
+            created_at="2024-01-01T00:00:00Z",
+        ))
+
+        with patch("mementic.cli._resolve_graph", return_value=graph):
+            result = runner.invoke(
+                app, ["add", "constraint", "All network calls must use TLS 1.3",
+                      "-e", "src/net.py", "--id", "use-https"],
+            )
+
+        assert result.exit_code == 0, f"stderr: {result.stderr}"
+        output = _strip_ansi(result.stdout + result.stderr)
+        assert "deprecated" in output.lower()
+        payload = graph.get_node_payload("use-https")
+        assert payload["status"] == "active"
+        assert "TLS 1.3" in payload["description"]
+
+    def test_output_reports_counts(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Add-constraint output reports accepted/skipped/deprecated counts."""
+        monkeypatch.chdir(tmp_path)
+
+        from mementic.graph import GraphStore
+
+        graph = GraphStore(db_path=None)
+        with patch("mementic.cli._resolve_graph", return_value=graph):
+            result = runner.invoke(
+                app, ["add", "constraint", "No raw SQL in handlers", "-e", "src/db.py"],
+            )
+
+        output = _strip_ansi(result.stdout + result.stderr)
+        assert "Counts:" in output
+        assert "1 accepted" in output
+        assert "0 skipped" in output
+        assert "0 deprecated" in output
+
+
+# ── Spec 28 Phase 3: init stub ─────────────────────────────────────
+
+
+class TestInitStub:
+    """Tests for the collapsed init command (Spec 28)."""
+
+    def test_init_creates_graph_db(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """init creates .mementic/graph.db when missing."""
+        monkeypatch.chdir(tmp_path)
+
+        result = runner.invoke(app, ["init"])
+
+        assert result.exit_code == 0, f"stderr: {result.stderr}"
+        assert (tmp_path / ".mementic" / "graph.db").exists()
+
+    def test_init_idempotent(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Running init twice succeeds and keeps the database intact."""
+        monkeypatch.chdir(tmp_path)
+
+        first = runner.invoke(app, ["init"])
+        assert first.exit_code == 0, f"stderr: {first.stderr}"
+        db_path = tmp_path / ".mementic" / "graph.db"
+        assert db_path.exists()
+
+        second = runner.invoke(app, ["init"])
+        assert second.exit_code == 0, f"stderr: {second.stderr}"
+        assert db_path.exists()
+
+    def test_init_help_has_no_provider_flags(self) -> None:
+        """init --help no longer shows --provider/--model/--key/--deep flags."""
         result = runner.invoke(app, ["init", "--help"])
         assert result.exit_code == 0, f"stderr: {result.stderr}"
         output = _strip_ansi(result.stdout)
-        assert "--provider" in output
-        assert "--model" in output
+        assert "--provider" not in output
+        assert "--model" not in output
+        assert "--key" not in output
+        assert "--deep" not in output
 
-
-class TestInitConfigPreservation:
-    """Regression tests for the init config rewrite (PR #40 review findings)."""
-
-    def test_init_preserves_sessions_on_provider_change(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        """init --provider must not drop existing sessions overrides."""
-        monkeypatch.chdir(tmp_path)
-        config_path = tmp_path / ".mementic" / "config.json"
-        config_path.parent.mkdir(parents=True, exist_ok=True)
-        config_path.write_text(
-            json.dumps(
-                {
-                    "llm": {"provider": "deepseek", "model": "deepseek-v4-pro"},
-                    "sessions": {"opencode": {"log_dirs": ["/mnt/nfs/shared"]}},
-                }
-            ),
-            encoding="utf-8",
-        )
-
-        result = runner.invoke(app, ["init", "--provider", "openrouter", "--no-scan"])
+    def test_capture_command_removed(self) -> None:
+        """The capture command is gone from mementic --help (Spec 28)."""
+        result = runner.invoke(app, ["--help"])
         assert result.exit_code == 0, f"stderr: {result.stderr}"
-
-        from mementic.config import load_local_config
-
-        cfg = load_local_config()
-        assert cfg is not None
-        assert cfg.llm.provider == "openrouter"
-        assert cfg.sessions is not None
-        assert cfg.sessions.opencode.log_dirs == ["/mnt/nfs/shared"]
-
-    def test_init_invalid_provider_exits_cleanly(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        """An unknown --provider must exit with code 1, not a traceback."""
-        monkeypatch.chdir(tmp_path)
-        result = runner.invoke(
-            app, ["init", "--provider", "bogusprovider", "--no-scan"]
-        )
-        assert result.exit_code == 1, f"stderr: {result.stderr}"
-        # A raw Pydantic ValidationError (a ValueError subclass) would be
-        # propagated as result.exception. After the fix it is caught and
-        # converted to a clean typer.Exit (SystemExit), so the exception must
-        # not be a ValueError.
-        assert not isinstance(result.exception, ValueError), (
-            f"Invalid provider raised an uncaught ValidationError: {result.exception}"
-        )
-
+        output = _strip_ansi(result.stdout)
+        assert "capture" not in output

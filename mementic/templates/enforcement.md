@@ -65,21 +65,17 @@ exactly what mementic contributed to every message. Skipping this is a hard
 constraint violation — equivalent to skipping `query keywords` itself. The
 cost is zero (already computed), so there is no excuse.
 
-**Proposing decisions/constraints is cheap (SQLite writes, no LLM). Capture is
-expensive (LLM extraction). Use the right one:**
+**Proposing decisions/constraints is cheap (SQLite writes, no LLM). There is no
+other write path:**
 
 - **Inline proposals — always, no gate.** When you make a decision or establish
   a rule, run `mementic add decision <title> --rationale "<text>"` and
   `mementic add constraint <desc> -e <path>` immediately. No judgment call
   about "architectural significance" — if it's worth remembering, propose it.
-  If it's not, don't.
+  If it's not, don't. Duplicate proposals are skipped automatically; changed
+  content under the same title deprecates the old entry and accepts the new one.
 - **Multiple deprecations** — run `mementic deprecate <id1> <id2> ...`
   to retire outdated rules in one call.
-- **`mementic capture` — user-triggered, not agent-triggered.** Capture runs
-  LLM extraction on the session log. It exists for sessions where architectural
-  discussions happened but were NOT proposed inline (e.g., a design
-  conversation that never produced an explicit proposal). The user decides when
-  that's worth the extraction cost — do not run it yourself mid-task.
 
 **If you skip these steps, you are violating project constraints.**
 A graph with no new decisions after a sprint of development is evidence

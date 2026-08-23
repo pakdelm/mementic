@@ -1,0 +1,542 @@
+"""End-to-end regression gate for the mementic CLI command surface.
+
+Every test drives the real Typer app through ``typer.testing.CliRunner``
+against an isolated temporary project directory (its own
+``.mementic/graph.db``), never a shared or mocked graph. GraphStore is
+opened directly only to assert resulting state, never to seed it.
+"""
+
+from __future__ import annotations
+
+import re
+from pathlib import Path
+from typing import Any
+
+import pytest
+from typer.testing import CliRunner, Result
+
+from mementic.cli import app
+from mementic.graph import GraphStore
+
+runner = CliRunner()
+
+
+# ── Helpers ─────────────────────────────────────────────────────────
+
+
+def _strip_ansi(text: str) -> str:
+    """Strip ANSI escape sequences so assertions are platform-agnostic."""
+    return re.sub(r"\x1b\[[0-9;]*[a-zA-Z]", "", text)
+
+
+def _text(result: Result) -> str:
+    """Return combined, ANSI-stripped stdout+stderr of a CLI invocation."""
+    streams = [result.output]
+    try:
+        streams.append(result.stderr)
+    except ValueError:
+        pass  # stderr mixed into stdout by this click version
+    return _strip_ansi("\n".join(streams))
+
+
+# Wide fixed console so rich never wraps or ellipsizes asserted content,
+# regardless of the host terminal size under pytest-xdist workers.
+_CONSOLE_ENV = {"COLUMNS": "160"}
+
+
+@pytest.fixture(autouse=True)
+def _wide_console(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Force rich's render width to 160 for every test in this module.
+
+    Pinning ``Console._width`` directly is deterministic across platforms
+    and CI runners, where the ``COLUMNS`` environment variable may be
+    pre-set, ignored by the runner, or shadowed by terminal detection.
+    """
+    monkeypatch.setattr("mementic.console.console._width", 160)
+
+
+def _run(*args: str) -> Result:
+    """Invoke the CLI app with the given argument vector."""
+    return runner.invoke(app, list(args), env=_CONSOLE_ENV)
+
+
+def _ok(*args: str) -> Result:
+    """Invoke the CLI app, asserting a zero exit code."""
+    result = _run(*args)
+    assert result.exit_code == 0, (
+        f"command {list(args)} failed:\n{_text(result)}"
+    )
+    return result
+
+
+def _node_payload(entity_id: str) -> dict[str, Any]:
+    """Open the project graph read-only and return one node's payload."""
+    graph = GraphStore(db_path=Path(".mementic/graph.db"))
+    try:
+        return graph.get_node_payload(entity_id)
+    finally:
+        graph.close()
+
+
+# ── Fixtures ────────────────────────────────────────────────────────
+
+
+@pytest.fixture()
+def bare_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Isolated empty project directory (no graph yet)."""
+    monkeypatch.chdir(tmp_path)
+    return tmp_path
+
+
+@pytest.fixture()
+def project_dir(bare_dir: Path) -> Path:
+    """Isolated project directory with an initialized graph."""
+    _ok("init")
+    return bare_dir
+
+
+# ── 1. Command surface ──────────────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    "command",
+    ["init", "add", "deprecate", "query", "list", "log", "status"],
+)
+def test_help_lists_top_level_command(command: str) -> None:
+    result = _ok("--help")
+    assert command in _text(result)
+
+
+def test_help_does_not_mention_removed_capture_command() -> None:
+    result = _ok("--help")
+    assert "capture" not in _text(result)
+
+
+@pytest.mark.parametrize("subcommand", ["decision", "constraint"])
+def test_add_help_lists_subcommands(subcommand: str) -> None:
+    result = _ok("add", "--help")
+    assert subcommand in _text(result)
+
+
+@pytest.mark.parametrize("subcommand", ["keywords", "file", "search", "stats"])
+def test_query_help_lists_subcommands(subcommand: str) -> None:
+    result = _ok("query", "--help")
+    assert subcommand in _text(result)
+
+
+@pytest.mark.parametrize("subcommand", ["decisions", "constraints", "entities"])
+def test_list_help_lists_subcommands(subcommand: str) -> None:
+    result = _ok("list", "--help")
+    assert subcommand in _text(result)
+
+
+# ── 2. init ─────────────────────────────────────────────────────────
+
+
+def test_init_fresh_dir_creates_graph_db(bare_dir: Path) -> None:
+    result = _ok("init")
+    assert "initialized" in _text(result).lower()
+    assert (bare_dir / ".mementic" / "graph.db").exists()
+
+
+def test_init_second_run_is_idempotent(project_dir: Path) -> None:
+    result = _ok("init")
+    assert "already exists" in _text(result)
+    assert (project_dir / ".mementic" / "graph.db").exists()
+
+
+def test_init_writes_agents_md_enforcement_block(
+    bare_dir: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Interactive consent (piped 'y') injects the enforcement block."""
+    monkeypatch.setattr("mementic.cli._interactive", lambda: True)
+    result = runner.invoke(app, ["init"], input="y\n", env=_CONSOLE_ENV)
+    assert result.exit_code == 0
+    agents_md = bare_dir / "AGENTS.md"
+    assert agents_md.exists()
+    content = agents_md.read_text(encoding="utf-8")
+    assert "Mementic Memory" in content
+    assert "ALWAYS ACTIVE" in content
+
+
+def test_init_noninteractive_without_agent_markers_does_not_inject(
+    bare_dir: Path,
+) -> None:
+    """Consent gradient: silent non-TTY runs never touch AGENTS.md."""
+    result = _ok("init")
+    assert "Re-run 'mementic init' interactively" in _text(result)
+    assert not (bare_dir / "AGENTS.md").exists()
+
+
+# ── 3. add decision lifecycle ───────────────────────────────────────
+
+
+def test_add_decision_new_slug_is_accepted(project_dir: Path) -> None:
+    result = _ok("add", "decision", "Use Jwt Auth",
+                 "-r", "Jwt tokens carry authentication claims")
+    assert "accepted" in _text(result)
+    payload = _node_payload("use-jwt-auth")
+    assert payload["status"] == "accepted"
+
+
+def test_add_decision_identical_readd_is_skipped_as_duplicate(
+    project_dir: Path,
+) -> None:
+    _ok("add", "decision", "Use Jwt Auth",
+        "-r", "Jwt tokens carry authentication claims")
+    result = _ok("add", "decision", "Use Jwt Auth",
+                 "-r", "Jwt tokens carry authentication claims")
+    output = _text(result)
+    assert "skipped" in output.lower()
+    assert "duplicate" in output.lower()
+    # Original rationale survives untouched.
+    payload = _node_payload("use-jwt-auth")
+    assert "carry" in payload["rationale"]
+    assert "rotated" not in payload["rationale"]
+
+
+def test_add_decision_same_title_new_rationale_deprecates_and_accepts(
+    project_dir: Path,
+) -> None:
+    _ok("add", "decision", "Use Jwt Auth",
+        "-r", "Jwt tokens carry authentication claims")
+    result = _ok("add", "decision", "Use Jwt Auth",
+                 "-r", "Rotated keys replace tokens with signed certificates")
+    output = _text(result)
+    assert "deprecated" in output.lower()
+    payload = _node_payload("use-jwt-auth")
+    assert payload["status"] == "accepted"
+    assert "certificates" in payload["rationale"]
+
+
+@pytest.mark.parametrize(
+    ("second_rationale", "expected_counts"),
+    [
+        # Identical text: 100% overlap >= threshold -> duplicate skip.
+        ("Jwt tokens carry authentication claims across every service boundary",
+         "0 accepted, 1 skipped, 0 deprecated"),
+        # One word changed out of ten: ~82% Jaccard overlap >= threshold
+        # -> still a duplicate skip.
+        ("Jwt tokens carry authentication claims across every service nightly",
+         "0 accepted, 1 skipped, 0 deprecated"),
+        # Wholly different content -> deprecate old + accept new. Counts
+        # reflect which auto-resolve rule fired; the acceptance of the new
+        # entry is reported by the status line.
+        ("Signed certificates replace bearer tokens entirely",
+         "0 accepted, 0 skipped, 1 deprecated"),
+    ],
+    ids=["identical-duplicate", "near-duplicate", "changed-content"],
+)
+def test_add_decision_reports_counts_per_disposition(
+    project_dir: Path, second_rationale: str, expected_counts: str,
+) -> None:
+    _ok("add", "decision", "Use Jwt Auth",
+        "-r", "Jwt tokens carry authentication claims across every service boundary")
+    result = _ok("add", "decision", "Use Jwt Auth", "-r", second_rationale)
+    assert expected_counts in _text(result)
+
+
+# ── 4. add constraint ───────────────────────────────────────────────
+
+
+def test_add_constraint_new_description_is_accepted(project_dir: Path) -> None:
+    result = _ok("add", "constraint", "Handlers must remain stateless",
+                 "-e", "src/api.py")
+    assert "active" in _text(result)
+    payload = _node_payload("handlers-must-remain-stateless")
+    assert payload["status"] == "active"
+
+
+def test_add_constraint_duplicate_description_is_skipped(project_dir: Path) -> None:
+    desc = "Handlers must remain stateless"
+    _ok("add", "constraint", desc, "-e", "src/api.py")
+    result = _ok("add", "constraint", desc, "-e", "src/api.py")
+    output = _text(result)
+    assert "skipped" in output.lower()
+    assert "0 accepted, 1 skipped, 0 deprecated" in output
+
+
+def test_add_constraint_decision_id_links_constraint_to_decision(
+    project_dir: Path,
+) -> None:
+    _ok("add", "decision", "Adopt Postgres",
+        "-r", "Relational integrity beats document stores here")
+    _ok("add", "constraint", "Schema migrations are mandatory",
+        "-e", "src/db.py", "-d", "adopt-postgres")
+    payload = _node_payload("schema-migrations-are-mandatory")
+    assert payload["enforced_by"] == "adopt-postgres"
+
+
+# ── 5. deprecate ────────────────────────────────────────────────────
+
+
+def test_deprecate_decision_by_slug_marks_it_deprecated(project_dir: Path) -> None:
+    _ok("add", "decision", "Use Monolith",
+        "-r", "Single deployable keeps operations simple early on")
+    result = _ok("deprecate", "use-monolith", "-r", "Moved to services")
+    assert "1 deprecated" in _text(result)
+    listing = _ok("list", "decisions", "--status", "deprecated")
+    assert "use-monolith" in _text(listing)
+
+
+def test_deprecate_nonexistent_id_fails_cleanly(project_dir: Path) -> None:
+    result = _run("deprecate", "no-such-id")
+    assert result.exit_code == 1
+    assert "not found" in _text(result).lower()
+
+
+def test_deprecate_already_deprecated_is_graceful(project_dir: Path) -> None:
+    _ok("add", "decision", "Use Monolith",
+        "-r", "Single deployable keeps operations simple early on")
+    _ok("deprecate", "use-monolith")
+    result = _ok("deprecate", "use-monolith")
+    assert "already deprecated" in _text(result).lower()
+    assert result.exit_code == 0
+
+
+# ── 6. query keywords ───────────────────────────────────────────────
+
+
+def test_query_keywords_returns_matching_seeded_entries(project_dir: Path) -> None:
+    _ok("add", "decision", "Use Jwt Auth",
+        "-r", "Jwt authentication guards every endpoint")
+    _ok("add", "constraint", "Sessions must stay stateless",
+        "-e", "src/session.py")
+    result = _ok("query", "keywords", "jwt", "authentication", "stateless")
+    output = _text(result)
+    assert "use-jwt-auth" in output
+    assert "sessions-must-stay-stateless" in output
+
+
+def test_query_keywords_nonsense_returns_no_matches_without_crash(
+    project_dir: Path,
+) -> None:
+    _ok("add", "decision", "Use Jwt Auth",
+        "-r", "Jwt authentication guards every endpoint")
+    result = _ok("query", "keywords", "zzqxv", "wblrmp")
+    output = _text(result)
+    assert "use-jwt-auth" not in output
+
+
+# ── 7. query file ───────────────────────────────────────────────────
+
+
+def test_query_file_finds_seeded_entry_by_path(project_dir: Path) -> None:
+    # The file must exist on disk: queries auto-clean dead references,
+    # so entities pointing at nonexistent files are pruned first.
+    source = project_dir / "src" / "foo.py"
+    source.parent.mkdir(parents=True)
+    source.write_text("x = 1", encoding="utf-8")
+    _ok("add", "decision", "Track Auth Flow",
+        "-r", "Central middleware owns the auth handshake", "-e", "src/foo.py")
+    result = _ok("query", "file", "src/foo.py")
+    assert "track-auth-flow" in _text(result)
+
+
+def test_query_file_unrelated_path_returns_empty(project_dir: Path) -> None:
+    _ok("add", "decision", "Track Auth Flow",
+        "-r", "Central middleware owns the auth handshake", "-e", "src/foo.py")
+    result = _ok("query", "file", "src/unrelated.py")
+    assert result.exit_code == 0
+    assert "track-auth-flow" not in _text(result)
+
+
+# ── 8. query search / stats ─────────────────────────────────────────
+
+
+def test_query_search_finds_seeded_content_substring(project_dir: Path) -> None:
+    _ok("add", "constraint", "Handlers must remain stateless",
+        "-e", "src/api.py")
+    result = _ok("query", "search", "stateless")
+    output = _text(result)
+    assert "handlers-must-remain-stateless" in output
+    # No matching decisions -> the Decisions section is omitted entirely.
+    assert "Decisions (" not in output
+
+
+def test_query_stats_runs_clean_on_seeded_graph(project_dir: Path) -> None:
+    _ok("add", "decision", "Use Jwt Auth",
+        "-r", "Jwt authentication guards every endpoint")
+    result = _ok("query", "stats")
+    assert "Graph statistics" in _text(result)
+
+
+# ── 9. list ─────────────────────────────────────────────────────────
+
+
+def test_list_decisions_shows_seeded_entry(project_dir: Path) -> None:
+    _ok("add", "decision", "Use Jwt Auth",
+        "-r", "Jwt authentication guards every endpoint")
+    result = _ok("list", "decisions")
+    assert "use-jwt-auth" in _text(result)
+
+
+def test_list_constraints_shows_seeded_entry(project_dir: Path) -> None:
+    _ok("add", "constraint", "Handlers must remain stateless",
+        "-e", "src/api.py")
+    result = _ok("list", "constraints")
+    assert "handlers-must-remain-stateless" in _text(result)
+
+
+def test_list_entities_shows_entity_created_via_add(project_dir: Path) -> None:
+    _ok("add", "decision", "Track Auth Flow",
+        "-r", "Central middleware owns the auth handshake", "-e", "src/foo.py")
+    result = _ok("list", "entities")
+    assert "src/foo.py" in _text(result)
+
+
+def test_list_decisions_status_filter_excludes_deprecated(project_dir: Path) -> None:
+    _ok("add", "decision", "Keep Api Stable",
+        "-r", "Public contract changes require a major version bump")
+    _ok("add", "decision", "Drop Legacy Auth",
+        "-r", "Legacy basic auth is replaced by token sessions")
+    _ok("deprecate", "drop-legacy-auth")
+    result = _ok("list", "decisions", "--status", "accepted")
+    output = _text(result)
+    assert "keep-api-stable" in output
+    assert "drop-legacy-auth" not in output
+
+
+# ── 10. status ──────────────────────────────────────────────────────
+
+
+def test_status_healthy_bundle_exits_zero_with_checklist(project_dir: Path) -> None:
+    result = _ok("status")
+    output = _text(result)
+    assert "Status" in output
+    assert "checks passed" in output
+
+
+# ── 11. log ─────────────────────────────────────────────────────────
+
+
+def test_log_lists_mutations_newest_first(project_dir: Path) -> None:
+    _ok("add", "decision", "Alpha Decision",
+        "-r", "First recorded architectural choice")
+    _ok("add", "decision", "Beta Decision",
+        "-r", "Second recorded architectural choice")
+    result = _ok("log")
+    output = _text(result)
+    assert "beta-decision" in output
+    assert "alpha-decision" in output
+    assert output.index("beta-decision") < output.index("alpha-decision")
+
+
+def test_log_without_entries_prints_hint_and_exits_zero(project_dir: Path) -> None:
+    result = _ok("log")
+    assert "No audit log found" in _text(result)
+
+
+# ── 12. Error paths ─────────────────────────────────────────────────
+
+
+def test_unknown_command_exits_nonzero() -> None:
+    result = _run("frobnicate")
+    assert result.exit_code != 0
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ("add", "decision"),
+        ("add", "decision", "Title Only"),
+        ("add", "constraint"),
+        ("query", "file"),
+        ("query", "keywords"),
+        ("deprecate"),
+    ],
+    ids=[
+        "decision-no-title",
+        "decision-no-rationale",
+        "constraint-no-description",
+        "file-no-path",
+        "keywords-no-keywords",
+        "deprecate-no-id",
+    ],
+)
+def test_missing_required_arguments_exit_nonzero(
+    project_dir: Path, args: tuple[str, ...],
+) -> None:
+    result = _run(*args)
+    assert result.exit_code != 0
+
+
+# ── 13. Review hardening: edge paths ────────────────────────────────
+
+
+def test_cross_type_slug_collision_exits_cleanly(project_dir: Path) -> None:
+    """A constraint whose slug collides with a decision errors, no traceback."""
+    _ok("add", "decision", "Use Postgres Now", "-r", "Proven reliability")
+    result = _run("add", "constraint", "Use Postgres Now!", "-e", "src/db.py")
+    output = _text(result)
+    assert result.exit_code == 1
+    assert "Error" in output
+    assert "Traceback" not in output
+
+
+def test_readd_after_deprecate_replaces_tombstone(project_dir: Path) -> None:
+    """Deprecated entries never block re-adding; the add replaces them."""
+    _ok("add", "decision", "Use Monolith",
+        "-r", "Single deployable simplifies operations")
+    _ok("deprecate", "use-monolith")
+    result = _ok("add", "decision", "Use Monolith",
+                 "-r", "Single deployable simplifies operations")
+    output = _text(result)
+    assert "accepted" in output.lower()
+    assert "replaced deprecated" in output.lower()
+    payload = _node_payload("use-monolith")
+    assert payload["status"] == "accepted"
+
+
+def test_empty_rationale_readd_is_skipped_as_duplicate(project_dir: Path) -> None:
+    """Two empty rationales overlap 1.0 → second is a duplicate skip."""
+    _ok("add", "decision", "Empty Rationale Case", "-r", "")
+    result = _ok("add", "decision", "Empty Rationale Case", "-r", "")
+    assert "skipped" in _text(result).lower()
+
+
+@pytest.mark.parametrize("rationale", [
+    "使用 JWT 进行身份验证 claims 🎫",
+    "Ünïcödé rätionäle with accented characters",
+])
+def test_unicode_rationale_round_trips_through_add_and_search(
+    project_dir: Path, rationale: str,
+) -> None:
+    """Non-ASCII rationales survive add and are findable via search."""
+    _ok("add", "decision", "Unicode Auth", "-r", rationale)
+    result = _ok("query", "search", rationale.split()[0])
+    assert "Unicode Auth" in _text(result)
+
+
+# ── 14. mementic summary-line contract ──────────────────────────────
+
+
+def test_query_keywords_prints_mementic_summary_line(project_dir: Path) -> None:
+    _ok("add", "decision", "Use Jwt Auth",
+        "-r", "Jwt tokens carry authentication claims")
+    result = _ok("query", "keywords", "jwt", "auth")
+    text = _text(result)
+    line = next((ln for ln in text.splitlines() if "[mementic:" in ln), None)
+    assert line is not None, f"no [mementic: ...] summary line in:\n{text}"
+    assert re.search(r"\d+ constraints?, \d+ decisions?", line)
+
+
+def test_query_file_prints_mementic_summary_line(project_dir: Path) -> None:
+    (project_dir / "src").mkdir()
+    (project_dir / "src" / "auth.py").write_text("# auth module\n")
+    _ok("add", "decision", "Guard Auth Module",
+        "-r", "All requests pass through the auth module", "-e", "src/auth.py")
+    result = _ok("query", "file", "src/auth.py")
+    text = _text(result)
+    line = next((ln for ln in text.splitlines() if "[mementic:" in ln), None)
+    assert line is not None, f"no [mementic: ...] summary line in:\n{text}"
+    assert "src/auth.py" in line
+
+
+def test_query_search_prints_mementic_summary_line(project_dir: Path) -> None:
+    _ok("add", "constraint", "Handlers must remain stateless", "-e", "src/api.py")
+    result = _ok("query", "search", "stateless")
+    text = _text(result)
+    line = next((ln for ln in text.splitlines() if "[mementic:" in ln), None)
+    assert line is not None, f"no [mementic: ...] summary line in:\n{text}"
+    assert "1 constraints, 0 decisions" in line

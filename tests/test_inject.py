@@ -9,7 +9,6 @@ import pytest
 from mementic.inject import (
     _ENFORCEMENT_HEADING,
     detect_agents,
-    get_mcp_config_file,
     get_rules_file,
     has_enforcement,
     inject_enforcement,
@@ -142,30 +141,6 @@ def test_get_rules_file_opencode() -> None:
 def test_get_rules_file_unknown() -> None:
     """An unknown agent returns None."""
     assert get_rules_file("nonexistent-agent") is None
-
-
-# ---------------------------------------------------------------------------
-# get_mcp_config_file
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.parametrize(
-    ("agent", "expected"),
-    [
-        ("opencode", "opencode.json"),
-        ("claude-code", ".claude/mcp.json"),
-        ("cursor", ".cursor/mcp.json"),
-        ("windsurf", ".windsurf/mcp.json"),
-    ],
-)
-def test_get_mcp_config_known(agent: str, expected: str) -> None:
-    """Known agents return their MCP config file path."""
-    assert get_mcp_config_file(agent) == expected
-
-
-def test_get_mcp_config_unknown() -> None:
-    """An unknown agent returns None."""
-    assert get_mcp_config_file("nonexistent-agent") is None
 
 
 # ---------------------------------------------------------------------------

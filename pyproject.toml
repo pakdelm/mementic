@@ -16,13 +16,8 @@ classifiers = [
 dependencies = [
     "networkx>=3.0",
     "pydantic>=2.0",
-    "openai>=1.0",
     "rich>=13.0",
-    "tiktoken>=0.5",
     "typer>=0.9",
-    "keyring>=25.7.0",
-    "json5>=0.9",
-    "python-dotenv>=0.21",
 ]
 
 [project.scripts]
@@ -57,6 +52,3 @@ quote-style = "double"
 
 [tool.mypy]
 ignore_missing_imports = false
-[[tool.mypy.overrides]]
-module = ["json5"]
-ignore_missing_imports = true
