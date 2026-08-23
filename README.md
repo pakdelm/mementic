@@ -186,15 +186,48 @@ If any of this sounds like fun to fix, [contributions are welcome](CONTRIBUTING.
 |---|---|
 | `mementic init` | Create `.mementic/graph.db` when missing (idempotent) + inject AGENTS.md enforcement |
 | `mementic query keywords <kw...> [--json]` | Get ranked context for a task |
-| `mementic query file <path> [--json]` | Constraints/decisions for a file |
+| `mementic query file <path> [--prefix] [--json]` | Constraints/decisions for a file (exact match by default) |
 | `mementic query search <term>` | Full-text search the graph |
-| `mementic query stats` | Graph statistics |
-| `mementic add decision <title> --rationale TEXT` | Record a decision (auto-resolves duplicates) |
+| `mementic query stats` | Store statistics |
+| `mementic add decision <title> -r TEXT [-e PATH]` | Record a decision (auto-resolves duplicates) |
 | `mementic add constraint <desc> -e PATH` | Record a constraint (auto-resolves duplicates) |
 | `mementic deprecate <id...> [-r REASON]` | Retire rules |
+| `mementic history [id]` | Deprecation records; with an ID, follow the replacement chain |
 | `mementic status` | Health checklist |
 | `mementic list [decisions\|constraints\|entities]` | List everything |
 | `mementic log [-n N]` | Recent mutations |
+
+## Storage
+
+Everything lives in one local SQLite file at `.mementic/graph.db`
+(schema **v5**, `PRAGMA user_version = 5`). Five flat tables, no ORM:
+
+| Table | Holds |
+|---|---|
+| `decisions` | id, title, rationale, created_at |
+| `constraints` | id, description, enforced_by (FK to decisions), created_at |
+| `entry_paths` | One row per entry/file association |
+| `deprecations` | Tombstones: reason, optional successor (`replaced_by`), timestamp |
+| `audit_log` | Every mutation |
+
+There is no status column. An entry is *dead* only when a `deprecations` row
+for it exists with a timestamp newer than the entry's `created_at` (so a
+re-added slug derives as live again) — liveness is derived at query time, so
+context packs and keyword queries always exclude tombstones without any
+cleanup scans.
+
+**Upgrading from schema v4?** Run the one-shot migration:
+
+```bash
+uv run python scripts/migrate_v4_to_v5.py            # default .mementic/graph.db
+uv run python scripts/migrate_v4_to_v5.py --db PATH  # custom location
+```
+
+It backs up your database to `graph.db.bak` first, copies decisions and
+constraints into the v5 tables, drops legacy `proposed`-status zombie rows,
+materializes file paths into `entry_paths`, and backfills tombstones for
+entries deprecated under the old scheme. The script refuses to run against
+anything other than a v4 database and prints per-rule counts when done.
 
 ## Project status & roadmap
 
@@ -202,8 +235,8 @@ Active development, used daily by the maintainer. The core loop — init,
 query, inline add — works end to end. Next milestones:
 
 - **First PyPI release.** Install is currently from the GitHub repo only.
-- **Storage format pivot.** A portable bundle format is being designed
-  (Spec 29).
+- **Pack quality.** File-overlap signals via `entry_paths` for better
+  context-pack precision.
 - **Polish.** Good-first-issue-sized work: docs, error messages, examples.
 
 Contributions in any of those areas are welcome — see

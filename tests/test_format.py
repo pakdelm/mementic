@@ -20,27 +20,22 @@ from mementic.format import (
     specificity_factor,
     timestamp,
 )
-from mementic.models import Constraint, Decision, DecisionStatus
+from mementic.models import Constraint, Decision
 
 
 def make_decision(
     id: str = "d-001",
     title: str = "Use async",
     rationale: str = "Better performance",
-    rejected: list[str] | None = None,
-    source: str = "ADR-001",
     ts: str = "2024-01-01T00:00:00Z",
-    status: DecisionStatus = DecisionStatus.ACCEPTED,
+    paths: list[str] | None = None,
 ) -> Decision:
     return Decision(
         id=id,
         title=title,
         rationale=rationale,
-        rejected_alternatives=rejected or [],
-        source=source,
-        status=status,
         created_at=ts,
-        modified_at=ts,
+        paths=paths or [],
     )
 
 
@@ -48,18 +43,15 @@ def make_constraint(
     id: str = "c-001",
     description: str = "All I/O must be async",
     enforced_by: str = "d-001",
-    source: str = "ADR-001",
     ts: str = "2024-01-01T00:00:00Z",
-    status: str = "active",
+    paths: list[str] | None = None,
 ) -> Constraint:
     return Constraint(
         id=id,
         description=description,
-        bound_entities=[],
         enforced_by=enforced_by,
-        source=source,
-        status=status,
         created_at=ts,
+        paths=paths or [],
     )
 
 
@@ -114,23 +106,6 @@ class TestRankAndTruncate:
         ids = [x.id for x in selected]  # type: ignore[attr-defined]
         assert ids == ["c-new", "c-mid", "c-old"]
 
-    def test_sorts_active_before_deprecated_for_equal_overlap_and_recency(
-        self,
-    ) -> None:
-        ts = "2024-01-01T00:00:00Z"
-        items = [
-            c(make_constraint(id="c-dep", status="deprecated", ts=ts), 1),
-            c(make_constraint(id="c-act", status="active", ts=ts), 1),
-            c(make_constraint(id="c-act2", status="active", ts=ts), 1),
-        ]
-        selected, _, _ = rank_and_truncate(
-            items, max_tokens=9999, line_formatter=_compact_constraint_line
-        )
-        ids = [x.id for x in selected]  # type: ignore[attr-defined]
-        # active first, then deprecated
-        assert ids[0] == "c-act"
-        assert ids[-1] == "c-dep"
-
     def test_truncates_at_token_budget(self) -> None:
         """Items that would exceed token budget are excluded (whole-item cut)."""
         items = [
@@ -162,22 +137,6 @@ class TestRankAndTruncate:
         )
         assert shown == 1
         assert selected[0].id == "c-a"  # type: ignore[attr-defined]
-
-    def test_decision_status_sort(self) -> None:
-        """DecisionStatus enum values are sorted correctly."""
-        ts = "2024-01-01T00:00:00Z"
-        items = [
-            d(make_decision(id="d-dep", status=DecisionStatus.DEPRECATED, ts=ts), 1),
-            d(make_decision(id="d-rej", status=DecisionStatus.REJECTED, ts=ts), 1),
-            d(make_decision(id="d-acc", status=DecisionStatus.ACCEPTED, ts=ts), 1),
-        ]
-        selected, _, _ = rank_and_truncate(
-            items, max_tokens=9999, line_formatter=_compact_decision_line
-        )
-        ids = [x.id for x in selected]  # type: ignore[attr-defined]
-        assert ids[0] == "d-acc"  # accepted first
-        assert "d-dep" in ids
-        assert "d-rej" in ids
 
     def test_empty_items(self) -> None:
         selected, shown, total = rank_and_truncate(
@@ -300,25 +259,6 @@ class TestFormatContextPack:
         assert "Pick DB" not in output
         assert "2024-01-01" not in output
         assert "- Chose PostgreSQL (#d-001)" in output
-
-    def test_compact_format_no_rejected_alternatives(self) -> None:
-        """Compact decision format drops Rejected lines."""
-        decisions = [
-            make_decision(
-                title="Pick DB",
-                rationale="Chose PostgreSQL",
-                rejected=["SQLite", "MongoDB"],
-            )
-        ]
-        output = format_memory_context(
-            decisions, [],
-            max_constraint_tokens=CONTEXT_PACK_DEFAULT_MAX_CONSTRAINT_TOKENS,
-            max_decision_tokens=CONTEXT_PACK_DEFAULT_MAX_DECISION_TOKENS,
-
-        )
-
-        assert "Rejected" not in output
-        assert "SQLite" not in output
 
     def test_multiple_items(self) -> None:
         decisions = [
@@ -445,19 +385,6 @@ class TestFormatEvolution:
 
         assert "[2025-06-01T12:00:00Z] Use Pydantic" in output
 
-    def test_drops_rejected_alternatives(self) -> None:
-        """Evolution format drops Rejected lines."""
-        decisions = [
-            d(make_decision(
-                id="d-1",
-                title="Use async",
-                rationale="Better perf",
-                rejected=["sync", "threads"],
-            ))
-        ]
-        output = format_evolution("test.py", decisions)
-        assert "Rejected" not in output
-
     def test_no_decisions_found(self) -> None:
         output = format_evolution("nonexistent.py", [])
 
@@ -551,16 +478,6 @@ class TestCompactEvolutionLine:
         line = _compact_evolution_line(d_obj)
         assert "[2025-01-15T00:00:00Z]" in line
         assert "Pick DB" in line
-
-    def test_no_rejected_line(self) -> None:
-        d_obj = make_decision(
-            id="d-3",
-            title="A",
-            rationale="B",
-            rejected=["X", "Y"],
-        )
-        line = _compact_evolution_line(d_obj)
-        assert "Rejected" not in line
 
 
 # ======================================================================
@@ -674,36 +591,30 @@ class TestCountTokens:
 # ======================================================================
 
 
-def _make_constraint_with_entities(bound_entities: list[str]) -> Constraint:
-    """Build a Constraint with explicit bound_entities for enrichment tests."""
+def _make_constraint_with_entities(paths: list[str]) -> Constraint:
+    """Build a Constraint with explicit bound paths for enrichment tests."""
     return Constraint(
         id="c-1",
         description="Hard rule",
-        bound_entities=bound_entities,
         enforced_by="d-1",
-        source="test",
-        status="active",
         created_at="2024-01-01T00:00:00Z",
+        paths=paths,
     )
 
 
-def _make_decision_with_entities(affected_entities: list[str]) -> Decision:
-    """Build a Decision with explicit affected_entities for enrichment tests."""
+def _make_decision_with_entities(paths: list[str]) -> Decision:
+    """Build a Decision with explicit affected paths for enrichment tests."""
     return Decision(
         id="d-1",
         title="Title",
         rationale="Why",
-        rejected_alternatives=[],
-        source="test",
-        status=DecisionStatus.ACCEPTED,
         created_at="2024-01-01T00:00:00Z",
-        modified_at="2024-01-01T00:00:00Z",
-        affected_entities=affected_entities,
+        paths=paths,
     )
 
 
 class TestCompactEntityEnrichment:
-    def test_compact_constraint_line_includes_bound_entities(self) -> None:
+    def test_compact_constraint_line_includes_bound_paths(self) -> None:
         c_obj = _make_constraint_with_entities(["models.py"])
         line = _compact_constraint_line(c_obj)
         assert "bound: models.py" in line
@@ -713,7 +624,7 @@ class TestCompactEntityEnrichment:
         line = _compact_constraint_line(c_obj)
         assert "bound:" not in line
 
-    def test_compact_decision_line_includes_affected_entities(self) -> None:
+    def test_compact_decision_line_includes_affected_paths(self) -> None:
         d_obj = _make_decision_with_entities(["cli.py"])
         line = _compact_decision_line(d_obj)
         assert "affects: cli.py" in line
@@ -933,19 +844,15 @@ class TestFormatContextPackKeywordRanking:
     def test_generic_constraint_demoted(self) -> None:
         """Constraints bound to many files rank lower than specific ones."""
         constraints = [
-            Constraint(
+            make_constraint(
                 id="c-specific",
                 description="use argon2 for password hashing in auth module",
-                bound_entities=["src/auth/handler.py"],
-                source="test", status="active",
-                created_at="2024-01-01T00:00:00Z",
+                paths=["src/auth/handler.py"],
             ),
-            Constraint(
+            make_constraint(
                 id="c-generic",
                 description="use snake_case for all function names",
-                bound_entities=[f"src/module_{i}.py" for i in range(10)],
-                source="test", status="active",
-                created_at="2024-01-01T00:00:00Z",
+                paths=[f"src/module_{i}.py" for i in range(10)],
             ),
         ]
         # Keywords match both equally
@@ -961,26 +868,20 @@ class TestFormatContextPackKeywordRanking:
     def test_distinct_constraint_not_crowded_out(self) -> None:
         """With keyword scoring, a distinct constraint still surfaces amid near-duplicates."""
         constraints = [
-            Constraint(
+            make_constraint(
                 id="c-hints-1",
                 description="add type hints to all python function signatures",
-                bound_entities=["src/module.py"],
-                source="test", status="active",
-                created_at="2024-01-01T00:00:00Z",
+                paths=["src/module.py"],
             ),
-            Constraint(
+            make_constraint(
                 id="c-hints-2",
                 description="add type hints to all python function signatures please",
-                bound_entities=["src/module.py"],
-                source="test", status="active",
-                created_at="2024-01-01T00:00:00Z",
+                paths=["src/module.py"],
             ),
-            Constraint(
+            make_constraint(
                 id="c-distinct",
                 description="validate csrf tokens in middleware",
-                bound_entities=["src/middleware.py"],
-                source="test", status="active",
-                created_at="2024-01-01T00:00:00Z",
+                paths=["src/middleware.py"],
             ),
         ]
         # Keywords match all three constraints
@@ -996,16 +897,12 @@ class TestFormatContextPackKeywordRanking:
         assert "c-distinct" in output
 
     def test_fallback_without_keywords_still_works(self) -> None:
-        """When task_keywords is None, recency + status ranking is used."""
-        old = Constraint(
-            id="c-old",
-            description="old rule", bound_entities=[],
-            source="test", status="active", created_at="2023-01-01T00:00:00Z",
+        """When task_keywords is None, recency ranking is used."""
+        old = make_constraint(
+            id="c-old", description="old rule", ts="2023-01-01T00:00:00Z",
         )
-        new = Constraint(
-            id="c-new",
-            description="new rule", bound_entities=[],
-            source="test", status="active", created_at="2025-01-01T00:00:00Z",
+        new = make_constraint(
+            id="c-new", description="new rule", ts="2025-01-01T00:00:00Z",
         )
         output = format_memory_context(
             [], [old, new], max_constraint_tokens=9999,
@@ -1018,19 +915,15 @@ class TestFormatContextPackKeywordRanking:
     def test_keywords_specificity_combined(self) -> None:
         """Keyword overlap * specificity: specific + matching beats generic + matching."""
         constraints = [
-            Constraint(
+            make_constraint(
                 id="c-match-specific",
                 description="hash passwords with argon2 in auth handler",
-                bound_entities=["src/auth/handler.py"],  # 1 file → 1.0x
-                source="test", status="active",
-                created_at="2024-01-01T00:00:00Z",
+                paths=["src/auth/handler.py"],  # 1 file → 1.0x
             ),
-            Constraint(
+            make_constraint(
                 id="c-match-generic",
                 description="hash passwords with argon2 across entire codebase",
-                bound_entities=[f"f{i}.py" for i in range(100)],  # 100 files → 0.01x
-                source="test", status="active",
-                created_at="2024-01-01T00:00:00Z",
+                paths=[f"f{i}.py" for i in range(100)],  # 100 files → 0.01x
             ),
         ]
         task_keywords = ["hash", "passwords", "argon2"]

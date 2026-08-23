@@ -5,6 +5,40 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+- **Relational storage simplification (Spec 29, schema v5).** Replaced the
+  GraphStore hybrid (in-memory NetworkX graph serialized into SQLite payloads,
+  full-graph rewrite per mutation) with a pure relational schema accessed
+  through a thin `sqlite3` module (`mementic/store.py`). Decisions and
+  constraints are flat tables; file associations live in `entry_paths` rows;
+  entry lifecycle moved from cached status columns to a `deprecations`
+  tombstone table — liveness is derived at query time, never stored.
+  NetworkX dependency removed.
+- **New `mementic history [id]` command** — shows deprecation records;
+  with an ID it prints the entry's replacement chain (reasons, successors).
+- **`mementic deprecate` writes structured tombstones** (reason + optional
+  successor in the `deprecations` table) instead of appending
+  `[DEPRECATED: ...]` prose to rationale text.
+- **`list decisions|constraints`** gained a "Superseded by" column for dead
+  entries (successor ID or "retired").
+- **`query file <path>`** runs on `entry_paths` with exact match by default
+  and opt-in `--prefix`; paths whose files no longer exist are filtered
+  lazily via a filesystem check at read time.
+- **Migration:** one-shot `scripts/migrate_v4_to_v5.py` converts v4 databases
+  in place (automatic `.bak` backup, drops legacy proposed-status zombies,
+  materializes entry paths, backfills tombstones). Run
+  `uv run python scripts/migrate_v4_to_v5.py` before using mementic against
+  an existing database.
+
+### Removed
+- `mementic/graph.py`, `mementic/lint.py`, code-entity/edge machinery
+  (`CodeEntity`, `EntityType`, `GraphEdge`, `GraphPayload`), the `batch()`
+  context manager, and `clean_dead_references()`.
+- `networkx` and `types-networkx` dependencies.
+- `add decision --rejected` flag.
+
 ## [0.3.0] - 2026-08-23
 
 - Merge pull request #51 from pakdelm/feat/specs-23-27## [0.2.5] - 2026-08-06

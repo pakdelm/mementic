@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
-    from mementic.graph import GraphStore
+    from mementic.store import MementicStore
 
 
 @dataclass
@@ -30,14 +30,14 @@ class HealthItem:
 
 
 def check_health(
-    graph: GraphStore | None = None,
+    graph: MementicStore | None = None,
     repo_path: Path | None = None,
 ) -> list[HealthItem]:
     """Run all health checks. No network calls. No inference.
 
     Args:
-        graph: Optional GraphStore instance. When provided, checks graph
-            integrity. When None, shows graph check as failed.
+        graph: Optional MementicStore instance. When provided, checks store
+            integrity. When None, shows store check as failed.
         repo_path: Optional repository root path. Used for AGENTS.md lookup.
             When None, falls back to ``Path.cwd()``.
 
@@ -46,7 +46,7 @@ def check_health(
     """
     items: list[HealthItem] = []
 
-    # 1. Graph check
+    # 1. Store check
     if graph is not None:
         stats = graph.stats()
         if stats.get("constraints", 0) > 0 or stats.get("decisions", 0) > 0:
@@ -54,7 +54,7 @@ def check_health(
                 HealthItem(
                     label="Graph",
                     status="ok",
-                    hint=f"{stats.get('entities', 0)} entities, "
+                    hint=f"{stats.get('decisions', 0)} decisions, "
                     f"{stats.get('constraints', 0)} constraints",
                 )
             )
