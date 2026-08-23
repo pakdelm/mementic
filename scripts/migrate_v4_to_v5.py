@@ -164,6 +164,7 @@ def migrate(db_path: Path) -> int:
     copied_constraints = 0
     dropped_proposed = 0
     backfilled_decisions = 0
+    backfilled_rejected = 0
     backfilled_constraints = 0
     paths_from_json = 0
     paths_from_edges = 0
@@ -204,13 +205,24 @@ def migrate(db_path: Path) -> int:
 
         for row in decisions:
             rationale = row["rationale"]
+            status_lower = str(row["status"]).lower()
             reason = ""
-            if str(row["status"]).lower() == "deprecated":
+            if status_lower == "deprecated":
                 rationale, reason = _split_deprecation(rationale)
                 deprecations.append(
                     ("decision", row["id"], None, reason, migrated_at)
                 )
                 backfilled_decisions += 1
+            elif status_lower == "rejected":
+                # Rejected ideas must not resurface as live context; keep
+                # them visible in history via a tombstone instead.
+                deprecations.append(
+                    (
+                        "decision", row["id"], None,
+                        "rejected (pre-v5 status)", migrated_at,
+                    )
+                )
+                backfilled_rejected += 1
             conn.execute(
                 "INSERT INTO decisions (id, title, rationale, created_at) "
                 "VALUES (?, ?, ?, ?)",
@@ -325,6 +337,7 @@ def migrate(db_path: Path) -> int:
     print(f"    tombstones backfilled:   {backfilled_decisions}")
     print(f"  constraints copied:        {copied_constraints}")
     print(f"    proposed zombies DROPPED: {dropped_proposed}")
+    print(f"    rejected decisions tombstoned: {backfilled_rejected}")
     print(f"    tombstones backfilled:   {backfilled_constraints}")
     print(f"  entry_paths materialized:  {counts['entry_paths']} unique")
     print(f"    from JSON lists:         {paths_from_json} refs")

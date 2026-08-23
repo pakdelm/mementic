@@ -963,6 +963,19 @@ def constraint(
     )
 
     counts: dict[str, int] = {"accepted": 0, "skipped": 0, "deprecated": 0}
+    # Validate the enforcing decision BEFORE auto-resolve: a typo'd
+    # --decision-id must not orphan a tombstone over the existing entry.
+    if decision_id and _decision(store, decision_id) is None:
+        console.print(
+            panel(
+                text(
+                    f"[{C_FAIL}]Error: enforcing decision "
+                    f"'{decision_id}' does not exist.[/]"
+                ),
+                title="Constraint not added",
+            )
+        )
+        raise typer.Exit(code=1)
     disposition, tombstone_at = _auto_resolve(store, "constraint", cid, description)
     if disposition == "skipped":
         counts["skipped"] += 1

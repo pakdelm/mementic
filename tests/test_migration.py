@@ -98,6 +98,11 @@ def _build_v4_fixture(db_path: Path) -> None:
              "Single deployable keeps ops simple [DEPRECATED: moved to services]",
              "cli", "mementic", "[]", "[]",
              "2024-02-01T00:00:00Z", "2024-03-01T00:00:00Z"),
+            # Rejected decision: must tombstone, never resurface as live.
+            ("d-rejected", "Adopt NoSql", "rejected",
+             "Sounded fast on a whiteboard",
+             "cli", "mementic", "[]", "[]",
+             "2024-02-15T00:00:00Z", "2024-02-15T00:00:00Z"),
         ],
     )
     conn.executemany(
@@ -172,7 +177,7 @@ class TestMigrateV4ToV5:
         decisions = {
             r["id"]: dict(r) for r in conn.execute("SELECT * FROM decisions")
         }
-        assert set(decisions) == {"d-live", "d-dead"}
+        assert set(decisions) == {"d-live", "d-dead", "d-rejected"}
         assert decisions["d-live"]["rationale"] == "Simple persistence"
         assert set(decisions["d-live"]) == {
             "id", "title", "rationale", "created_at",
@@ -200,10 +205,17 @@ class TestMigrateV4ToV5:
             (r["entry_type"], r["entry_id"]): dict(r)
             for r in conn.execute("SELECT * FROM deprecations")
         }
-        assert set(deps) == {("decision", "d-dead"), ("constraint", "c-dead")}
+        assert set(deps) == {
+            ("decision", "d-dead"),
+            ("constraint", "c-dead"),
+            ("decision", "d-rejected"),
+        }
         assert deps[("decision", "d-dead")]["reason"] == "moved to services"
         assert deps[("constraint", "c-dead")]["reason"] == (
             "replaced by new rule"
+        )
+        assert deps[("decision", "d-rejected")]["reason"] == (
+            "rejected (pre-v5 status)"
         )
         assert all(d["replaced_by"] is None for d in deps.values())
 
@@ -355,7 +367,7 @@ class TestMigrationAtomicity:
         assert {"entities", "edges", "project_sources"} <= tables
         assert "entry_paths" not in tables and "deprecations" not in tables
         # ...with every original row intact.
-        assert conn.execute("SELECT COUNT(*) FROM decisions").fetchone()[0] == 2
+        assert conn.execute("SELECT COUNT(*) FROM decisions").fetchone()[0] == 3
         assert conn.execute(
             "SELECT COUNT(*) FROM constraints"
         ).fetchone()[0] == 3
@@ -375,7 +387,7 @@ class TestMigrationAtomicity:
         # Database untouched: still v4 with its rows.
         conn = sqlite3.connect(str(v4_db))
         assert conn.execute("PRAGMA user_version").fetchone()[0] == 4
-        assert conn.execute("SELECT COUNT(*) FROM decisions").fetchone()[0] == 2
+        assert conn.execute("SELECT COUNT(*) FROM decisions").fetchone()[0] == 3
         conn.close()
         # The pre-existing backup was not overwritten.
         assert backup.read_bytes() == b"previous backup contents"

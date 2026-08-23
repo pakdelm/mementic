@@ -309,6 +309,38 @@ def test_add_constraint_dangling_decision_id_fails_cleanly(
     assert "Traceback" not in output
 
 
+def test_failed_readd_does_not_orphan_tombstone(project_dir: Path) -> None:
+    """A constraint that survives a failed re-add stays live.
+
+    Regression: the tombstone used to be committed before the successor
+    insert, so a typo'd --decision-id on a re-add killed the original
+    entry with no replacement and no revive command.
+    """
+    _ok("add", "constraint", "Schema migrations are mandatory",
+        "-e", "src/db.py")
+    result = _run(
+        "add", "constraint", "Schema migrations must run before deploys",
+        "--id", "schema-migrations-are-mandatory",
+        "-e", "src/db.py", "-d", "no-such-decision",
+    )
+    output = _text(result)
+    assert result.exit_code == 1
+    assert "does not exist" in output
+    # Original entry is untouched: live, not a tombstone.
+    store = _store()
+    try:
+        assert store.is_deprecated(
+            "constraint", "schema-migrations-are-mandatory"
+        ) is False
+        surviving = store.get_constraint("schema-migrations-are-mandatory")
+        assert surviving is not None
+        assert surviving.description == "Schema migrations are mandatory"
+    finally:
+        store.close()
+    listing = _ok("list", "constraints")
+    assert "Schema migrations are mandatory" in _text(listing)
+
+
 # ── 5. deprecate ────────────────────────────────────────────────────
 
 

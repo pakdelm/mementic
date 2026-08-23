@@ -121,6 +121,44 @@ def successor_timestamp(tombstone_at: str) -> str:
     return (moment + timedelta(microseconds=1)).isoformat()
 
 
+_MAX_STAMP_RETRIES = 10
+
+
+def _insert_deprecation(conn: sqlite3.Connection, row: tuple) -> str:
+    """Insert one tombstone row, bumping the stamp on clock-tick collisions.
+
+    The ``deprecations`` primary key includes ``at``, so two lifecycle
+    events for the same entry within one OS clock tick (coarse clocks,
+    notably pre-3.13 Windows) collide. On collision the stamp advances by
+    one microsecond and the insert retries — bounded, then loud.
+
+    Args:
+        conn: Open sqlite3 connection (inside an active transaction).
+        row: ``(entry_type, entry_id, replaced_by, reason, at)``.
+
+    Returns:
+        The stamp that was actually inserted.
+
+    Raises:
+        RuntimeError: If no unique stamp could be inserted within the
+            retry bound.
+    """
+    for _ in range(_MAX_STAMP_RETRIES):
+        try:
+            conn.execute(
+                "INSERT INTO deprecations (entry_type, entry_id, "
+                "replaced_by, reason, at) VALUES (?, ?, ?, ?, ?)",
+                row,
+            )
+            return str(row[4])
+        except sqlite3.IntegrityError:
+            row = row[:4] + (successor_timestamp(str(row[4])),)
+    raise RuntimeError(
+        f"could not insert a unique deprecation stamp for {row[1]!r} "
+        f"after {_MAX_STAMP_RETRIES} attempts"
+    )
+
+
 class MementicStore:
     """SQLite-backed memory store for decisions and constraints.
 
@@ -368,10 +406,8 @@ class MementicStore:
             }
         now = utc_now()
         with conn:
-            conn.execute(
-                "INSERT INTO deprecations (entry_type, entry_id, replaced_by, "
-                "reason, at) VALUES (?, ?, ?, ?, ?)",
-                (entry_type, entry_id, replaced_by, reason, now),
+            inserted_at = _insert_deprecation(
+                conn, (entry_type, entry_id, replaced_by, reason, now)
             )
             self._log_audit(
                 entry_type,
@@ -387,7 +423,7 @@ class MementicStore:
         suffix = f" (superseded by '{replaced_by}')" if replaced_by else ""
         return {
             "status": "deprecated",
-            "at": now,
+            "at": inserted_at,
             "message": f"Deprecated {noun.lower()} '{entry_id}'{suffix}",
         }
 
@@ -423,17 +459,15 @@ class MementicStore:
         conn = self._conn_or_raise()
         now = utc_now()
         with conn:
-            conn.execute(
-                "INSERT INTO deprecations (entry_type, entry_id, replaced_by, "
-                "reason, at) VALUES (?, ?, ?, ?, ?)",
-                (entry_type, entry_id, replaced_by, reason, now),
+            inserted_at = _insert_deprecation(
+                conn, (entry_type, entry_id, replaced_by, reason, now)
             )
             details: dict = {
                 "reason": reason,
                 "replaced_by": replaced_by,
             }
             self._log_audit(entry_type, entry_id, "deprecate", details)
-        return now
+        return inserted_at
 
     def _log_audit(
         self, entity_type: str, entity_id: str, action: str, details: dict,
@@ -703,8 +737,10 @@ class MementicStore:
         """
         conn = self._conn_or_raise()
         if prefix:
-            # Anchor the LIKE at the start: ``path + '%'`` matches only
-            # true descendants, never substrings further down the tree.
+            # Anchor the LIKE at the start: ``path + '%'`` matches stored
+            # paths beginning with ``path`` (including prefix-siblings such
+            # as ``src/utils.py`` for prefix ``src/util`` — same semantics
+            # as the historical startswith behavior).
             escaped = path.replace("\\", "\\\\").replace("%", "\\%").replace(
                 "_", "\\_"
             )

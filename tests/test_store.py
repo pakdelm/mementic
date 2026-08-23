@@ -391,6 +391,34 @@ class TestSuccessionTimestamps:
         d = store.get_decision("d1")
         assert d is not None and d.created_at > result["at"]
 
+    def test_rapid_redeprecate_does_not_collide_on_pk(
+        self, store: MementicStore, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Deprecate -> re-add -> deprecate again within one clock tick.
+
+        The deprecations PK includes ``at``; two lifecycle events for the
+        same entry with an identical coarse-clock stamp used to raise an
+        unhandled IntegrityError. The insert now bumps the stamp and
+        retries, so both tombstones coexist.
+        """
+        import mementic.store as store_mod
+
+        frozen = "2026-06-01T12:00:00+00:00"
+        monkeypatch.setattr(store_mod, "utc_now", lambda: frozen)
+
+        _add_decision(store, "d1", rationale="v1",
+                      created_at="2024-01-01T00:00:00Z")
+        first = store.deprecate("decision", "d1", reason="first death")
+        created_at = successor_timestamp(first["at"])
+        store.add_decision(
+            entry_id="d1", title="T", rationale="v2", created_at=created_at,
+        )
+        second = store.deprecate("decision", "d1", reason="second death")
+        assert second["status"] == "deprecated"
+        assert second["at"] > first["at"]
+        records = store.get_deprecations_for_entry("decision", "d1")
+        assert len(records) == 2
+
 
 # ── Path queries (exact default / prefix opt-in) ────────────────────
 
