@@ -134,13 +134,27 @@ def test_init_second_run_is_idempotent(project_dir: Path) -> None:
     assert (project_dir / ".mementic" / "graph.db").exists()
 
 
-def test_init_writes_agents_md_enforcement_block(bare_dir: Path) -> None:
-    _ok("init")
+def test_init_writes_agents_md_enforcement_block(
+    bare_dir: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Interactive consent (piped 'y') injects the enforcement block."""
+    monkeypatch.setattr("mementic.cli._interactive", lambda: True)
+    result = runner.invoke(app, ["init"], input="y\n", env=_CONSOLE_ENV)
+    assert result.exit_code == 0
     agents_md = bare_dir / "AGENTS.md"
     assert agents_md.exists()
     content = agents_md.read_text(encoding="utf-8")
     assert "Mementic Memory" in content
     assert "ALWAYS ACTIVE" in content
+
+
+def test_init_noninteractive_without_agent_markers_does_not_inject(
+    bare_dir: Path,
+) -> None:
+    """Consent gradient: silent non-TTY runs never touch AGENTS.md."""
+    result = _ok("init")
+    assert "Re-run 'mementic init' interactively" in _text(result)
+    assert not (bare_dir / "AGENTS.md").exists()
 
 
 # ── 3. add decision lifecycle ───────────────────────────────────────
