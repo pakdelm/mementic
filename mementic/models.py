@@ -1,69 +1,47 @@
-"""Data models for the Mementic knowledge graph."""
+"""Data models for the Mementic memory store (schema v5).
+
+Decisions and constraints are flat relational rows; file associations ride
+along as ``paths`` (materialized from ``entry_paths``). Liveness is derived
+from the ``deprecations`` table at query time — there is deliberately no
+status field on either model.
+"""
 
 from __future__ import annotations
 
-from enum import Enum
-from typing import Any
-
-from pydantic import BaseModel, Field
-
-
-class DecisionStatus(str, Enum):
-    ACCEPTED = "accepted"
-    DEPRECATED = "deprecated"
-    REJECTED = "rejected"
-
-
-class EntityType(str, Enum):
-    MODULE = "module"
-    CLASS = "class"
-    FUNCTION = "function"
-    FILE = "file"
+from pydantic import BaseModel
 
 
 class Decision(BaseModel):
-    id: str
-    title: str
-    rationale: str
-    rejected_alternatives: list[str] = Field(default_factory=list)
-    source: str
-    status: DecisionStatus = DecisionStatus.ACCEPTED
-    created_at: str
-    modified_at: str
-    repo: str = ""
-    affected_entities: list[str] = Field(default_factory=list)
+    """An architectural decision.
 
-
-class Constraint(BaseModel):
-    id: str
-    description: str
-    bound_entities: list[str] = Field(default_factory=list)
-    enforced_by: str = ""
-    source: str
-    status: str = "active"
-    created_at: str
-    repo: str = ""
-
-
-class CodeEntity(BaseModel):
-    """A code entity within a repository.
-
-    The ``id`` is a relative file path (e.g., ``src/models.py``).  The ``repo``
-    column scopes it to a specific repository.  Together ``(repo, id)`` form
-    the primary key.
+    Attributes:
+        id: Slug ID (stable reference used by deprecate/history/CLI output).
+        title: Short human-readable title.
+        rationale: Why the decision was made; input to keyword scoring.
+        created_at: ISO 8601 creation timestamp (drives recency ranking).
+        paths: File paths this decision affects (from ``entry_paths``).
     """
 
     id: str
-    type: EntityType
-    repo: str = ""
+    title: str
+    rationale: str
+    created_at: str
+    paths: list[str] = []
 
 
-class GraphEdge(BaseModel):
-    source: str
-    target: str
-    relation: str
+class Constraint(BaseModel):
+    """A rule that constrains how code is written.
 
+    Attributes:
+        id: Slug ID (stable reference used by deprecate/history/CLI output).
+        description: What must (or must not) be done; input to keyword scoring.
+        enforced_by: ID of the enforcing decision, or empty for standalone.
+        created_at: ISO 8601 creation timestamp (drives recency ranking).
+        paths: File paths this constraint binds (from ``entry_paths``).
+    """
 
-class GraphPayload(BaseModel):
-    nodes: list[dict[str, Any]]
-    edges: list[dict[str, str]]
+    id: str
+    description: str
+    enforced_by: str = ""
+    created_at: str
+    paths: list[str] = []

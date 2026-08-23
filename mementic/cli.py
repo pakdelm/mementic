@@ -5,7 +5,6 @@ import re
 import sqlite3
 import sys
 from pathlib import Path
-from typing import Any
 
 import typer
 from rich.markdown import Markdown
@@ -40,21 +39,23 @@ from mementic.format import (
     slugify,
     timestamp,
 )
-from mementic.graph import GraphStore
-from mementic.models import (
-    CodeEntity,
-    Constraint,
-    Decision,
-    DecisionStatus,
-    EntityType,
-)
+from mementic.store import MementicStore, successor_timestamp
+from mementic.models import Constraint, Decision
 
 app = typer.Typer(help="Mementic — semantic memory for engineering teams and AI agents")
 
 
-def _resolve_graph() -> GraphStore:
-    """Open the local knowledge graph at .mementic/graph.db."""
-    return GraphStore(db_path=Path(".mementic/graph.db"))
+def _resolve_store() -> MementicStore:
+    """Open the local memory store at .mementic/graph.db.
+
+    Exits cleanly when the database exists but has a foreign schema version
+    (e.g. v4) so agents see the migration hint instead of a traceback.
+    """
+    try:
+        return MementicStore(db_path=Path(".mementic/graph.db"))
+    except RuntimeError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
 
 
 def _interactive() -> bool:
@@ -82,50 +83,110 @@ def _word_overlap(text_a: str, text_b: str) -> float:
     return len(words_a & words_b) / len(words_a | words_b)
 
 
+def _clean_entity_path(raw: str) -> str:
+    """Strip trailing ``::symbol`` / ``:symbol`` qualifiers from a path."""
+    clean = re.sub(r"::[A-Za-z_]\w*$", "", raw)
+    clean = re.sub(r":[A-Za-z_]\w*$", "", clean)
+    return clean
+
+
+def _decision(store: MementicStore, entry_id: str) -> Decision | None:
+    """Fetch a decision by ID, or None when the ID is not a decision."""
+    return store.get_decision(entry_id)
+
+
+def _constraint(store: MementicStore, entry_id: str) -> Constraint | None:
+    """Fetch a constraint by ID, or None when the ID is not a constraint."""
+    return store.get_constraint(entry_id)
+
+
 def _auto_resolve(
-    graph: GraphStore,
+    store: MementicStore,
+    entry_type: str,
     entity_id: str,
-    content_field: str,
     content: str,
-) -> str:
+) -> tuple[str, str | None]:
     """Apply deterministic auto-resolve rules against an existing entry.
 
     Four outcomes, zero inference:
-    1. New slug (no existing node with this ID) → ``"accepted"``.
-    2. Same slug + ≥80% word overlap with the existing entry's
-       ``content_field`` → ``"skipped"`` (duplicate).
+    1. New slug (no existing entry with this ID) → ``"accepted"``.
+    2. Same slug + ≥80% word overlap with the existing entry's content
+       → ``"skipped"`` (duplicate).
     3. Same slug + different content → deprecate the existing entry via
-       :meth:`GraphStore.deprecate_entity` and return ``"deprecated"``
-       (the caller then adds the new entry).
+       :meth:`MementicStore.deprecate` (tombstone row with ``replaced_by``
+       pointing at the incoming slug) and return ``"deprecated"`` (the
+       caller then adds the new entry).
     4. Existing entry is already deprecated (tombstone) → ``"replaced"``
        without deprecating again; the caller overwrites it with the new
        content. Deprecated entries never block re-adding.
 
     Args:
-        graph: The current knowledge graph.
+        store: The current memory store.
+        entry_type: ``"decision"`` or ``"constraint"``.
         entity_id: Slug ID of the incoming entry.
-        content_field: Payload field holding comparable content
-            (``"rationale"`` for decisions, ``"description"`` for constraints).
-        content: The incoming entry's content text.
+        content: The incoming entry's content text (rationale/description).
 
     Returns:
-        One of ``"accepted"``, ``"skipped"``, ``"deprecated"``, or
-        ``"replaced"``.
+        ``(disposition, tombstone_at)`` where disposition is one of
+        ``"accepted"``, ``"skipped"``, ``"deprecated"``, or ``"replaced"``,
+        and ``tombstone_at`` is the ISO 8601 stamp of the tombstone written
+        by this call (None when none was). Callers must derive a successor
+        incarnation's ``created_at`` from ``tombstone_at`` via
+        :func:`mementic.store.successor_timestamp` so the new incarnation
+        structurally postdates the tombstone even when consecutive
+        wall-clock reads collide.
     """
-    if not graph.has_node(entity_id):
-        return "accepted"
-    payload = graph.get_node_payload(entity_id)
-    if str(payload.get("status", "")) == "deprecated":
-        # Tombstone: re-adding replaces it; no duplicate skip, no re-deprecation.
-        return "replaced"
-    if content_field not in payload:
-        # Cross-type ID collision — no comparable entry, treat as new.
-        return "accepted"
-    overlap = _word_overlap(content, payload.get(content_field, ""))
-    if overlap >= _DUPLICATE_OVERLAP_THRESHOLD:
-        return "skipped"
-    graph.deprecate_entity(entity_id, reason="superseded by re-added entry")
-    return "deprecated"
+    existing_type = store.get_entry_type(entity_id)
+    if existing_type is None:
+        return "accepted", None
+    if existing_type != entry_type:
+        # Cross-type collision: let the store raise on add so the CLI can
+        # report a clean error instead of comparing incompatible content.
+        return "accepted", None
+    existing = (
+        _decision(store, entity_id)
+        if entry_type == "decision"
+        else _constraint(store, entity_id)
+    )
+    if existing is None:  # pragma: no cover - get_entry_type just found it
+        raise RuntimeError(f"entry {entity_id} vanished during auto-resolve")
+    if store.is_deprecated(entry_type, entity_id):
+        # Tombstone: re-adding replaces it; no duplicate skip, no
+        # re-deprecation. Record the succession so the prior tombstone
+        # gains a replaced_by pointer (stamped before the new incarnation).
+        stamp = store.record_succession(
+            entry_type,
+            entity_id,
+            replaced_by=entity_id,
+            reason="superseded by re-added entry",
+        )
+        return "replaced", stamp
+    stored_content = (
+        existing.rationale
+        if isinstance(existing, Decision)
+        else existing.description
+    )
+    if _word_overlap(content, stored_content) >= _DUPLICATE_OVERLAP_THRESHOLD:
+        return "skipped", None
+    result = store.deprecate(
+        entry_type,
+        entity_id,
+        reason="superseded by re-added entry",
+        replaced_by=entity_id,
+    )
+    return "deprecated", result["at"]
+
+
+def _successor_created_at(tombstone_at: str | None) -> str:
+    """Stamp a fresh incarnation: one microsecond after its tombstone.
+
+    When no tombstone was written this add, fall back to the current wall
+    clock. Otherwise build the stamp structurally from the tombstone so
+    identical successive clock reads can never strand a dead incarnation.
+    """
+    if tombstone_at is None:
+        return timestamp()
+    return successor_timestamp(tombstone_at)
 
 
 def _counts_panel_text(counts: dict[str, int]) -> str:
@@ -158,7 +219,7 @@ def _accepted_status_label(disposition: str, noun: str) -> str:
 def init() -> None:
     """Initialize mementic for this repository.
 
-    Creates ``.mementic/graph.db`` as an empty knowledge graph when missing
+    Creates ``.mementic/graph.db`` as an empty memory store when missing
     (idempotent — running it again is a no-op) and injects enforcement
     instructions into AGENTS.md when absent.
     """
@@ -167,8 +228,8 @@ def init() -> None:
 
     created = False
     if not db_path.exists():
-        graph = GraphStore(db_path=db_path)
-        graph.close()
+        store = MementicStore(db_path=db_path)
+        store.close()
         created = True
 
     # --- Inject enforcement template ---
@@ -246,10 +307,10 @@ def keywords(
     json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
 ) -> None:
     """Return ranked context pack of constraints and decisions matched by keywords."""
-    graph = _resolve_graph()
-    graph.clean_dead_references()
-    constraints = graph.get_all_active_constraints()
-    decisions = graph.get_all_active_decisions()
+    store = _resolve_store()
+    # Derived liveness: tombstoned entries are excluded at the SQL layer.
+    constraints = store.get_live_constraints()
+    decisions = store.get_live_decisions()
 
     if json_output:
         from mementic.format import format_context_pack_json
@@ -288,6 +349,11 @@ def keywords(
     )
 
 
+def _path_exists(path: str) -> bool:
+    """Return True when a stored entity path still exists on disk."""
+    return Path(path).exists()
+
+
 @query_app.command()
 def file(
     path: str = typer.Argument(..., help="File path to trace evolution for"),
@@ -296,10 +362,15 @@ def file(
     json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
 ) -> None:
     """Show constraints and decisions affecting a specific file."""
-    graph = _resolve_graph()
-    graph.clean_dead_references()
-    constraints = graph.get_constraints_for_entities([path], prefix_match=prefix)
-    decisions = graph.get_evolution(path, prefix_match=prefix, annotate_overlap=True)
+    store = _resolve_store()
+    # Path-overlap and filesystem-liveness semantics live in the store;
+    # overlap counts surviving matched paths.
+    constraints = store.get_constraints_for_path(
+        path, prefix=prefix, path_exists=_path_exists,
+    )
+    decisions = store.get_decisions_for_path(
+        path, prefix=prefix, path_exists=_path_exists,
+    )
 
     if json_output:
         from mementic.format import format_file_history_json
@@ -311,7 +382,7 @@ def file(
     if constraints:
         evolution_text += "\n\n### Constraints\n"
         for c in constraints:
-            entities = ", ".join(c.bound_entities) if c.bound_entities else "none"
+            entities = ", ".join(c.paths) if c.paths else "none"
             evolution_text += f"- {c.description} (#{c.id}, bound: {entities})\n"
     # Agent-enforcement contract: a plain-text summary line agents must echo.
     typer.echo(
@@ -328,9 +399,9 @@ def search(
     term: str = typer.Argument(..., help="Search term for titles, rationales, and descriptions"),
 ) -> None:
     """Full-text search across decisions and constraints."""
-    graph = _resolve_graph()
-    all_d = graph.get_all_decisions()
-    all_c = graph.get_all_constraints()
+    store = _resolve_store()
+    all_d = store.get_all_decisions()
+    all_c = store.get_all_constraints()
     t = term.lower()
     matching_d = [d for d in all_d if t in d.title.lower() or t in d.rationale.lower()]
     matching_c = [c for c in all_c if t in c.description.lower()]
@@ -372,13 +443,19 @@ def search(
 def stats(
 ) -> None:
     """Show graph statistics."""
-    graph = _resolve_graph()
-    s = graph.stats()
+    store = _resolve_store()
+    s = store.stats()
     stats_table = kv_table()
     stats_table.add_column("Metric", style="bold", width=20)
     stats_table.add_column("Value", justify="right")
+    labels = {
+        "decisions": "Decisions",
+        "constraints": "Constraints",
+        "paths": "Entry paths",
+        "deprecated": "Deprecated",
+    }
     for k, v in s.items():
-        stats_table.add_row(k.title(), str(v))
+        stats_table.add_row(labels.get(k, k.title()), str(v))
     console.print(panel(stats_table, title="Graph statistics"))
 
 
@@ -389,9 +466,9 @@ def log(
     ),
 ) -> None:
     """Show recent graph mutations from the audit log."""
-    graph = _resolve_graph()
+    store = _resolve_store()
 
-    rows = graph.get_audit_entries(limit=n)
+    rows = store.get_audit_entries(limit=n)
     if rows:
         audit_table = table()
         audit_table.add_column("Timestamp", style=C_DIM)
@@ -474,17 +551,18 @@ def status(
     from mementic.health import check_health
 
     try:
-        graph = _resolve_graph()
-    except (sqlite3.Error, OSError, ValueError):
+        store = MementicStore(db_path=Path(".mementic/graph.db"))
+    except (sqlite3.Error, OSError, ValueError, RuntimeError):
         # Health command must degrade gracefully, not traceback on a
-        # corrupt/locked/missing graph — check_health reports the failure.
-        graph = None
+        # corrupt/locked/missing/mis-versioned store — check_health
+        # reports the failure.
+        store = None
 
     try:
         repo = Path(detect_repo_path())
     except (ValueError, OSError):
         repo = Path.cwd()
-    items = check_health(graph, repo_path=repo)
+    items = check_health(store, repo_path=repo)
     health_table = table(show_header=False, show_edge=False, padding=(0, 1))
     health_table.add_column("Status", width=7)
     health_table.add_column("Check", style="bold")
@@ -510,21 +588,10 @@ def status(
     )
 
 
-def _status_icon(status: str) -> str:
-    """Return a compact status marker for list output."""
-    icons = {
-        "accepted": STATUS_OK,
-        "deprecated": STATUS_DEPRECATED,
-        "rejected": STATUS_FAIL,
-        "active": STATUS_OK,
-    }
-    return icons.get(status, " ")
-
-
 list_app = typer.Typer(help="Browse decisions, constraints, and entities")
 app.add_typer(list_app, name="list")
 
-_VALID_STATUSES = {"accepted", "deprecated", "rejected", "active"}
+_VALID_STATUSES = {"accepted", "deprecated", "active"}
 
 
 def _validate_status(status: str | None) -> None:
@@ -538,25 +605,103 @@ def _validate_status(status: str | None) -> None:
         raise typer.Exit(code=1)
 
 
+def _superseded_label(superseded_by: str | None) -> str:
+    """Render the Superseded-by cell: successor ID, ``retired``, or blank."""
+    if superseded_by is None:
+        return ""
+    return "retired" if superseded_by == "retired" else superseded_by
+
+
+@app.command()
+def history(
+    entry_id: str | None = typer.Argument(
+        None, help="Decision or constraint ID to trace (omit for full table)"
+    ),
+) -> None:
+    """Show deprecation records: one entry's lifecycle chain or the full table."""
+    store = _resolve_store()
+
+    if entry_id is None:
+        rows = store.get_all_deprecations()
+        if not rows:
+            typer.echo("No deprecation history recorded yet.")
+            return
+        dep_table = table()
+        dep_table.add_column("At", style=C_DIM)
+        dep_table.add_column("Type")
+        dep_table.add_column("Entry", style=C_ID)
+        dep_table.add_column("Replaced By")
+        dep_table.add_column("Reason", overflow="fold")
+        for r in rows:
+            successor = r["replaced_by"] or "[dim]retired[/]"
+            dep_table.add_row(
+                r["at"], r["entry_type"], r["entry_id"], successor, r["reason"] or "",
+            )
+        console.print(panel(dep_table, title=f"Deprecation history ({len(rows)})"))
+        return
+
+    # Resolve the entry's type; fall back to scanning both tables.
+    etype = store.get_entry_type(entry_id)
+    records: list = []
+    for candidate in ([etype] if etype else []) + (
+        ["decision", "constraint"] if not etype else []
+    ):
+        records = store.get_replacement_chain(candidate, entry_id)
+        if records:
+            break
+
+    if not records:
+        typer.echo(f"No deprecation history for '{entry_id}'.")
+        return
+
+    # Arrow chain of distinct IDs (self-replacements don't extend the chain).
+    chain_ids: list[str] = [entry_id]
+    for rec in records:
+        successor = rec["replaced_by"]
+        if successor and successor != chain_ids[-1]:
+            chain_ids.append(successor)
+
+    dep_table = table()
+    dep_table.add_column("At", style=C_DIM)
+    dep_table.add_column("Entry", style=C_ID)
+    dep_table.add_column("Replaced By")
+    dep_table.add_column("Reason", overflow="fold")
+    for rec in records:
+        successor = rec["replaced_by"] or "[dim]retired[/]"
+        dep_table.add_row(
+            rec["at"], rec["entry_id"], successor, rec["reason"] or "",
+        )
+    console.print(
+        panel(
+            text(f"[{C_ID} bold]{' -> '.join(chain_ids)}[/]"),
+            rule(),
+            dep_table,
+            title=f"History: {entry_id}",
+        )
+    )
+
+
 @list_app.command()
 def decisions(
     n: int = typer.Option(20, "-n", help="Show only the last N entries"),
     status: str | None = typer.Option(
         None, "--status",
-        help="Filter by status: accepted, deprecated, rejected, active",
+        help="Filter by status: accepted, deprecated, active",
     ),
 ) -> None:
     """List architectural decisions in a scannable table."""
-    graph = _resolve_graph()
+    store = _resolve_store()
     _validate_status(status)
 
-    all_d = graph.get_all_decisions()
-    if status:
-        all_d = [d for d in all_d if d.status == status]
+    pairs = store.get_decisions_with_liveness()
+    if status == "deprecated":
+        pairs = [p for p in pairs if p[1] is not None]
+    elif status in ("accepted", "active"):
+        pairs = [p for p in pairs if p[1] is None]
     if n > 0:
-        all_d = all_d[-n:]
+        pairs = pairs[-n:]
 
-    if not all_d:
+    if not pairs:
         typer.echo("No decisions found.")
         raise typer.Exit()
 
@@ -565,18 +710,20 @@ def decisions(
     decision_table.add_column("ID", style=C_ID)
     decision_table.add_column("Date", style=C_DIM)
     decision_table.add_column("Title", overflow="fold")
-    for d in all_d:
-        icon = _status_icon(d.status)
-        color_map = {
-            STATUS_OK: C_SUCCESS,
-            STATUS_DEPRECATED: C_WARN,
-            STATUS_FAIL: C_FAIL,
-        }
-        color = color_map.get(icon, "")
+    decision_table.add_column("Superseded By", style=C_WARN, overflow="fold")
+    for d, superseded_by in pairs:
         date = d.created_at[:10] if d.created_at else ""
-        decision_table.add_row(f"[{color}]{icon}[/]", d.id, date, d.title)
+        icon = STATUS_OK if superseded_by is None else STATUS_DEPRECATED
+        color = C_SUCCESS if superseded_by is None else C_WARN
+        decision_table.add_row(
+            f"[{color}]{icon}[/]",
+            d.id,
+            date,
+            d.title,
+            _superseded_label(superseded_by),
+        )
     console.print(
-        panel(decision_table, title=f"Decisions ({len(all_d)})")
+        panel(decision_table, title=f"Decisions ({len(pairs)})")
     )
 
 
@@ -585,20 +732,22 @@ def constraints(
     n: int = typer.Option(20, "-n", help="Show only the last N entries"),
     status: str | None = typer.Option(
         None, "--status",
-        help="Filter by status: accepted, deprecated, rejected, active",
+        help="Filter by status: accepted, deprecated, active",
     ),
 ) -> None:
     """List constraints in a scannable table."""
-    graph = _resolve_graph()
+    store = _resolve_store()
     _validate_status(status)
 
-    all_c = graph.get_all_constraints()
-    if status:
-        all_c = [c for c in all_c if c.status == status]
+    pairs = store.get_constraints_with_liveness()
+    if status == "deprecated":
+        pairs = [p for p in pairs if p[1] is not None]
+    elif status in ("accepted", "active"):
+        pairs = [p for p in pairs if p[1] is None]
     if n > 0:
-        all_c = all_c[-n:]
+        pairs = pairs[-n:]
 
-    if not all_c:
+    if not pairs:
         typer.echo("No constraints found.")
         raise typer.Exit()
 
@@ -607,20 +756,20 @@ def constraints(
     constraint_table.add_column("ID", style=C_ID)
     constraint_table.add_column("Enforced By", style=C_DIM)
     constraint_table.add_column("Description", overflow="fold")
-    for c in all_c:
-        icon = _status_icon(c.status)
-        color_map = {
-            STATUS_OK: C_SUCCESS,
-            STATUS_DEPRECATED: C_WARN,
-            STATUS_FAIL: C_FAIL,
-        }
-        color = color_map.get(icon, "")
+    constraint_table.add_column("Superseded By", style=C_WARN, overflow="fold")
+    for c, superseded_by in pairs:
+        icon = STATUS_OK if superseded_by is None else STATUS_DEPRECATED
+        color = C_SUCCESS if superseded_by is None else C_WARN
         enforced = f"via {c.enforced_by}" if c.enforced_by else ""
         constraint_table.add_row(
-            f"[{color}]{icon}[/]", c.id, enforced, c.description
+            f"[{color}]{icon}[/]",
+            c.id,
+            enforced,
+            c.description,
+            _superseded_label(superseded_by),
         )
     console.print(
-        panel(constraint_table, title=f"Constraints ({len(all_c)})")
+        panel(constraint_table, title=f"Constraints ({len(pairs)})")
     )
 
 
@@ -629,39 +778,28 @@ def entities(
     n: int = typer.Option(20, "-n", help="Show only the last N entries"),
     stale: bool = typer.Option(
         False, "--stale",
-        help="Show only entities referencing files that no longer exist",
+        help="Show only paths referencing files that no longer exist",
     ),
 ) -> None:
-    """List code entities in a scannable table."""
-    graph = _resolve_graph()
+    """List referenced file paths in a scannable table."""
+    store = _resolve_store()
 
-    all_e: list[tuple[str, dict[str, Any]]] = []
-    for nid, ntype, payload in graph.iter_nodes():
-        if ntype == "CodeEntity":
-            all_e.append((nid, payload))
-
+    all_p = store.get_all_paths()
     if stale:
-        all_e = [
-            (nid, p) for nid, p in all_e
-            if p.get("type") == "file" and not Path(nid).exists()
-        ]
+        all_p = [p for p in all_p if not Path(p).exists()]
     if n > 0:
-        all_e = all_e[-n:]
+        all_p = all_p[-n:]
 
-    if not all_e:
+    if not all_p:
         typer.echo("No entities found.")
         raise typer.Exit()
 
     entity_table = table()
     entity_table.add_column("Path", style=C_ID, overflow="fold")
-    entity_table.add_column("Type")
-    entity_table.add_column("Repo", style=C_DIM)
-    for eid, p in all_e:
-        etype = p.get("type", "file")
-        repo = p.get("repo", "-")
-        entity_table.add_row(eid, etype, repo)
+    for p in all_p:
+        entity_table.add_row(p)
     console.print(
-        panel(entity_table, title=f"Entities ({len(all_e)})")
+        panel(entity_table, title=f"Entities ({len(all_p)})")
     )
 
 
@@ -675,26 +813,36 @@ def deprecate(
 ) -> None:
     """Mark one or more decisions or constraints as deprecated.
 
-    Appends a deprecation note and writes audit entries.
-    Deprecated entities remain in the graph for history but are
-    excluded from mementic memory.
+    Writes a tombstone row (with reason) into the deprecations table;
+    deprecated entries remain listed for history but are excluded from
+    mementic memory queries.
     """
-    graph = _resolve_graph()
+    store = _resolve_store()
 
     deprecated = 0
     already = 0
     errors = 0
+    details: list[str] = []
 
     for id_ in ids:
-        result = graph.deprecate_entity(id_, reason)
+        etype = store.get_entry_type(id_)
+        if etype is None:
+            typer.echo(f"Entity '{id_}' not found.", err=True)
+            errors += 1
+            continue
+        result = store.deprecate(etype, id_, reason)
 
         if result["status"] == "deprecated":
             deprecated += 1
+            row = store.find_deprecation(etype, id_)
+            if row is not None:
+                successor = row["replaced_by"] or "none (retired)"
+                details.append(
+                    f"[{C_DIM}]{id_}: reason: {row['reason'] or '-'} | "
+                    f"successor: {successor} | at: {row['at']}[/]"
+                )
         elif result["status"] == "already_deprecated":
             already += 1
-        elif result["status"] == "wrong_type":
-            typer.echo(result["message"], err=True)
-            errors += 1
         else:
             typer.echo(result["message"], err=True)
             errors += 1
@@ -709,15 +857,9 @@ def deprecate(
     if reason:
         parts.append(f"[{C_DIM}]reason: {reason}[/]")
 
-    console.print(
-        panel(
-            text(
-                ", ".join(parts)
-                + f"\n[{C_DIM}]IDs: {', '.join(ids)}[/]"
-            ),
-            title="Deprecated",
-        )
-    )
+    body: list = [text(", ".join(parts)), text(f"[{C_DIM}]IDs: {', '.join(ids)}[/]")]
+    body.extend(text(line) for line in details)
+    console.print(panel(*body, title="Deprecated"))
 
     if errors:
         raise typer.Exit(code=1)
@@ -736,9 +878,6 @@ def decision(
     entities: list[str] | None = typer.Option(
         None, "--entity", "-e", help="Affected file paths (repeatable)"
     ),
-    rejected: list[str] | None = typer.Option(
-        None, "--rejected", help="Rejected alternatives (repeatable)"
-    ),
 ) -> None:
     """Record a new architectural decision.
 
@@ -746,30 +885,18 @@ def decision(
     new slug → accept; ≥80% word overlap → skip as duplicate;
     different content → deprecate the existing entry and accept the new one.
     """
-    graph = _resolve_graph()
-    now = timestamp()
-    d = Decision(
-        id=slugify(title, max_length=DECISION_ID_MAX_LENGTH),
-        title=title,
-        rationale=rationale,
-        rejected_alternatives=rejected or [],
-        affected_entities=entities or [],
-        source="cli",
-        status=DecisionStatus.ACCEPTED,
-        created_at=now,
-        modified_at=now,
-        repo=str(Path(detect_repo_path()).resolve().name),
-    )
+    store = _resolve_store()
+    entry_id = slugify(title, max_length=DECISION_ID_MAX_LENGTH)
 
     counts: dict[str, int] = {"accepted": 0, "skipped": 0, "deprecated": 0}
-    disposition = _auto_resolve(graph, d.id, "rationale", rationale)
+    disposition, tombstone_at = _auto_resolve(store, "decision", entry_id, rationale)
     if disposition == "skipped":
         counts["skipped"] += 1
         console.print(
             panel(
                 text(
                     f"Title:  [{C_HEADER}]{title}[/]\n"
-                    f"ID:     [{C_ID}]{d.id}[/]\n"
+                    f"ID:     [{C_ID}]{entry_id}[/]\n"
                     f"Status: [{C_WARN}]skipped (duplicate of existing entry)[/]"
                 ),
                 _counts_panel_text(counts),
@@ -780,24 +907,27 @@ def decision(
 
     counts["deprecated" if disposition == "deprecated" else "accepted"] += 1
     try:
-        graph.add_decision(d)
-    except ValueError as exc:
+        # Stamp created_at AFTER any auto-deprecation, structurally one
+        # microsecond past the tombstone, so the new incarnation always
+        # derives as live.
+        store.add_decision(
+            entry_id=entry_id,
+            title=title,
+            rationale=rationale,
+            created_at=_successor_created_at(tombstone_at),
+            paths=[_clean_entity_path(p) for p in (entities or [])],
+        )
+    except (ValueError, sqlite3.IntegrityError) as exc:
         console.print(
             panel(text(f"[{C_FAIL}]Error: {exc}[/]"), title="Decision not added")
         )
         raise typer.Exit(code=1) from exc
-    for ep in (entities or []):
-        clean = re.sub(r"::[A-Za-z_]\w*$", "", ep)
-        clean = re.sub(r":[A-Za-z_]\w*$", "", clean)
-        e = CodeEntity(id=clean, type=EntityType.FILE, repo=d.repo)
-        graph.add_code_entity(e)
-        graph.link(d.id, clean, "affects")
     status_label = _accepted_status_label(disposition, noun="decision")
     console.print(
         panel(
             text(
                 f"Title:  [{C_HEADER}]{title}[/]\n"
-                f"ID:     [{C_ID}]{d.id}[/]\n"
+                f"ID:     [{C_ID}]{entry_id}[/]\n"
                 f"Status: {status_label}"
             ),
             _counts_panel_text(counts),
@@ -825,32 +955,21 @@ def constraint(
     new slug → accept; ≥80% word overlap → skip as duplicate;
     different content → deprecate the existing entry and accept the new one.
     """
-    graph = _resolve_graph()
-    now = timestamp()
+    store = _resolve_store()
     cid = (
         slugify(rule_id, max_length=CONSTRAINT_ID_MAX_LENGTH)
         if rule_id
         else slugify(description, max_length=CONSTRAINT_ID_MAX_LENGTH)
     )
-    c = Constraint(
-        id=cid,
-        description=description,
-        bound_entities=entities,
-        enforced_by=decision_id or "",
-        source="cli",
-        status="active",
-        created_at=now,
-        repo=str(Path(detect_repo_path()).resolve().name),
-    )
 
     counts: dict[str, int] = {"accepted": 0, "skipped": 0, "deprecated": 0}
-    disposition = _auto_resolve(graph, c.id, "description", description)
+    disposition, tombstone_at = _auto_resolve(store, "constraint", cid, description)
     if disposition == "skipped":
         counts["skipped"] += 1
         console.print(
             panel(
                 text(
-                    f"ID:       [{C_ID}]{c.id}[/]\n"
+                    f"ID:       [{C_ID}]{cid}[/]\n"
                     f"Desc:     [{C_DIM}]{description}[/]\n"
                     f"Status:   [{C_WARN}]skipped (duplicate of existing entry)[/]"
                 ),
@@ -862,18 +981,18 @@ def constraint(
 
     counts["deprecated" if disposition == "deprecated" else "accepted"] += 1
     try:
-        graph.add_constraint(c)
-    except ValueError as exc:
+        store.add_constraint(
+            entry_id=cid,
+            description=description,
+            enforced_by=decision_id or "",
+            created_at=_successor_created_at(tombstone_at),
+            paths=[_clean_entity_path(p) for p in entities],
+        )
+    except (ValueError, sqlite3.IntegrityError) as exc:
         console.print(
             panel(text(f"[{C_FAIL}]Error: {exc}[/]"), title="Constraint not added")
         )
         raise typer.Exit(code=1) from exc
-    for ep in entities:
-        clean = re.sub(r"::[A-Za-z_]\w*$", "", ep)
-        clean = re.sub(r":[A-Za-z_]\w*$", "", clean)
-        e = CodeEntity(id=clean, type=EntityType.FILE, repo=c.repo)
-        graph.add_code_entity(e)
-        graph.link(c.id, clean, "binds_to")
     bound_list = ", ".join(entities[:5])
     if len(entities) > 5:
         bound_list += f" +{len(entities) - 5} more"
@@ -881,7 +1000,7 @@ def constraint(
     console.print(
         panel(
             text(
-                f"ID:       [{C_ID}]{c.id}[/]\n"
+                f"ID:       [{C_ID}]{cid}[/]\n"
                 f"Bound to: [{C_PATH}]{bound_list}[/]\n"
                 f"Desc:     [{C_DIM}]{description}[/]\n"
                 f"Status:   {status_label}"

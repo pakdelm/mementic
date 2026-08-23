@@ -2,7 +2,7 @@
 
 Every test drives the real Typer app through ``typer.testing.CliRunner``
 against an isolated temporary project directory (its own
-``.mementic/graph.db``), never a shared or mocked graph. GraphStore is
+``.mementic/graph.db``), never a shared or mocked store. MementicStore is
 opened directly only to assert resulting state, never to seed it.
 """
 
@@ -10,13 +10,12 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Any
 
 import pytest
 from typer.testing import CliRunner, Result
 
 from mementic.cli import app
-from mementic.graph import GraphStore
+from mementic.store import MementicStore
 
 runner = CliRunner()
 
@@ -69,13 +68,27 @@ def _ok(*args: str) -> Result:
     return result
 
 
-def _node_payload(entity_id: str) -> dict[str, Any]:
-    """Open the project graph read-only and return one node's payload."""
-    graph = GraphStore(db_path=Path(".mementic/graph.db"))
+def _store() -> MementicStore:
+    """Open the project store at .mementic/graph.db."""
+    return MementicStore(db_path=Path(".mementic/graph.db"))
+
+
+def _decision(entry_id: str):
+    """Open the project store read-only and return one decision (or None)."""
+    store = _store()
     try:
-        return graph.get_node_payload(entity_id)
+        return store.get_decision(entry_id)
     finally:
-        graph.close()
+        store.close()
+
+
+def _constraint(entry_id: str):
+    """Open the project store read-only and return one constraint (or None)."""
+    store = _store()
+    try:
+        return store.get_constraint(entry_id)
+    finally:
+        store.close()
 
 
 # ── Fixtures ────────────────────────────────────────────────────────
@@ -83,14 +96,14 @@ def _node_payload(entity_id: str) -> dict[str, Any]:
 
 @pytest.fixture()
 def bare_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """Isolated empty project directory (no graph yet)."""
+    """Isolated empty project directory (no store yet)."""
     monkeypatch.chdir(tmp_path)
     return tmp_path
 
 
 @pytest.fixture()
 def project_dir(bare_dir: Path) -> Path:
-    """Isolated project directory with an initialized graph."""
+    """Isolated project directory with an initialized store."""
     _ok("init")
     return bare_dir
 
@@ -100,7 +113,7 @@ def project_dir(bare_dir: Path) -> Path:
 
 @pytest.mark.parametrize(
     "command",
-    ["init", "add", "deprecate", "query", "list", "log", "status"],
+    ["init", "add", "deprecate", "query", "list", "log", "status", "history"],
 )
 def test_help_lists_top_level_command(command: str) -> None:
     result = _ok("--help")
@@ -175,8 +188,14 @@ def test_add_decision_new_slug_is_accepted(project_dir: Path) -> None:
     result = _ok("add", "decision", "Use Jwt Auth",
                  "-r", "Jwt tokens carry authentication claims")
     assert "accepted" in _text(result)
-    payload = _node_payload("use-jwt-auth")
-    assert payload["status"] == "accepted"
+    d = _decision("use-jwt-auth")
+    assert d is not None
+    # Live entries derive as accepted — no cached status column exists.
+    store = _store()
+    try:
+        assert {x.id for x in store.get_live_decisions()} == {"use-jwt-auth"}
+    finally:
+        store.close()
 
 
 def test_add_decision_identical_readd_is_skipped_as_duplicate(
@@ -190,9 +209,10 @@ def test_add_decision_identical_readd_is_skipped_as_duplicate(
     assert "skipped" in output.lower()
     assert "duplicate" in output.lower()
     # Original rationale survives untouched.
-    payload = _node_payload("use-jwt-auth")
-    assert "carry" in payload["rationale"]
-    assert "rotated" not in payload["rationale"]
+    d = _decision("use-jwt-auth")
+    assert d is not None
+    assert "carry" in d.rationale
+    assert "rotated" not in d.rationale
 
 
 def test_add_decision_same_title_new_rationale_deprecates_and_accepts(
@@ -204,9 +224,18 @@ def test_add_decision_same_title_new_rationale_deprecates_and_accepts(
                  "-r", "Rotated keys replace tokens with signed certificates")
     output = _text(result)
     assert "deprecated" in output.lower()
-    payload = _node_payload("use-jwt-auth")
-    assert payload["status"] == "accepted"
-    assert "certificates" in payload["rationale"]
+    d = _decision("use-jwt-auth")
+    assert d is not None
+    assert "certificates" in d.rationale
+    # The new incarnation derives as live despite the fresh tombstone row.
+    store = _store()
+    try:
+        assert {x.id for x in store.get_live_decisions()} == {"use-jwt-auth"}
+        records = store.get_deprecations_for_entry("decision", "use-jwt-auth")
+        assert len(records) == 1
+        assert records[0]["replaced_by"] == "use-jwt-auth"
+    finally:
+        store.close()
 
 
 @pytest.mark.parametrize(
@@ -243,8 +272,8 @@ def test_add_constraint_new_description_is_accepted(project_dir: Path) -> None:
     result = _ok("add", "constraint", "Handlers must remain stateless",
                  "-e", "src/api.py")
     assert "active" in _text(result)
-    payload = _node_payload("handlers-must-remain-stateless")
-    assert payload["status"] == "active"
+    c = _constraint("handlers-must-remain-stateless")
+    assert c is not None
 
 
 def test_add_constraint_duplicate_description_is_skipped(project_dir: Path) -> None:
@@ -263,8 +292,21 @@ def test_add_constraint_decision_id_links_constraint_to_decision(
         "-r", "Relational integrity beats document stores here")
     _ok("add", "constraint", "Schema migrations are mandatory",
         "-e", "src/db.py", "-d", "adopt-postgres")
-    payload = _node_payload("schema-migrations-are-mandatory")
-    assert payload["enforced_by"] == "adopt-postgres"
+    c = _constraint("schema-migrations-are-mandatory")
+    assert c is not None
+    assert c.enforced_by == "adopt-postgres"
+
+
+def test_add_constraint_dangling_decision_id_fails_cleanly(
+    project_dir: Path,
+) -> None:
+    """FK integrity: a -d referencing no decision errors without traceback."""
+    result = _run("add", "constraint", "Orphan rule here",
+                  "-e", "src/x.py", "-d", "no-such-decision")
+    output = _text(result)
+    assert result.exit_code == 1
+    assert "Error" in output
+    assert "Traceback" not in output
 
 
 # ── 5. deprecate ────────────────────────────────────────────────────
@@ -322,8 +364,8 @@ def test_query_keywords_nonsense_returns_no_matches_without_crash(
 
 
 def test_query_file_finds_seeded_entry_by_path(project_dir: Path) -> None:
-    # The file must exist on disk: queries auto-clean dead references,
-    # so entities pointing at nonexistent files are pruned first.
+    # The file must exist on disk: dead paths are filtered lazily via a
+    # filesystem check at read time (Spec 29), no pre-query cleanup scans.
     source = project_dir / "src" / "foo.py"
     source.parent.mkdir(parents=True)
     source.write_text("x = 1", encoding="utf-8")
@@ -484,8 +526,13 @@ def test_readd_after_deprecate_replaces_tombstone(project_dir: Path) -> None:
     output = _text(result)
     assert "accepted" in output.lower()
     assert "replaced deprecated" in output.lower()
-    payload = _node_payload("use-monolith")
-    assert payload["status"] == "accepted"
+    d = _decision("use-monolith")
+    assert d is not None
+    store = _store()
+    try:
+        assert {x.id for x in store.get_live_decisions()} == {"use-monolith"}
+    finally:
+        store.close()
 
 
 def test_empty_rationale_readd_is_skipped_as_duplicate(project_dir: Path) -> None:
@@ -540,3 +587,66 @@ def test_query_search_prints_mementic_summary_line(project_dir: Path) -> None:
     line = next((ln for ln in text.splitlines() if "[mementic:" in ln), None)
     assert line is not None, f"no [mementic: ...] summary line in:\n{text}"
     assert "1 constraints, 0 decisions" in line
+
+
+# ── 15. history (Spec 29) ───────────────────────────────────────────
+
+
+def test_history_without_id_lists_full_table_newest_first(
+    project_dir: Path,
+) -> None:
+    _ok("add", "decision", "First Entry",
+        "-r", "Alpha rationale for history")
+    _ok("add", "decision", "Second Entry",
+        "-r", "Beta rationale for history")
+    _ok("deprecate", "first-entry", "-r", "obsolete now")
+    _ok("deprecate", "second-entry", "-r", "also obsolete")
+    output = _text(_ok("history"))
+    assert "Deprecation history" in output
+    assert "second-entry" in output and "first-entry" in output
+    # Newest first: the later tombstone appears before the earlier one.
+    assert output.index("second-entry") < output.index("first-entry")
+
+
+def test_history_with_id_shows_reason_and_successor_chain(
+    project_dir: Path,
+) -> None:
+    _ok("add", "decision", "Legacy Auth",
+        "-r", "Basic auth guards every endpoint")
+    _ok("add", "decision", "Token Auth",
+        "-r", "Signed tokens replace basic auth entirely")
+    _ok("deprecate", "legacy-auth", "-r", "insecure scheme")
+    output = _text(_ok("history", "legacy-auth"))
+    assert "legacy-auth" in output
+    assert "insecure scheme" in output  # the written reason is echoed back
+    assert "retired" in output.lower()  # replaced_by NULL renders as retired
+
+
+def test_history_transitive_chain_prints_arrows(project_dir: Path) -> None:
+    """Re-add cycles accumulate tombstone rows; history lists them all."""
+    _ok("add", "decision", "Cache Layer",
+        "-r", "In-process caching serves reads")
+    _ok("deprecate", "cache-layer", "-r", "v1 out")
+    # Re-add same slug: replace-path succession tombstone.
+    _ok("add", "decision", "Cache Layer",
+        "-r", "Distributed cache tier replaces process memory")
+    output = _text(_ok("history", "cache-layer"))
+    assert "cache-layer" in output
+    assert "v1 out" in output  # prior incarnation's reason still visible
+    assert "superseded by re-added entry" in output
+
+
+def test_history_unknown_id_exits_zero_with_message(project_dir: Path) -> None:
+    output = _text(_ok("history", "no-such-id"))
+    assert "no-such-id" in output
+
+
+def test_deprecated_entry_excluded_from_context_pack(project_dir: Path) -> None:
+    """Derived liveness: tombstoned entries never reach keyword packs."""
+    _ok("add", "decision", "Zebra Protocol",
+        "-r", "Zebra routing handles every packet flow")
+    _ok("deprecate", "zebra-protocol", "-r", "superseded")
+    result = _ok("query", "keywords", "zebra")
+    output = _text(result)
+    assert "zebra-protocol" not in output
+    assert "0 constraints, 0 decisions" in output

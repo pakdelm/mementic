@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import re
 from collections.abc import Sequence
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
-from mementic.models import Constraint, Decision, DecisionStatus
+from mementic.models import Constraint, Decision
+from mementic.store import utc_now
 
 # ID length constants for slugify(). Both decision and constraint IDs
 # share the same max length for consistency.
@@ -49,8 +49,12 @@ def slugify(text: str, max_length: int | None = None) -> str:
 
 
 def timestamp() -> str:
-    """Return ISO 8601 timestamp string."""
-    return datetime.now(timezone.utc).isoformat()
+    """Return ISO 8601 timestamp string.
+
+    Delegates to the store's canonical clock so every timestamp in the
+    system shares one format (lexicographically comparable).
+    """
+    return utc_now()
 
 
 def resolve_repo_name(repo_path: str) -> str:
@@ -140,17 +144,17 @@ def _compact_constraint_line(constraint: Constraint) -> str:
 
     Drops the ``[C]`` prefix and ``(enforced by: X)`` suffix to save tokens
     while preserving the description and ID reference. When the constraint
-    has bound entities, they are appended as ``(bound: a.py, b.py)`` so agents
-    can see *where* the rule applies without reading files. Long entity lists
+    has bound paths, they are appended as ``(bound: a.py, b.py)`` so agents
+    can see *where* the rule applies without reading files. Long path lists
     are truncated via :func:`_truncate_entity_list`.
 
     Returns:
-        ``- {description} (#{id})`` when no bound entities, otherwise
-        ``- {description} (#{id}, bound: {entities})``.
+        ``- {description} (#{id})`` when no bound paths, otherwise
+        ``- {description} (#{id}, bound: {paths})``.
     """
     bound_suffix = ""
-    if constraint.bound_entities:
-        entities = _truncate_entity_list(constraint.bound_entities)
+    if constraint.paths:
+        entities = _truncate_entity_list(constraint.paths)
         bound_suffix = f", bound: {entities}"
     return f"- {constraint.description} (#{constraint.id}{bound_suffix})"
 
@@ -160,17 +164,17 @@ def _compact_decision_line(decision: Decision) -> str:
 
     Drops title, date, and rejected alternatives to save tokens while
     preserving the rationale and ID reference. When the decision has
-    affected entities, they are appended as ``(affects: a.py, b.py)`` so
-    agents can see *where* the decision applies without reading files. Long
-    entity lists are truncated via :func:`_truncate_entity_list`.
+    affected paths, they are appended as ``(affects: a.py, b.py)`` so
+    agents can see *where* the decision applies without reading files.
+    Long path lists are truncated via :func:`_truncate_entity_list`.
 
     Returns:
-        ``- {rationale} (#{id})`` when no affected entities, otherwise
-        ``- {rationale} (#{id}, affects: {entities})``.
+        ``- {rationale} (#{id})`` when no affected paths, otherwise
+        ``- {rationale} (#{id}, affects: {paths})``.
     """
     affects_suffix = ""
-    if decision.affected_entities:
-        entities = _truncate_entity_list(decision.affected_entities)
+    if decision.paths:
+        entities = _truncate_entity_list(decision.paths)
         affects_suffix = f", affects: {entities}"
     return f"- {decision.rationale} (#{decision.id}{affects_suffix})"
 
@@ -227,47 +231,26 @@ def keyword_overlap_score(
     return matched / len(task_keywords)
 
 
-def specificity_factor(bound_entities: list[str]) -> float:
-    """Score multiplier inversely proportional to bound entity count.
+def specificity_factor(paths: list[str]) -> float:
+    """Score multiplier inversely proportional to associated path count.
 
     1 file → 1.0x, 2 files → 0.5x, 5 files → 0.2x, 10 files → 0.1x.
-    Zero bound entities → 0.1x (penalized as maximally generic).
+    Zero paths → 0.1x (penalized as maximally generic).
 
     Args:
-        bound_entities: The constraint's bound entity list.
+        paths: The entry's associated path list.
 
     Returns:
-        0.1 when ``len(bound_entities) == 0``, otherwise ``1.0 / len(bound_entities)``.
+        0.1 when ``len(paths) == 0``, otherwise ``1.0 / len(paths)``.
     """
-    if not bound_entities:
+    if not paths:
         return 0.1
-    return 1.0 / len(bound_entities)
+    return 1.0 / len(paths)
 
 
 # ---------------------------------------------------------------------------
 # Ranking helpers
 # ---------------------------------------------------------------------------
-# Ranking helpers
-# ---------------------------------------------------------------------------
-
-
-def _status_priority(status: DecisionStatus | str) -> int:
-    """Convert a status value to a sort priority integer.
-
-    Lower values are shown first.  Priority: ``accepted`` / ``active`` (0),
-    everything else (1).
-
-    Args:
-        status: A ``DecisionStatus`` enum value or a raw string (Constraints
-            store status as a plain string).
-
-    Returns:
-        An integer priority where 0 = highest.
-    """
-    s = status.value if isinstance(status, DecisionStatus) else str(status).lower()
-    if s in ("accepted", "active"):
-        return 0
-    return 1
 
 
 def rank_and_truncate(
@@ -276,13 +259,15 @@ def rank_and_truncate(
     *,
     line_formatter: Callable[[Any], str],
 ) -> tuple[list[Constraint | Decision], int, int]:
-    """Rank items by overlap then recency then status, truncate to token budget.
+    """Rank items by recency then overlap, truncate to token budget.
 
-    Sorting (three-pass stable sort, least-significant first):
+    Sorting (two-pass stable sort, least-significant first):
 
-    1. **Status** — ``accepted`` / ``active`` before ``deprecated``.
-    2. **Recency** — ``created_at`` descending (newer first).
-    3. **Overlap score** — higher first.
+    1. **Recency** — ``created_at`` descending (newer first).
+    2. **Overlap score** — higher first.
+
+    Deprecated entries never reach this function: callers pass the derived
+    live-set from the store, so no status sort exists (Spec 29).
 
     Walks the sorted items, computes the token count of each compact format
     line, and stops **before** the item that would push the total over
@@ -299,9 +284,8 @@ def rank_and_truncate(
     """
     total = len(items)
 
-    # Three-pass stable sort: least significant first, most significant last
-    sorted_items = sorted(items, key=lambda x: _status_priority(x[0].status))
-    sorted_items = sorted(sorted_items, key=lambda x: x[0].created_at, reverse=True)
+    # Two-pass stable sort: least significant first, most significant last
+    sorted_items = sorted(items, key=lambda x: x[0].created_at, reverse=True)
     sorted_items = sorted(sorted_items, key=lambda x: x[1], reverse=True)
 
     selected: list[Constraint | Decision] = []
@@ -337,8 +321,8 @@ def format_memory_context(
     use the same pipeline.  Items with zero keyword overlap sink to
     the bottom; token budget controls how many are shown.
 
-    When ``keywords`` is ``None``, falls back to recency + status
-    ranking for both (backward compatible).
+    When ``keywords`` is ``None``, falls back to recency ranking
+    (backward compatible).
 
     Constraints and decisions each get their own independent token budget.
     Both sections always appear (even when empty, with an omission note).
@@ -349,7 +333,7 @@ def format_memory_context(
         max_constraint_tokens: Maximum token budget for constraint lines.
         max_decision_tokens: Maximum token budget for decision lines.
         keywords: Keywords for matching (agent-generated).
-            When ``None``, constraints are ranked by recency + status.
+            When ``None``, constraints are ranked by recency.
 
     Returns:
         Formatted markdown string.
@@ -371,7 +355,7 @@ def format_memory_context(
         scored: list[tuple[Constraint, float]] = []
         for c in constraints:
             score = keyword_overlap_score(c.description, keywords)
-            score *= specificity_factor(c.bound_entities)
+            score *= specificity_factor(c.paths)
             scored.append((c, score))
         scored.sort(key=lambda x: x[1], reverse=True)
         # Relevance gate: exclude items with zero keyword overlap
@@ -389,7 +373,7 @@ def format_memory_context(
             tokens_used_c += line_tokens
         shown_c = len(selected_c)
     else:
-        # Fallback: recency + status ranking (no keywords available)
+        # Fallback: recency ranking (no keywords available)
         constraint_tuples = [(c, 0) for c in constraints]
         selected_c_tuples, shown_c = rank_and_truncate(
             constraint_tuples,
@@ -427,7 +411,7 @@ def format_memory_context(
         scored_d: list[tuple[Decision, float]] = []
         for d in decisions:
             score = keyword_overlap_score(d.rationale, keywords)
-            score *= specificity_factor(d.affected_entities)
+            score *= specificity_factor(d.paths)
             scored_d.append((d, score))
         scored_d.sort(key=lambda x: x[1], reverse=True)
         # Relevance gate: exclude items with zero keyword overlap
@@ -445,7 +429,7 @@ def format_memory_context(
             tokens_used_d += line_tokens
         shown_d = len(selected_d)
     else:
-        # Fallback: recency + status ranking (no keywords available)
+        # Fallback: recency ranking (no keywords available)
         if decisions:
             decision_tuples = [(d, 0) for d in decisions]
             fallback_selected, shown_d = rank_and_truncate(
@@ -524,7 +508,7 @@ def format_context_pack_json(
     :func:`format_memory_context`.  When ``keywords`` is provided, items
     are ranked by ``keyword_overlap_score * specificity_factor``, then
     gated (score > 0) and truncated to token budgets.  Without keywords,
-    falls back to recency + status ranking.
+    falls back to recency ranking.
 
     Args:
         decisions: List of ``Decision`` objects.
@@ -532,7 +516,7 @@ def format_context_pack_json(
         max_constraint_tokens: Maximum token budget for constraint lines.
         max_decision_tokens: Maximum token budget for decision lines.
         keywords: Keywords for matching (agent-generated).  When ``None``,
-            items are ranked by recency + status.
+            items are ranked by recency.
 
     Returns:
         A JSON-serializable dict with ``summary``, ``constraints``, and
@@ -550,7 +534,7 @@ def format_context_pack_json(
         scored_c: list[tuple[Constraint, float]] = []
         for c in constraints:
             score = keyword_overlap_score(c.description, keywords)
-            score *= specificity_factor(c.bound_entities)
+            score *= specificity_factor(c.paths)
             scored_c.append((c, score))
         scored_c.sort(key=lambda x: x[1], reverse=True)
         scored_c = [(c, s) for c, s in scored_c if s > 0.0]
@@ -569,7 +553,7 @@ def format_context_pack_json(
         scored_d: list[tuple[Decision, float]] = []
         for d in decisions:
             score = keyword_overlap_score(d.rationale, keywords)
-            score *= specificity_factor(d.affected_entities)
+            score *= specificity_factor(d.paths)
             scored_d.append((d, score))
         scored_d.sort(key=lambda x: x[1], reverse=True)
         scored_d = [(d, s) for d, s in scored_d if s > 0.0]
@@ -584,7 +568,7 @@ def format_context_pack_json(
             tokens_used_d += line_tokens
         shown_d = len(selected_d)
     else:
-        # --- Fallback: recency + status ranking ---
+        # --- Fallback: recency ranking ---
         constraint_tuples = [(c, 0) for c in constraints]
         selected_c_tuples, shown_c = rank_and_truncate(
             constraint_tuples,
@@ -623,8 +607,7 @@ def format_context_pack_json(
             {
                 "id": c.id,
                 "description": c.description,
-                "entities": c.bound_entities,
-                "status": c.status,
+                "entities": c.paths,
             }
             for c in selected_c
         ],
@@ -633,8 +616,7 @@ def format_context_pack_json(
                 "id": d.id,
                 "title": d.title,
                 "rationale": d.rationale,
-                "entities": d.affected_entities,
-                "status": d.status.value,
+                "entities": d.paths,
             }
             for d in selected_d
         ],
@@ -649,14 +631,13 @@ def format_file_history_json(
     """Produces a JSON-serializable dict for the ``query file`` command.
 
     Formats decisions with ``id``, ``title``, ``rationale`` (truncated to
-    :data:`_RATIONALE_MAX_CHARS` chars), ``source``, and ``created_at``.
-    Formats constraints with ``id``, ``description``, ``source``, ``status``,
-    and ``created_at``.
+    :data:`_RATIONALE_MAX_CHARS` chars), and ``created_at``.  Formats
+    constraints with ``id``, ``description``, and ``created_at``.
 
     Args:
         entity_path: Path of the code entity (e.g. ``mementic/format.py``).
         decisions: List of ``(Decision, overlap_score)`` tuples from the
-            graph query.
+            path query.
         constraints: List of ``Constraint`` objects bound to the entity.
 
     Returns:
@@ -673,7 +654,6 @@ def format_file_history_json(
                 "id": d.id,
                 "title": d.title,
                 "rationale": rationale,
-                "source": d.source,
                 "created_at": d.created_at,
             }
         )
@@ -684,8 +664,6 @@ def format_file_history_json(
             {
                 "id": c.id,
                 "description": c.description,
-                "source": c.source,
-                "status": c.status,
                 "created_at": c.created_at,
             }
         )
