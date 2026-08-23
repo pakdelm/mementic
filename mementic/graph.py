@@ -89,7 +89,7 @@ class GraphStore:
 
         Without batch mode, every mutation triggers a full
         ``DELETE + re-INSERT`` of the entire graph to SQLite —
-        catastrophically slow for bulk init/capture.  With batch mode
+        catastrophically slow for bulk ingestion.  With batch mode
         enabled, ``_write_back`` becomes a no-op until the context
         manager exits.
         """

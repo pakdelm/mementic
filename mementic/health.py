@@ -1,7 +1,7 @@
 """Health check helper module.
 
 Provides HealthItem and check_health() for diagnosing mementic setup.
-No network calls. No LLM cost. All checks are presence-only.
+No network calls. No inference. All checks are presence-only.
 """
 
 from __future__ import annotations
@@ -33,7 +33,7 @@ def check_health(
     graph: GraphStore | None = None,
     repo_path: Path | None = None,
 ) -> list[HealthItem]:
-    """Run all health checks. No network calls. No LLM cost.
+    """Run all health checks. No network calls. No inference.
 
     Args:
         graph: Optional GraphStore instance. When provided, checks graph
@@ -46,31 +46,7 @@ def check_health(
     """
     items: list[HealthItem] = []
 
-    # 1. API key check (via keyring → env fallback)
-    try:
-        from mementic.config import load_local_config
-        cfg = load_local_config()
-        api_key = cfg.llm.get_api_key() if cfg else None
-    except Exception:
-        api_key = None
-    if api_key:
-        items.append(
-            HealthItem(
-                label="API key",
-                status="ok",
-                hint="present — run 'mementic capture' to verify",
-            )
-        )
-    else:
-        items.append(
-            HealthItem(
-                label="API key",
-                status="fail",
-                hint="not set. Mementic runs in deterministic mode with reduced extraction quality. Set a key in .mementic/config.json for full quality, or continue as-is.",
-            )
-        )
-
-    # 2. Graph check
+    # 1. Graph check
     if graph is not None:
         stats = graph.stats()
         if stats.get("constraints", 0) > 0 or stats.get("decisions", 0) > 0:
@@ -99,39 +75,7 @@ def check_health(
             )
         )
 
-    # 3. Session provider check
-    try:
-        from mementic.session import get_registry
-
-        registry = get_registry()
-        provider, detected = registry.detect()
-        if provider and detected:
-            items.append(
-                HealthItem(
-                    label="Session provider",
-                    status="ok",
-                    hint=f"{provider.agent_name} detected",
-                )
-            )
-        else:
-            items.append(
-                HealthItem(
-                    label="Session provider",
-                    status="fail",
-                    hint="No session provider detected. "
-                    "Run 'mementic capture --agent opencode' after your first session.",
-                )
-            )
-    except Exception:
-        items.append(
-            HealthItem(
-                label="Session provider",
-                status="fail",
-                hint="Could not detect session provider.",
-            )
-        )
-
-    # 4. Enforcement check (AGENTS.md)
+    # 2. Enforcement check (AGENTS.md)
     agents_md = (repo_path or Path.cwd()) / "AGENTS.md"
     if agents_md.exists():
         content = agents_md.read_text(encoding="utf-8")

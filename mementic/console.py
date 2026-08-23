@@ -7,7 +7,6 @@ commands share the same visual language.  Uses the GitHub Dark palette.
 from __future__ import annotations
 
 import sys
-from collections.abc import Callable
 from typing import Any
 
 from rich.box import SIMPLE_HEAD
@@ -27,7 +26,6 @@ if hasattr(sys.stderr, "reconfigure"):
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
 
 console = Console(highlight=False)
-err_console = Console(stderr=True, highlight=False)
 
 
 # Map of Unicode chars that can crash cp1252 terminals -> ASCII fallbacks.
@@ -78,9 +76,6 @@ C_ID: str = "#58a6ff"
 C_PATH: str = "#79c0ff"
 C_HEADER: str = "#e6edf3"
 C_DIM: str = "#8b949e"
-C_HINT: str = "#484f58"
-C_PROGRESS: str = "#58a6ff"
-C_EMPTY_BAR: str = "#21262d"
 C_BORDER: str = "#30363d"
 
 
@@ -150,78 +145,6 @@ def text(markup: str, **kwargs: Any) -> _Text:
     return _Text.from_markup(markup, **kwargs)
 
 
-
 STATUS_OK: str = "[OK]"
 STATUS_FAIL: str = "[FAIL]"
 STATUS_DEPRECATED: str = "[DEPR]"
-STATUS_STALE: str = "~"
-
-
-def status_ok(label: str, detail: str = "") -> str:
-    """Rich markup for a passed check."""
-    base = f"[{C_SUCCESS}]{STATUS_OK}[/] [{C_HEADER}]{label}[/]"
-    if detail:
-        base += f"  [{C_DIM}]{detail}[/]"
-    return base
-
-
-def status_fail(label: str, hint: str = "") -> str:
-    """Rich markup for a failed check."""
-    base = f"[{C_FAIL}]{STATUS_FAIL}[/] [{C_HEADER}]{label}[/]"
-    if hint:
-        base += f"  [{C_HINT}]{hint}[/]"
-    return base
-
-
-def status_warn(label: str, detail: str = "") -> str:
-    """Rich markup for a warning."""
-    base = f"[{C_WARN}]{STATUS_DEPRECATED}[/] [{C_HEADER}]{label}[/]"
-    if detail:
-        base += f"  [{C_DIM}]{detail}[/]"
-    return base
-
-
-
-def make_progress() -> Any:
-    """Return a Rich Progress bar configured with the project theme."""
-    from rich.progress import (
-        BarColumn,
-        Progress,
-        SpinnerColumn,
-        TaskProgressColumn,
-        TextColumn,
-        TimeElapsedColumn,
-    )
-
-    return Progress(
-        SpinnerColumn(spinner_name="dots", style=C_PROGRESS),
-        TextColumn(f"[{C_HEADER}]{{task.description}}"),
-        BarColumn(
-            bar_width=None,
-            complete_style=C_PROGRESS,
-            finished_style=C_PROGRESS,
-            pulse_style=C_PROGRESS,
-            style=C_EMPTY_BAR,
-        ),
-        TaskProgressColumn(style=C_DIM, show_speed=False),
-        TimeElapsedColumn(),
-        console=console,
-    )
-
-
-
-def make_step_tracker(
-    progress: Any, task_id: Any, *, preamble: str = ""
-) -> Callable[[str, int], None]:
-    """Return an ``advance(description, count)`` callback.
-
-    Every call updates the progress bar description and advances by
-    ``count`` ticks (default 1).  ``preamble`` is prepended to the
-    description — use it for a phase prefix like ``"Init"``.
-    """
-
-    def _advance(description: str, count: int = 1) -> None:
-        desc = f"{preamble}  {description}" if preamble else description
-        progress.update(task_id, advance=count, description=desc)
-
-    return _advance

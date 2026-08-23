@@ -25,14 +25,6 @@ _AGENT_RULES_FILES: dict[str, str] = {
     "windsurf": ".windsurfrules",
 }
 
-# Agent -> MCP config file path (relative to repo root)
-_AGENT_MCP_CONFIG: dict[str, str] = {
-    "opencode": "opencode.json",
-    "claude-code": ".claude/mcp.json",
-    "cursor": ".cursor/mcp.json",
-    "windsurf": ".windsurf/mcp.json",
-}
-
 _ENFORCEMENT_HEADING = "## Mementic Memory (HARD CONSTRAINT — ALWAYS ACTIVE)"
 
 
@@ -83,18 +75,6 @@ def get_rules_file(agent: str) -> str | None:
         Relative path to the rules file, or None if agent doesn't need one.
     """
     return _AGENT_RULES_FILES.get(agent)
-
-
-def get_mcp_config_file(agent: str) -> str | None:
-    """Get the MCP config file path for an agent.
-
-    Args:
-        agent: Agent identifier.
-
-    Returns:
-        Relative path to the MCP config file, or None if unknown.
-    """
-    return _AGENT_MCP_CONFIG.get(agent)
 
 
 def inject_enforcement(
