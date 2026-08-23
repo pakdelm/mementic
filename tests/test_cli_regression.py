@@ -44,6 +44,17 @@ def _text(result: Result) -> str:
 _CONSOLE_ENV = {"COLUMNS": "160"}
 
 
+@pytest.fixture(autouse=True)
+def _wide_console(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Force rich's render width to 160 for every test in this module.
+
+    Pinning ``Console._width`` directly is deterministic across platforms
+    and CI runners, where the ``COLUMNS`` environment variable may be
+    pre-set, ignored by the runner, or shadowed by terminal detection.
+    """
+    monkeypatch.setattr("mementic.console.console._width", 160)
+
+
 def _run(*args: str) -> Result:
     """Invoke the CLI app with the given argument vector."""
     return runner.invoke(app, list(args), env=_CONSOLE_ENV)
