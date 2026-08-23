@@ -227,7 +227,7 @@ def main() -> None:
 
     # -- Commit & tag --
     run("git", "add", "pyproject.toml", "CHANGELOG.md")
-    run("git", "commit", "-m", f"Release {tag}")
+    run("git", "commit", "--signoff", "-m", f"Release {tag}")
     ok(f"Committed: Release {tag}")
     run("git", "tag", tag)
     ok(f"Tagged: {tag}")
