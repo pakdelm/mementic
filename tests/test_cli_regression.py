@@ -392,6 +392,44 @@ def test_query_keywords_nonsense_returns_no_matches_without_crash(
     assert "use-jwt-auth" not in output
 
 
+def test_query_keywords_max_tokens_override_truncates(project_dir: Path) -> None:
+    """--max-tokens overrides both section budgets proportionally (Spec 30)."""
+    _ok("add", "decision", "Use Jwt Auth",
+        "-r", "Jwt tokens carry authentication claims")
+    _ok("add", "decision", "Jwt Refresh Flow",
+        "-r", "Refresh tokens rotate jwt sessions nightly")
+    _ok("add", "decision", "Jwt Clock Skew",
+        "-r", "Jwt token validation tolerates minor clock skew only")
+    _ok("add", "decision", "Jwt Key Rotation",
+        "-r", "Rotate jwt signing tokens before the quarterly audit window")
+    _ok("add", "decision", "Jwt Audience Binding",
+        "-r", "Every jwt token must pin its audience claim to one service")
+    _ok("add", "decision", "Unrelated Note",
+        "-r", "Completely different filler topic for corpus diversity")
+    full = _ok("query", "keywords", "jwt", "tokens")
+    tiny = _ok("query", "keywords", "jwt", "tokens", "--max-tokens", "50")
+    full_text = _text(full)
+    tiny_text = _text(tiny)
+    # Both runs honor the [mementic: ...] echo contract.
+    for text in (full_text, tiny_text):
+        assert "[mementic:" in text
+    # The tiny budget renders fewer pack items than the default budgets
+    # even with the min-shown floor: five long jwt decisions cannot all fit.
+    assert tiny_text.count("(#") < full_text.count("(#")
+    assert "below threshold" in tiny_text
+
+
+def test_query_keywords_rejects_nonpositive_max_tokens(
+    project_dir: Path,
+) -> None:
+    """--max-tokens < 1 exits non-zero with an actionable message."""
+    result = _run("query", "keywords", "jwt", "--max-tokens", "0")
+    assert result.exit_code != 0
+    output = _text(result)
+    assert "--max-tokens" in output
+    assert "at least 1" in output
+
+
 # ── 7. query file ───────────────────────────────────────────────────
 
 
@@ -593,11 +631,19 @@ def test_unicode_rationale_round_trips_through_add_and_search(
 def test_query_keywords_prints_mementic_summary_line(project_dir: Path) -> None:
     _ok("add", "decision", "Use Jwt Auth",
         "-r", "Jwt tokens carry authentication claims")
+    # A second unrelated entry keeps the query keyword rare, so its IDF is
+    # positive and the pack has a real match to report (Spec 30 Phase 1).
+    _ok("add", "decision", "Unrelated Note",
+        "-r", "Completely different filler topic for corpus diversity")
     result = _ok("query", "keywords", "jwt", "auth")
     text = _text(result)
     line = next((ln for ln in text.splitlines() if "[mementic:" in ln), None)
     assert line is not None, f"no [mementic: ...] summary line in:\n{text}"
-    assert re.search(r"\d+ constraints?, \d+ decisions?", line)
+    assert re.search(
+        r"\d+ of \d+ constraints, \d+ of \d+ decisions matched \(.+\) shown",
+        line,
+    ), f"summary line lacks shown/matched wording: {line}"
+    assert "1 of 1 decisions" in line
 
 
 def test_query_file_prints_mementic_summary_line(project_dir: Path) -> None:
@@ -681,4 +727,8 @@ def test_deprecated_entry_excluded_from_context_pack(project_dir: Path) -> None:
     result = _ok("query", "keywords", "zebra")
     output = _text(result)
     assert "zebra-protocol" not in output
-    assert "0 constraints, 0 decisions" in output
+    # Shown/matched wording (Spec 30 Phase 4): nothing live, nothing shown.
+    assert (
+        "[mementic: 0 of 0 constraints, 0 of 0 decisions matched (zebra) shown]"
+        in output
+    )

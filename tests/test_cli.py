@@ -386,9 +386,11 @@ class TestQueryKeywordsJson:
         store = _make_store()
         _seed_decision(store, "use-jwt", rationale="Token-based authentication "
                        "for APIs")
+        # No bound paths: a nonexistent path plus an old timestamp would make
+        # this entry a ghost and drop it from packs (Spec 30 Phase 2).
         _seed_constraint(store, "c-stateless",
                          description="All services must be stateless",
-                         enforced_by="use-jwt", paths=["src/services.py"])
+                         enforced_by="use-jwt")
 
         with patch("mementic.cli._resolve_store", return_value=store):
             result = runner.invoke(app, ["query", "keywords", "auth", "--json"])

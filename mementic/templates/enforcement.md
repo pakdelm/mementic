@@ -77,6 +77,15 @@ other write path:**
 - **Multiple deprecations** — run `mementic deprecate <id1> <id2> ...`
   to retire outdated rules in one call.
 
+**History first — tombstones and duplicates:**
+
+- When you encounter a deprecated/tombstoned entry in any listing, run
+  `mementic history <id>` before acting on it — the reason and any successor
+  chain are recorded there.
+- Before re-adding content that might already exist, check first with
+  `mementic history <id>` (or `mementic query search <term>`); don't duplicate
+  entries that were retired or already recorded.
+
 **If you skip these steps, you are violating project constraints.**
 A graph with no new decisions after a sprint of development is evidence
 of a broken enforcement loop. Fix the instructions, not the agent.

@@ -22,6 +22,7 @@ from collections import deque
 from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from urllib.parse import quote
 
 from mementic.models import Constraint, Decision
 
@@ -165,15 +166,31 @@ class MementicStore:
     Opens (creating if necessary) the database at ``db_path``, applies the
     schema-v5 DDL to fresh databases, and refuses databases from older
     schema versions (run ``scripts/migrate_v4_to_v5.py`` first).
+
+    With ``read_only=True`` the store opens the file through a SQLite
+    ``mode=ro`` URI: it never creates directories or database files and any
+    write attempt fails at the driver level, so read-only tooling (e.g. the
+    probe harness) structurally cannot mutate a database.
     """
 
-    def __init__(self, db_path: str | Path) -> None:
+    def __init__(self, db_path: str | Path, *, read_only: bool = False) -> None:
         self._db_path = Path(db_path)
+        self._read_only = read_only
         self._conn: sqlite3.Connection | None = None
         if str(db_path) != ":memory:":
-            self._db_path.parent.mkdir(parents=True, exist_ok=True)
-            self._conn = sqlite3.connect(str(self._db_path))
+            if read_only:
+                uri = (
+                    "file:"
+                    + quote(self._db_path.resolve().as_posix(), safe="/:")
+                    + "?mode=ro"
+                )
+                self._conn = sqlite3.connect(uri, uri=True)
+            else:
+                self._db_path.parent.mkdir(parents=True, exist_ok=True)
+                self._conn = sqlite3.connect(str(self._db_path))
         else:
+            if read_only:
+                raise ValueError("read_only=True requires a file-backed database")
             self._conn = sqlite3.connect(":memory:")
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA foreign_keys=ON")
@@ -197,6 +214,12 @@ class MementicStore:
         version: int = conn.execute("PRAGMA user_version").fetchone()[0]
         if version == SCHEMA_VERSION:
             return
+        if self._read_only:
+            raise RuntimeError(
+                f"Read-only open refused: database schema is v{version} but this "
+                f"build requires v{SCHEMA_VERSION} (or the file is not an "
+                f"initialized mementic database). Open it read-write to migrate."
+            )
         if version == 0:
             tables = {
                 row["name"]

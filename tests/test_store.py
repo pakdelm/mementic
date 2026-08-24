@@ -58,6 +58,62 @@ def _add_constraint(
 # ── Schema ──────────────────────────────────────────────────────────
 
 
+# ── Read-only mode ──────────────────────────────────────────────────
+
+
+class TestReadOnlyStore:
+    def test_read_only_store_reads_file_database(self, tmp_path: Path) -> None:
+        db = tmp_path / "graph.db"
+        writer = MementicStore(db_path=db)
+        _add_decision(writer, entry_id="d1")
+        _add_constraint(writer, entry_id="c1")
+        writer.close()
+
+        reader = MementicStore(db_path=db, read_only=True)
+        try:
+            assert [d.id for d in reader.get_live_decisions()] == ["d1"]
+            assert [c.id for c in reader.get_live_constraints()] == ["c1"]
+        finally:
+            reader.close()
+
+    def test_read_only_write_raises(self, tmp_path: Path) -> None:
+        """mode=ro is structural: even the driver refuses writes."""
+        db = tmp_path / "graph.db"
+        writer = MementicStore(db_path=db)
+        writer.close()
+
+        reader = MementicStore(db_path=db, read_only=True)
+        try:
+            with pytest.raises(sqlite3.OperationalError):
+                reader.add_decision(
+                    entry_id="d2",
+                    title="T",
+                    rationale="r",
+                    created_at="2024-01-02T00:00:00Z",
+                )
+        finally:
+            reader.close()
+
+    def test_read_only_missing_file_does_not_create_it(self, tmp_path: Path) -> None:
+        db = tmp_path / "missing" / "graph.db"
+        with pytest.raises(sqlite3.OperationalError):
+            MementicStore(db_path=db, read_only=True)
+        assert not (tmp_path / "missing").exists()
+
+    def test_read_only_rejects_uninitialized_database(
+        self, tmp_path: Path,
+    ) -> None:
+        db = tmp_path / "graph.db"
+        db.write_bytes(b"")  # exists but user_version=0, no schema
+        with pytest.raises(RuntimeError, match="Read-only open refused"):
+            MementicStore(db_path=db, read_only=True)
+
+    def test_read_only_memory_database_rejected(self) -> None:
+        with pytest.raises(ValueError, match="file-backed"):
+            MementicStore(db_path=":memory:", read_only=True)
+
+
+
 def _raw_conn(store: MementicStore) -> sqlite3.Connection:
     """Return the store's connection for schema-level assertions."""
     conn = store._conn

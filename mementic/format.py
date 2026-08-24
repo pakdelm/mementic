@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import math
 import re
 from collections.abc import Sequence
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, TypeVar
+
+from pydantic import BaseModel
 
 from mementic.models import Constraint, Decision
 from mementic.store import utc_now
@@ -190,62 +194,279 @@ def _compact_evolution_line(d: Decision) -> str:
     return f"- [{d.created_at}] {d.title}: {d.rationale} (#{d.id})"
 
 
-CONTEXT_PACK_DEFAULT_MAX_CONSTRAINT_TOKENS: int = 10000
-CONTEXT_PACK_DEFAULT_MAX_DECISION_TOKENS: int = 10000
+# Empirically chosen pack budgets (Spec 30 Phase 3, revised post-merge).
+# First probe measured precision decay only: score percentile fell mildly
+# with budget (90.2 -> 82.9 across totals {400..1200}), so 400 total was
+# chosen. Post-merge floor-clamp measurement corrected that: at 200/200
+# every realistic query clamps at the 3-item minimum while dozens-hundreds
+# of gate-passed matches go unshown (10/10 decision sections clamped).
+# Re-measured across the same queries, raising to 500/500 (~1000 total)
+# roughly doubles shown items (60 -> 102) for ~+40% tokens, and the earlier
+# precision-decay data shows below-median junk stays <1 item/pack even at
+# double this size -- recall is worth far more than that decay.
+CONTEXT_PACK_DEFAULT_MAX_CONSTRAINT_TOKENS: int = 500
+CONTEXT_PACK_DEFAULT_MAX_DECISION_TOKENS: int = 500
+
+
+def split_pack_budget(total: int | None) -> tuple[int, int]:
+    """Split a total pack token budget into ``(constraints, decisions)``.
+
+    ``None`` returns the empirical defaults unchanged. Otherwise the total
+    is divided proportionally to the default split so a ``--max-tokens``
+    override keeps the evidence-chosen constraint/decision ratio (Spec 30
+    Phase 3). The constraint share is floored and the rounding remainder
+    goes to the decisions section, so no zero-token section is reachable.
+
+    This is the canonical split formula; the CLI and the probe harness both
+    derive from it so their logic cannot drift.
+
+    Args:
+        total: Combined token budget, or ``None`` for the defaults.
+
+    Returns:
+        ``(constraint_tokens, decision_tokens)``.
+    """
+    if total is None:
+        return (
+            CONTEXT_PACK_DEFAULT_MAX_CONSTRAINT_TOKENS,
+            CONTEXT_PACK_DEFAULT_MAX_DECISION_TOKENS,
+        )
+    share = CONTEXT_PACK_DEFAULT_MAX_CONSTRAINT_TOKENS / (
+        CONTEXT_PACK_DEFAULT_MAX_CONSTRAINT_TOKENS
+        + CONTEXT_PACK_DEFAULT_MAX_DECISION_TOKENS
+    )
+    constraint_tokens = math.floor(total * share)
+    return (constraint_tokens, total - constraint_tokens)
 
 # Max character count for rationale in file_history_json output.
 # Longer rationales are truncated with "..." appended.
 _RATIONALE_MAX_CHARS: int = 200
 
 
-def keyword_overlap_score(
-    constraint_description: str,
-    task_keywords: list[str],
+# ---------------------------------------------------------------------------
+# Keyword scoring (Spec 30 — IDF-weighted, field-weighted)
+# ---------------------------------------------------------------------------
+
+# Field weights for keyword matches (Spec 30 Phase 1). A keyword matched in
+# several fields of one entry counts its highest matching field weight once.
+FIELD_WEIGHT_TITLE: float = 3.0
+FIELD_WEIGHT_DESCRIPTION: float = 2.0
+FIELD_WEIGHT_RATIONALE: float = 1.0
+
+EntryT = TypeVar("EntryT", bound="Constraint | Decision")
+
+
+def _matches_keyword(field_text: str, keyword: str) -> bool:
+    """Return True when ``keyword`` occurs in ``field_text``.
+
+    Matching is case-insensitive and ``\\b`` word-boundary anchored at the
+    start, so "auth" matches "authentication" but not "reauth". This keeps
+    the match semantics of the former ``keyword_overlap_score`` (Spec 14).
+    """
+    return re.search(rf"\b{re.escape(keyword.lower())}", field_text.lower()) is not None
+
+
+def _searchable_fields(entry: Constraint | Decision) -> list[tuple[str, float]]:
+    """Return ``(field_text, field_weight)`` pairs for one entry.
+
+    Constraints expose only their description; decisions expose title and
+    rationale. Weights come from the :data:`FIELD_WEIGHT_*` constants.
+    """
+    if isinstance(entry, Constraint):
+        return [(entry.description, FIELD_WEIGHT_DESCRIPTION)]
+    return [
+        (entry.title, FIELD_WEIGHT_TITLE),
+        (entry.rationale, FIELD_WEIGHT_RATIONALE),
+    ]
+
+
+def document_frequencies(
+    entries: Sequence[Constraint | Decision],
+    keywords: list[str],
+) -> dict[str, int]:
+    """Count, per keyword, how many entries' searchable text contains it.
+
+    Document frequencies feed :func:`idf_weights`. An entry counts once per
+    keyword regardless of which or how many of its fields matched.
+
+    Args:
+        entries: The live corpus (constraints and decisions combined).
+        keywords: Query keywords to count.
+
+    Returns:
+        Map of keyword to document frequency (0 when unmatched everywhere).
+    """
+    counts: dict[str, int] = dict.fromkeys(keywords, 0)
+    for entry in entries:
+        for kw in keywords:
+            if any(_matches_keyword(text, kw) for text, _ in _searchable_fields(entry)):
+                counts[kw] += 1
+    return counts
+
+
+def idf_weights(n_docs: int, doc_freq: dict[str, int]) -> dict[str, float]:
+    """Compute smoothed ``ln(1 + N / (1 + df(kw)))`` for each keyword.
+
+    Smoothed IDF is strictly positive: a keyword present in every document
+    still scores ``ln(2)``, a keyword seen nowhere scores the maximum
+    ``ln(1 + N)``. Rare keywords still dominate and weights decrease
+    monotonically with document frequency. With ``n_docs <= 0`` every
+    weight is 0.0 (no corpus to discriminate).
+
+    Args:
+        n_docs: Size of the live corpus (constraints plus decisions).
+        doc_freq: Per-keyword document frequency from
+            :func:`document_frequencies`.
+
+    Returns:
+        Map of keyword to inverse document frequency (always > 0 for a
+        non-empty corpus).
+    """
+    if n_docs <= 0:
+        return dict.fromkeys(doc_freq, 0.0)
+    return {
+        kw: math.log(1 + n_docs / (df + 1)) for kw, df in doc_freq.items()
+    }
+
+
+def keyword_idf_score(
+    entry: Constraint | Decision,
+    keywords: list[str],
+    idf: dict[str, float],
 ) -> float:
-    """Score a constraint by binary keyword overlap with the task description.
+    """Score one entry by IDF-weighted keyword matches across its fields.
 
-    For each task keyword, checks if it appears as a whole-word or
-    word-beginning match in the constraint description.  Uses ``\\b``
-    word-boundary matching to avoid false positives: "test" matches
-    "testing flow" but NOT "contest results".
+    ``score = sum(idf(kw) * field_weight(kw) for matched kw) / len(keywords)``
+    (Spec 30 Phase 1). A keyword matched in multiple fields contributes its
+    highest field weight exactly once; normalization by query length keeps
+    scores comparable across queries of different sizes.
 
     Args:
-        constraint_description: The constraint's description text.
-        task_keywords: Keywords for matching (agent-generated).
+        entry: The constraint or decision to score.
+        keywords: Query keywords.
+        idf: Per-keyword IDF values from :func:`idf_weights`.
 
     Returns:
-        Score in [0, 1].  0 = no overlap, 1 = all keywords match.
-        Returns 0.0 when task_keywords is empty.
+        Non-negative score; 0.0 only when no keyword matches the entry.
     """
-    if not task_keywords:
+    if not keywords:
         return 0.0
+    total = 0.0
+    for kw in keywords:
+        weight = max(
+            (
+                w for text, w in _searchable_fields(entry)
+                if _matches_keyword(text, kw)
+            ),
+            default=0.0,
+        )
+        if weight > 0.0:
+            total += idf.get(kw, 0.0) * weight
+    return total / len(keywords)
 
-    desc_lower = constraint_description.lower()
-    matched = 0
-    for kw in task_keywords:
-        kw_lower = kw.lower()
-        # ``\\b`` anchor: keyword must start at a word boundary so "auth"
-        # matches "authentication" but NOT "reauth".
-        if re.search(rf"\b{re.escape(kw_lower)}", desc_lower):
-            matched += 1
-    return matched / len(task_keywords)
+
+# ---------------------------------------------------------------------------
+# Dead-path drop (Spec 30 Phase 2)
+# ---------------------------------------------------------------------------
+
+# Entries created within this many hours are exempt from the dead-path drop,
+# protecting fresh work whose files are not committed yet.
+DEAD_PATH_GRACE_HOURS: int = 24
 
 
-def specificity_factor(paths: list[str]) -> float:
-    """Score multiplier inversely proportional to associated path count.
+def _try_parse_timestamp(value: str) -> datetime | None:
+    """Parse an ISO 8601 timestamp; ``None`` when unparseable."""
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed
 
-    1 file → 1.0x, 2 files → 0.5x, 5 files → 0.2x, 10 files → 0.1x.
-    Zero paths → 0.1x (penalized as maximally generic).
+
+def _parse_timestamp(value: str) -> datetime:
+    """Parse an ISO 8601 timestamp into an aware UTC datetime.
+
+    Falls back to ``datetime.min`` (UTC) for unparseable input so malformed
+    clock readings are treated as maximally old rather than crashing pack
+    rendering.
+    """
+    parsed = _try_parse_timestamp(value)
+    if parsed is None:
+        return datetime.min.replace(tzinfo=timezone.utc)
+    return parsed
+
+
+def drop_dead_path_entries(
+    entries: Sequence[EntryT],
+    *,
+    path_exists: Callable[[str], bool] | None = None,
+    now: str | None = None,
+    base_dir: str | Path | None = None,
+) -> list[EntryT]:
+    """Drop entries whose every bound path has vanished from disk.
+
+    Spec 30 Phase 2: ghosts bound only to deleted files never rank usefully,
+    so they are excluded at render time. Semantics:
+
+    - Entries with no bound paths are never dropped by this filter.
+    - An entry with at least one existing path survives.
+    - Entries created within :data:`DEAD_PATH_GRACE_HOURS` of ``now`` are
+      exempt (fresh work whose files are not committed yet). Unparseable
+      ``created_at`` stamps count as inside the grace window — fail open,
+      because fresh-work protection is the point of the guard.
+
+    Context packs require resolution of repo-relative bound paths against
+    the **repo root, not the process working directory**: the CLI may run
+    from any directory, so callers must thread the stable base (the parent
+    of the directory containing ``graph.db``) via ``base_dir``.
+
+    Reuses the store's lazy ``path_exists`` predicate pattern: checks run per
+    path during rendering, with no cleanup scans and no stored state.
 
     Args:
-        paths: The entry's associated path list.
+        entries: Live constraints or decisions to filter.
+        path_exists: Filesystem-liveness predicate; when omitted, the
+            default checks ``Path(p).exists()``, resolving relative paths
+            against ``base_dir`` when given.
+        now: Canonical clock reading (ISO 8601); defaults to
+            :func:`mementic.store.utc_now`.
+        base_dir: Stable base for resolving repo-relative bound paths (the
+            directory containing the ``.mementic`` dir). Ignored when
+            ``path_exists`` is supplied.
 
     Returns:
-        0.1 when ``len(paths) == 0``, otherwise ``1.0 / len(paths)``.
+        The surviving entries, in input order.
     """
-    if not paths:
-        return 0.1
-    return 1.0 / len(paths)
+    if path_exists is not None:
+        exists = path_exists
+    elif base_dir is not None:
+        base = Path(base_dir)
+
+        def exists(p: str) -> bool:
+            return (base / p).exists()
+    else:
+
+        def exists(p: str) -> bool:
+            return Path(p).exists()
+    now_dt = _parse_timestamp(now if now is not None else utc_now())
+    cutoff = now_dt - timedelta(hours=DEAD_PATH_GRACE_HOURS)
+    kept: list[EntryT] = []
+    for entry in entries:
+        if not entry.paths:
+            kept.append(entry)
+            continue
+        if any(exists(p) for p in entry.paths):
+            kept.append(entry)
+            continue
+        # Fail open: only drop when the stamp is parseable AND demonstrably
+        # outside the grace window. Garbage stamps get fresh-work protection.
+        created = _try_parse_timestamp(entry.created_at)
+        if created is not None and created < cutoff:
+            continue
+        kept.append(entry)
+    return kept
 
 
 # ---------------------------------------------------------------------------
@@ -305,6 +526,286 @@ def rank_and_truncate(
 # Context pack & evolution formatting
 # ---------------------------------------------------------------------------
 
+# Truncation marker shown per section when matched items were cut by the
+# token budget (Spec 30 Phase 4). Tells the agent how to get more.
+_TRUNCATION_HINT: str = "refine keywords or raise --max-tokens"
+
+
+class ContextPackStats(BaseModel):
+    """Shown-vs-matched accounting for one rendered context pack.
+
+    Attributes:
+        matched_constraints: Constraints passing the relevance gate before
+            truncation.
+        shown_constraints: Constraints actually rendered within budget.
+        matched_decisions: Decisions passing the relevance gate before
+            truncation.
+        shown_decisions: Decisions actually rendered within budget.
+    """
+
+    matched_constraints: int = 0
+    shown_constraints: int = 0
+    matched_decisions: int = 0
+    shown_decisions: int = 0
+
+
+class ContextPackResult(BaseModel):
+    """Rendered context pack text plus its accounting and selected items.
+
+    Attributes:
+        text: Markdown pack body (same content ``format_memory_context``
+            returns).
+        stats: Shown/matched counts powering honest headers and summary
+            lines.
+        constraints: The rendered constraint items (post gate + budget).
+        decisions: The rendered decision items (post gate + budget).
+    """
+
+    text: str
+    stats: ContextPackStats
+    constraints: list[Constraint] = []
+    decisions: list[Decision] = []
+
+
+def _rank_keyword_section(
+    items: Sequence[EntryT],
+    keywords: list[str],
+    idf: dict[str, float],
+) -> list[tuple[EntryT, float]]:
+    """Score items against the query, gate zero scores, sort deterministically.
+
+    Ordering (Spec 30 Phase 1): score descending, then ``created_at``
+    descending, then ``id`` ascending — implemented as three stable
+    least-significant-first passes.
+
+    Returns:
+        ``(item, score)`` tuples with score > 0 only.
+    """
+    scored = [(it, keyword_idf_score(it, keywords, idf)) for it in items]
+    gated = [(it, s) for it, s in scored if s > 0.0]
+    gated.sort(key=lambda pair: pair[0].id)
+    gated.sort(key=lambda pair: pair[0].created_at, reverse=True)
+    gated.sort(key=lambda pair: pair[1], reverse=True)
+    return gated
+
+
+# Minimum items rendered per section regardless of budget: one long
+# top-ranked line must never starve a section that matched dozens of items.
+MIN_SHOWN_PER_SECTION: int = 3
+
+
+def _truncate_ranked(
+    ranked: Sequence[tuple[EntryT, float]],
+    max_tokens: int,
+    line_formatter: Callable[[Any], str],
+) -> list[EntryT]:
+    """Select ranked items under a token budget, with floor and backfill.
+
+    Walks the items in deterministic ranked order (Spec 30 Phase 1) and:
+
+    - admits any item whose line fits the remaining budget;
+    - **floor**: while fewer than ``min(len(ranked), MIN_SHOWN_PER_SECTION)``
+      items are selected, admits even over-budget items — so a single long
+      top-ranked line can neither empty the section nor reduce it to one
+      line when dozens of entries matched;
+    - **backfill**: skips an over-budget item instead of breaking, so
+      shorter lower-ranked lines further down still fit. Output preserves
+      strict score-descending order because selection follows ranked order.
+
+    The truncation marker is computed by callers as
+    ``len(ranked) - len(selected)`` and stays exact under all three rules.
+    """
+    selected: list[EntryT] = []
+    tokens_used = 0
+    floor = min(len(ranked), MIN_SHOWN_PER_SECTION)
+    for item, _score in ranked:
+        line_tokens = count_tokens(line_formatter(item))
+        if tokens_used + line_tokens > max_tokens and len(selected) >= floor:
+            continue  # backfill: keep scanning for shorter lower-ranked lines
+        selected.append(item)
+        tokens_used += line_tokens
+    return selected
+
+
+def _render_keyword_section(
+    heading: str,
+    total_in: int,
+    matched: int,
+    selected: Sequence[Any],
+    line_formatter: Callable[[Any], str],
+    noun: str,
+) -> list[str]:
+    """Render one keyword-path section with honest accounting markers."""
+    lines = ["", heading]
+    if matched == 0:
+        if total_in == 0:
+            lines.append("_None_")
+        else:
+            lines.append(f"_0 of {total_in} {noun} matched your keywords._")
+        return lines
+    if not selected:
+        lines.append(f"+{matched} more below threshold - {_TRUNCATION_HINT}")
+        return lines
+    for item in selected:
+        lines.append(line_formatter(item))
+    if len(selected) < matched:
+        lines.append(
+            f"+{matched - len(selected)} more below threshold - {_TRUNCATION_HINT}"
+        )
+    return lines
+
+
+def build_context_pack(
+    decisions: list[Decision],
+    constraints: list[Constraint],
+    max_constraint_tokens: int,
+    max_decision_tokens: int,
+    *,
+    keywords: list[str] | None = None,
+    path_exists: Callable[[str], bool] | None = None,
+    base_dir: str | Path | None = None,
+) -> ContextPackResult:
+    """Build the context pack body plus shown/matched statistics.
+
+    Keyword path (Spec 30): dead-path drop, IDF scoring over the surviving
+    corpus, relevance gate (score > 0), deterministic ordering, token-budget
+    truncation with a minimum-shown floor and backfill, honest header and
+    section markers. Without keywords the legacy recency fallback renders
+    unchanged.
+
+    Args:
+        decisions: Live decisions.
+        constraints: Live constraints.
+        max_constraint_tokens: Token budget for constraint lines.
+        max_decision_tokens: Token budget for decision lines.
+        keywords: Query keywords; ``None`` selects the recency fallback.
+        path_exists: Optional liveness predicate for the dead-path drop;
+            defaults to real filesystem checks.
+        base_dir: Stable base for resolving repo-relative bound paths in
+            the default dead-path predicate (the repo root, i.e. the parent
+            of the ``.mementic`` dir) — packs must resolve against the repo
+            root, not the process CWD. Ignored when ``path_exists`` is
+            supplied.
+
+    Returns:
+        :class:`ContextPackResult` with the markdown body and stats.
+    """
+    stats = ContextPackStats()
+
+    if keywords:
+        # Phase 2: ghosts whose every bound path is gone never rank usefully.
+        live_constraints = drop_dead_path_entries(
+            constraints, path_exists=path_exists, base_dir=base_dir,
+        )
+        live_decisions = drop_dead_path_entries(
+            decisions, path_exists=path_exists, base_dir=base_dir,
+        )
+
+        n_docs = len(live_constraints) + len(live_decisions)
+        doc_freq = document_frequencies(
+            [*live_constraints, *live_decisions], keywords,
+        )
+        idf = idf_weights(n_docs, doc_freq)
+
+        ranked_c = _rank_keyword_section(live_constraints, keywords, idf)
+        ranked_d = _rank_keyword_section(live_decisions, keywords, idf)
+        selected_c = _truncate_ranked(
+            ranked_c, max_constraint_tokens, _compact_constraint_line,
+        )
+        selected_d = _truncate_ranked(
+            ranked_d, max_decision_tokens, _compact_decision_line,
+        )
+
+        stats.matched_constraints = len(ranked_c)
+        stats.shown_constraints = len(selected_c)
+        stats.matched_decisions = len(ranked_d)
+        stats.shown_decisions = len(selected_d)
+
+        kw_summary = ", ".join(keywords)
+        header = f"## Architectural Context for: [{kw_summary}]"
+        total_shown = stats.shown_constraints + stats.shown_decisions
+        total_matched = stats.matched_constraints + stats.matched_decisions
+        header += f" - shown {total_shown} of {total_matched} matched"
+
+        lines = [header]
+        lines.extend(_render_keyword_section(
+            "### Constraints (MUST follow)",
+            len(constraints), stats.matched_constraints, selected_c,
+            _compact_constraint_line, "constraints",
+        ))
+        lines.extend(_render_keyword_section(
+            "### Relevant Decisions",
+            len(decisions), stats.matched_decisions, selected_d,
+            _compact_decision_line, "decisions",
+        ))
+        return ContextPackResult(
+            text="\n".join(lines),
+            stats=stats,
+            constraints=selected_c,
+            decisions=selected_d,
+        )
+
+    # --- Fallback: recency ranking (no keywords available) ---
+    constraint_tuples = [(c, 0) for c in constraints]
+    fallback_c, shown_c = rank_and_truncate(
+        constraint_tuples,
+        max_constraint_tokens,
+        line_formatter=_compact_constraint_line,
+    )[:2]
+    selected_c_fallback: list[Constraint] = fallback_c  # type: ignore[assignment]
+
+    if decisions:
+        decision_tuples = [(d, 0) for d in decisions]
+        fallback_d, shown_d = rank_and_truncate(
+            decision_tuples,
+            max_decision_tokens,
+            line_formatter=_compact_decision_line,
+        )[:2]
+        selected_d_fallback: list[Decision] = fallback_d  # type: ignore[assignment]
+    else:
+        selected_d_fallback, shown_d = [], 0
+
+    stats.matched_constraints = len(constraints)
+    stats.shown_constraints = shown_c
+    stats.matched_decisions = len(decisions)
+    stats.shown_decisions = shown_d
+
+    lines = ["## Architectural Context"]
+    lines.append("")
+    lines.append("### Constraints (MUST follow)")
+    if shown_c == 0:
+        if len(constraints) == 0:
+            lines.append("_None_")
+        else:
+            lines.append(f"_... and {len(constraints)} constraints omitted (token budget)._")
+    else:
+        for c in selected_c_fallback:
+            lines.append(_compact_constraint_line(c))
+        if shown_c < len(constraints):
+            omitted = len(constraints) - shown_c
+            lines.append(f"... and {omitted} more constraints omitted (token budget).")
+
+    lines.append("")
+    lines.append("### Relevant Decisions")
+    if shown_d == 0:
+        if len(decisions) == 0:
+            lines.append("_None_")
+        else:
+            lines.append(f"_... and {len(decisions)} decisions omitted (token budget)._")
+    else:
+        for d in selected_d_fallback:
+            lines.append(_compact_decision_line(d))
+        if shown_d < len(decisions):
+            omitted = len(decisions) - shown_d
+            lines.append(f"... and {omitted} more decisions omitted (token budget).")
+
+    return ContextPackResult(
+        text="\n".join(lines),
+        stats=stats,
+        constraints=selected_c_fallback,
+        decisions=selected_d_fallback,
+    )
+
 
 def format_memory_context(
     decisions: list[Decision],
@@ -316,16 +817,18 @@ def format_memory_context(
 ) -> str:
     """Produces structured, token-budgeted markdown for agent context injection.
 
-    When ``keywords`` is provided, constraints *and* decisions are
-    ranked by keyword overlap * specificity factor.  Both entity types
-    use the same pipeline.  Items with zero keyword overlap sink to
-    the bottom; token budget controls how many are shown.
+    When ``keywords`` is provided, constraints *and* decisions are ranked by
+    IDF-weighted keyword matches (Spec 30 Phase 1): rare keywords dominate,
+    field weights break ties (title > description > rationale), scores are
+    normalized by query length, and ordering is deterministic. Entries whose
+    every bound path is gone are dropped first (Phase 2); items with zero
+    score are gated out; the token budget controls how many are shown.
 
     When ``keywords`` is ``None``, falls back to recency ranking
     (backward compatible).
 
     Constraints and decisions each get their own independent token budget.
-    Both sections always appear (even when empty, with an omission note).
+    Both sections always appear (even when empty).
 
     Args:
         decisions: List of Decision objects.
@@ -338,124 +841,13 @@ def format_memory_context(
     Returns:
         Formatted markdown string.
     """
-    if keywords:
-        kw_summary = ", ".join(keywords)
-        lines = [f"## Architectural Context for: [{kw_summary}]"]
-    else:
-        lines = ["## Architectural Context"]
-
-    # --- Constraints section (always present) ---
-    total_c = len(constraints)
-    shown_c: int
-    selected_c: list[Constraint]
-
-    if keywords:
-        # Keyword-based ranking: score all items, then gate out
-        # items with zero keyword overlap (no match = not relevant).
-        scored: list[tuple[Constraint, float]] = []
-        for c in constraints:
-            score = keyword_overlap_score(c.description, keywords)
-            score *= specificity_factor(c.paths)
-            scored.append((c, score))
-        scored.sort(key=lambda x: x[1], reverse=True)
-        # Relevance gate: exclude items with zero keyword overlap
-        scored = [(c, s) for c, s in scored if s > 0.0]
-        selected_tuples = list(scored)
-
-        # Truncate to token budget
-        selected_c = []
-        tokens_used_c = 0
-        for c, _ in selected_tuples:
-            line_tokens = count_tokens(_compact_constraint_line(c))
-            if tokens_used_c + line_tokens > max_constraint_tokens:
-                break
-            selected_c.append(c)
-            tokens_used_c += line_tokens
-        shown_c = len(selected_c)
-    else:
-        # Fallback: recency ranking (no keywords available)
-        constraint_tuples = [(c, 0) for c in constraints]
-        selected_c_tuples, shown_c = rank_and_truncate(
-            constraint_tuples,
-            max_constraint_tokens,
-            line_formatter=_compact_constraint_line,
-        )[:2]
-        selected_c = selected_c_tuples  # type: ignore[assignment]
-        tokens_used_c = sum(
-            count_tokens(_compact_constraint_line(c))
-            for c in selected_c  # type: ignore[arg-type]
-        )
-
-    lines.append("")
-    lines.append("### Constraints (MUST follow)")
-    if shown_c == 0:
-        if total_c == 0:
-            lines.append("_None_")
-        else:
-            lines.append(f"_... and {total_c} constraints omitted (token budget)._")
-    else:
-        for c in selected_c:
-            lines.append(_compact_constraint_line(c))
-        if shown_c < total_c:
-            omitted = total_c - shown_c
-            lines.append(f"... and {omitted} more constraints omitted (token budget).")
-
-    # --- Decisions section (always present) ---
-    total_d = len(decisions)
-    shown_d: int
-    selected_d: list[Decision]
-
-    if keywords:
-        # Keyword-based ranking: score all items, then gate out
-        # items with zero keyword overlap (no match = not relevant).
-        scored_d: list[tuple[Decision, float]] = []
-        for d in decisions:
-            score = keyword_overlap_score(d.rationale, keywords)
-            score *= specificity_factor(d.paths)
-            scored_d.append((d, score))
-        scored_d.sort(key=lambda x: x[1], reverse=True)
-        # Relevance gate: exclude items with zero keyword overlap
-        scored_d = [(d, s) for d, s in scored_d if s > 0.0]
-        selected_d_tuples = list(scored_d)
-
-        # Truncate to token budget
-        selected_d = []
-        tokens_used_d = 0
-        for d, _ in selected_d_tuples:
-            line_tokens = count_tokens(_compact_decision_line(d))
-            if tokens_used_d + line_tokens > max_decision_tokens:
-                break
-            selected_d.append(d)
-            tokens_used_d += line_tokens
-        shown_d = len(selected_d)
-    else:
-        # Fallback: recency ranking (no keywords available)
-        if decisions:
-            decision_tuples = [(d, 0) for d in decisions]
-            fallback_selected, shown_d = rank_and_truncate(
-                decision_tuples,
-                max_decision_tokens,
-                line_formatter=_compact_decision_line,
-            )[:2]
-            selected_d = fallback_selected  # type: ignore[assignment]
-        else:
-            selected_d, shown_d = [], 0
-
-    lines.append("")
-    lines.append("### Relevant Decisions")
-    if shown_d == 0:
-        if total_d == 0:
-            lines.append("_None_")
-        else:
-            lines.append(f"_... and {total_d} decisions omitted (token budget)._")
-    else:
-        for d in selected_d:
-            lines.append(_compact_decision_line(d))  # type: ignore[arg-type]
-        if shown_d < total_d:
-            omitted = total_d - shown_d
-            lines.append(f"... and {omitted} more decisions omitted (token budget).")
-
-    return "\n".join(lines)
+    return build_context_pack(
+        decisions,
+        constraints,
+        max_constraint_tokens,
+        max_decision_tokens,
+        keywords=keywords,
+    ).text
 
 
 def format_evolution(
@@ -501,14 +893,15 @@ def format_context_pack_json(
     max_decision_tokens: int = CONTEXT_PACK_DEFAULT_MAX_DECISION_TOKENS,
     *,
     keywords: list[str] | None = None,
+    path_exists: Callable[[str], bool] | None = None,
+    base_dir: str | Path | None = None,
 ) -> dict:
     """Produces a JSON-serializable dict for agent context injection.
 
-    Uses the same keyword overlap scoring and token budget truncation as
-    :func:`format_memory_context`.  When ``keywords`` is provided, items
-    are ranked by ``keyword_overlap_score * specificity_factor``, then
-    gated (score > 0) and truncated to token budgets.  Without keywords,
-    falls back to recency ranking.
+    Uses the same IDF-weighted keyword scoring, dead-path drop, relevance
+    gate, deterministic ordering, and token budget truncation as
+    :func:`format_memory_context` (Spec 30).  Without keywords, falls back
+    to recency ranking.
 
     Args:
         decisions: List of ``Decision`` objects.
@@ -517,88 +910,41 @@ def format_context_pack_json(
         max_decision_tokens: Maximum token budget for decision lines.
         keywords: Keywords for matching (agent-generated).  When ``None``,
             items are ranked by recency.
+        path_exists: Optional liveness predicate for the dead-path drop;
+            defaults to real filesystem checks.
+        base_dir: Stable base for resolving repo-relative bound paths in
+            the default dead-path predicate (the repo root). Ignored when
+            ``path_exists`` is supplied.
 
     Returns:
         A JSON-serializable dict with ``summary``, ``constraints``, and
         ``decisions`` keys.
     """
-    total_c = len(constraints)
-    total_d = len(decisions)
-    shown_c: int
-    shown_d: int
-    selected_c: list[Constraint]
-    selected_d: list[Decision]
+    result = build_context_pack(
+        decisions,
+        constraints,
+        max_constraint_tokens,
+        max_decision_tokens,
+        keywords=keywords,
+        path_exists=path_exists,
+        base_dir=base_dir,
+    )
+    stats = result.stats
 
-    if keywords:
-        # --- Constraints: keyword-based ranking ---
-        scored_c: list[tuple[Constraint, float]] = []
-        for c in constraints:
-            score = keyword_overlap_score(c.description, keywords)
-            score *= specificity_factor(c.paths)
-            scored_c.append((c, score))
-        scored_c.sort(key=lambda x: x[1], reverse=True)
-        scored_c = [(c, s) for c, s in scored_c if s > 0.0]
-
-        selected_c = []
-        tokens_used_c = 0
-        for c, _ in scored_c:
-            line_tokens = count_tokens(_compact_constraint_line(c))
-            if tokens_used_c + line_tokens > max_constraint_tokens:
-                break
-            selected_c.append(c)
-            tokens_used_c += line_tokens
-        shown_c = len(selected_c)
-
-        # --- Decisions: keyword-based ranking ---
-        scored_d: list[tuple[Decision, float]] = []
-        for d in decisions:
-            score = keyword_overlap_score(d.rationale, keywords)
-            score *= specificity_factor(d.paths)
-            scored_d.append((d, score))
-        scored_d.sort(key=lambda x: x[1], reverse=True)
-        scored_d = [(d, s) for d, s in scored_d if s > 0.0]
-
-        selected_d = []
-        tokens_used_d = 0
-        for d, _ in scored_d:
-            line_tokens = count_tokens(_compact_decision_line(d))
-            if tokens_used_d + line_tokens > max_decision_tokens:
-                break
-            selected_d.append(d)
-            tokens_used_d += line_tokens
-        shown_d = len(selected_d)
-    else:
-        # --- Fallback: recency ranking ---
-        constraint_tuples = [(c, 0) for c in constraints]
-        selected_c_tuples, shown_c = rank_and_truncate(
-            constraint_tuples,
-            max_constraint_tokens,
-            line_formatter=_compact_constraint_line,
-        )[:2]
-        selected_c = selected_c_tuples  # type: ignore[assignment]
-
-        if decisions:
-            decision_tuples = [(d, 0) for d in decisions]
-            fallback_selected, shown_d = rank_and_truncate(
-                decision_tuples,
-                max_decision_tokens,
-                line_formatter=_compact_decision_line,
-            )[:2]
-            selected_d = fallback_selected  # type: ignore[assignment]
-        else:
-            selected_d, shown_d = [], 0
-
-    # --- Build summary ---
-    c_label = f"{shown_c} of {total_c}" if shown_c < total_c else str(shown_c)
-    d_label = f"{shown_d} of {total_d}" if shown_d < total_d else str(shown_d)
+    c_label = f"{stats.shown_constraints} of {stats.matched_constraints}"
+    d_label = f"{stats.shown_decisions} of {stats.matched_decisions}"
 
     if keywords:
         kw_summary = ", ".join(keywords)
         summary = f"{c_label} constraints, {d_label} decisions matched for [{kw_summary}]"
     else:
-        summary = f"{c_label} constraints, {d_label} decisions"
+        summary = f"{stats.shown_constraints} constraints, {stats.shown_decisions} decisions"
 
-    if shown_c < total_c or shown_d < total_d:
+    truncated = (
+        stats.shown_constraints < stats.matched_constraints
+        or stats.shown_decisions < stats.matched_decisions
+    )
+    if truncated:
         summary += " (token budget)"
 
     return {
@@ -609,7 +955,7 @@ def format_context_pack_json(
                 "description": c.description,
                 "entities": c.paths,
             }
-            for c in selected_c
+            for c in result.constraints
         ],
         "decisions": [
             {
@@ -618,7 +964,7 @@ def format_context_pack_json(
                 "rationale": d.rationale,
                 "entities": d.paths,
             }
-            for d in selected_d
+            for d in result.decisions
         ],
     }
 

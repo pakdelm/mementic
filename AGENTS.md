@@ -88,6 +88,15 @@ other write path:**
 - **Multiple deprecations** — run `mementic deprecate <id1> <id2> ...`
   to retire outdated rules in one call.
 
+**History first — tombstones and duplicates:**
+
+- When you encounter a deprecated/tombstoned entry in any listing, run
+  `mementic history <id>` before acting on it — the reason and any successor
+  chain are recorded there.
+- Before re-adding content that might already exist, check first with
+  `mementic history <id>` (or `mementic query search <term>`); don't duplicate
+  entries that were retired or already recorded.
+
 **Post-recording cleanup:** After recording decisions or constraints via
 `mementic add decision` / `mementic add constraint`, call
 `mementic deprecate <id1> <id2> ...` for any rules those decisions

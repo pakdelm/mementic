@@ -97,6 +97,7 @@ Agents use these CLI commands:
 | Record a constraint | `mementic add constraint DESC -e PATH` |
 | Retire outdated rules | `mementic deprecate ID1 ID2 ... -r "reason"` |
 | Search the graph | `mementic query search <term>` |
+| Trace why an entry was retired | `mementic history <id>` |
 
 `query keywords` and `query file` support `--json` for programmatic use.
 
