@@ -16,11 +16,6 @@ from mementic.inject import (
 )
 
 
-# ---------------------------------------------------------------------------
-# load_template
-# ---------------------------------------------------------------------------
-
-
 def test_load_template_returns_string() -> None:
     """load_template returns a non-empty string."""
     result = load_template()
@@ -45,11 +40,6 @@ def test_load_template_contains_cli_commands() -> None:
         "query file",
     ):
         assert command in template, f"Template missing reference to {command}"
-
-
-# ---------------------------------------------------------------------------
-# detect_agents
-# ---------------------------------------------------------------------------
 
 
 def test_detect_agents_finds_opencode(tmp_path: Path) -> None:
@@ -78,11 +68,6 @@ def test_detect_agents_no_markers(tmp_path: Path) -> None:
     (tmp_path / ".git").mkdir()
     (tmp_path / "node_modules").mkdir()
     assert detect_agents(tmp_path) == []
-
-
-# ---------------------------------------------------------------------------
-# has_enforcement
-# ---------------------------------------------------------------------------
 
 
 def test_has_enforcement_true(tmp_path: Path) -> None:
@@ -115,11 +100,6 @@ def test_has_enforcement_empty_file(tmp_path: Path) -> None:
     assert has_enforcement(md) is False
 
 
-# ---------------------------------------------------------------------------
-# get_rules_file
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.parametrize(
     ("agent", "expected"),
     [
@@ -141,11 +121,6 @@ def test_get_rules_file_opencode() -> None:
 def test_get_rules_file_unknown() -> None:
     """An unknown agent returns None."""
     assert get_rules_file("nonexistent-agent") is None
-
-
-# ---------------------------------------------------------------------------
-# inject_enforcement — live writes
-# ---------------------------------------------------------------------------
 
 
 def test_inject_creates_new_file(tmp_path: Path) -> None:
@@ -195,11 +170,6 @@ def test_inject_skips_if_exists(tmp_path: Path) -> None:
     assert "Skipped" in result
     # File content should be unchanged
     assert md.read_text(encoding="utf-8") == f"# Project\n\n{_ENFORCEMENT_HEADING}\n"
-
-
-# ---------------------------------------------------------------------------
-# inject_enforcement — dry_run
-# ---------------------------------------------------------------------------
 
 
 def test_inject_dry_run_new_file(tmp_path: Path) -> None:

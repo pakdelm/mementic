@@ -217,18 +217,11 @@ re-added slug derives as live again) — liveness is derived at query time, so
 context packs and keyword queries always exclude tombstones without any
 cleanup scans.
 
-**Upgrading from schema v4?** Run the one-shot migration:
-
-```bash
-uv run python scripts/migrate_v4_to_v5.py            # default .mementic/graph.db
-uv run python scripts/migrate_v4_to_v5.py --db PATH  # custom location
-```
-
-It backs up your database to `graph.db.bak` first, copies decisions and
-constraints into the v5 tables, drops legacy `proposed`-status zombie rows,
-materializes file paths into `entry_paths`, and backfills tombstones for
-entries deprecated under the old scheme. The script refuses to run against
-anything other than a v4 database and prints per-rule counts when done.
+**Upgrading from schema v4 (memento 0.3.0 or earlier)?** Old-schema databases
+are not auto-upgraded. Start fresh: move the old `.mementic/graph.db` aside
+(or delete it) and run `mementic init`. If you need data out of a v4
+database, check out the v0.3.0 tag, which shipped the one-shot conversion
+script.
 
 ## Project status & roadmap
 

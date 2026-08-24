@@ -101,10 +101,6 @@ def detect_repo_path() -> str:
     return str(Path.cwd())
 
 
-# ---------------------------------------------------------------------------
-# Compact format helpers
-# ---------------------------------------------------------------------------
-
 # Max character width for the joined entity list in compact format lines.
 # Truncation happens at a ``, `` boundary so a path is never split mid-token.
 _MAX_ENTITY_LIST_CHARS = 80
@@ -194,7 +190,7 @@ def _compact_evolution_line(d: Decision) -> str:
     return f"- [{d.created_at}] {d.title}: {d.rationale} (#{d.id})"
 
 
-# Empirically chosen pack budgets (Spec 30 Phase 3, revised post-merge).
+# Empirically chosen pack budgets (revised post-merge; evidence below).
 # First probe measured precision decay only: score percentile fell mildly
 # with budget (90.2 -> 82.9 across totals {400..1200}), so 400 total was
 # chosen. Post-merge floor-clamp measurement corrected that: at 200/200
@@ -213,9 +209,9 @@ def split_pack_budget(total: int | None) -> tuple[int, int]:
 
     ``None`` returns the empirical defaults unchanged. Otherwise the total
     is divided proportionally to the default split so a ``--max-tokens``
-    override keeps the evidence-chosen constraint/decision ratio (Spec 30
-    Phase 3). The constraint share is floored and the rounding remainder
-    goes to the decisions section, so no zero-token section is reachable.
+    override keeps the evidence-chosen constraint/decision ratio. The
+    constraint share is floored and the rounding remainder goes to the
+    decisions section, so no zero-token section is reachable.
 
     This is the canonical split formula; the CLI and the probe harness both
     derive from it so their logic cannot drift.
@@ -243,11 +239,7 @@ def split_pack_budget(total: int | None) -> tuple[int, int]:
 _RATIONALE_MAX_CHARS: int = 200
 
 
-# ---------------------------------------------------------------------------
-# Keyword scoring (Spec 30 — IDF-weighted, field-weighted)
-# ---------------------------------------------------------------------------
-
-# Field weights for keyword matches (Spec 30 Phase 1). A keyword matched in
+# Field weights for keyword matches. A keyword matched in
 # several fields of one entry counts its highest matching field weight once.
 FIELD_WEIGHT_TITLE: float = 3.0
 FIELD_WEIGHT_DESCRIPTION: float = 2.0
@@ -261,7 +253,7 @@ def _matches_keyword(field_text: str, keyword: str) -> bool:
 
     Matching is case-insensitive and ``\\b`` word-boundary anchored at the
     start, so "auth" matches "authentication" but not "reauth". This keeps
-    the match semantics of the former ``keyword_overlap_score`` (Spec 14).
+    the match semantics of the former ``keyword_overlap_score`` .
     """
     return re.search(rf"\b{re.escape(keyword.lower())}", field_text.lower()) is not None
 
@@ -337,7 +329,7 @@ def keyword_idf_score(
     """Score one entry by IDF-weighted keyword matches across its fields.
 
     ``score = sum(idf(kw) * field_weight(kw) for matched kw) / len(keywords)``
-    (Spec 30 Phase 1). A keyword matched in multiple fields contributes its
+    . A keyword matched in multiple fields contributes its
     highest field weight exactly once; normalization by query length keeps
     scores comparable across queries of different sizes.
 
@@ -364,10 +356,6 @@ def keyword_idf_score(
             total += idf.get(kw, 0.0) * weight
     return total / len(keywords)
 
-
-# ---------------------------------------------------------------------------
-# Dead-path drop (Spec 30 Phase 2)
-# ---------------------------------------------------------------------------
 
 # Entries created within this many hours are exempt from the dead-path drop,
 # protecting fresh work whose files are not committed yet.
@@ -407,7 +395,7 @@ def drop_dead_path_entries(
 ) -> list[EntryT]:
     """Drop entries whose every bound path has vanished from disk.
 
-    Spec 30 Phase 2: ghosts bound only to deleted files never rank usefully,
+    Ghosts bound only to deleted files never rank usefully,
     so they are excluded at render time. Semantics:
 
     - Entries with no bound paths are never dropped by this filter.
@@ -469,11 +457,6 @@ def drop_dead_path_entries(
     return kept
 
 
-# ---------------------------------------------------------------------------
-# Ranking helpers
-# ---------------------------------------------------------------------------
-
-
 def rank_and_truncate(
     items: Sequence[tuple[Constraint | Decision, int]],
     max_tokens: int,
@@ -488,7 +471,7 @@ def rank_and_truncate(
     2. **Overlap score** — higher first.
 
     Deprecated entries never reach this function: callers pass the derived
-    live-set from the store, so no status sort exists (Spec 29).
+    live-set from the store, so no status sort exists.
 
     Walks the sorted items, computes the token count of each compact format
     line, and stops **before** the item that would push the total over
@@ -522,12 +505,8 @@ def rank_and_truncate(
     return selected, len(selected), total
 
 
-# ---------------------------------------------------------------------------
-# Context pack & evolution formatting
-# ---------------------------------------------------------------------------
-
 # Truncation marker shown per section when matched items were cut by the
-# token budget (Spec 30 Phase 4). Tells the agent how to get more.
+# token budget. Tells the agent how to get more.
 _TRUNCATION_HINT: str = "refine keywords or raise --max-tokens"
 
 
@@ -574,7 +553,7 @@ def _rank_keyword_section(
 ) -> list[tuple[EntryT, float]]:
     """Score items against the query, gate zero scores, sort deterministically.
 
-    Ordering (Spec 30 Phase 1): score descending, then ``created_at``
+    Ordering: score descending, then ``created_at``
     descending, then ``id`` ascending — implemented as three stable
     least-significant-first passes.
 
@@ -601,7 +580,7 @@ def _truncate_ranked(
 ) -> list[EntryT]:
     """Select ranked items under a token budget, with floor and backfill.
 
-    Walks the items in deterministic ranked order (Spec 30 Phase 1) and:
+    Walks the items in deterministic ranked order and:
 
     - admits any item whose line fits the remaining budget;
     - **floor**: while fewer than ``min(len(ranked), MIN_SHOWN_PER_SECTION)``
@@ -667,7 +646,7 @@ def build_context_pack(
 ) -> ContextPackResult:
     """Build the context pack body plus shown/matched statistics.
 
-    Keyword path (Spec 30): dead-path drop, IDF scoring over the surviving
+    Keyword path: dead-path drop, IDF scoring over the surviving
     corpus, relevance gate (score > 0), deterministic ordering, token-budget
     truncation with a minimum-shown floor and backfill, honest header and
     section markers. Without keywords the legacy recency fallback renders
@@ -693,7 +672,7 @@ def build_context_pack(
     stats = ContextPackStats()
 
     if keywords:
-        # Phase 2: ghosts whose every bound path is gone never rank usefully.
+        # Ghosts whose every bound path is gone never rank usefully.
         live_constraints = drop_dead_path_entries(
             constraints, path_exists=path_exists, base_dir=base_dir,
         )
@@ -818,10 +797,10 @@ def format_memory_context(
     """Produces structured, token-budgeted markdown for agent context injection.
 
     When ``keywords`` is provided, constraints *and* decisions are ranked by
-    IDF-weighted keyword matches (Spec 30 Phase 1): rare keywords dominate,
+    IDF-weighted keyword matches: rare keywords dominate,
     field weights break ties (title > description > rationale), scores are
     normalized by query length, and ordering is deterministic. Entries whose
-    every bound path is gone are dropped first (Phase 2); items with zero
+    every bound path is gone are dropped first; items with zero
     score are gated out; the token budget controls how many are shown.
 
     When ``keywords`` is ``None``, falls back to recency ranking
@@ -900,7 +879,7 @@ def format_context_pack_json(
 
     Uses the same IDF-weighted keyword scoring, dead-path drop, relevance
     gate, deterministic ordering, and token budget truncation as
-    :func:`format_memory_context` (Spec 30).  Without keywords, falls back
+    :func:`format_memory_context`.  Without keywords, falls back
     to recency ranking.
 
     Args:

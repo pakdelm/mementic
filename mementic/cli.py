@@ -334,7 +334,7 @@ def keywords(
         typer.echo(
             f"Error: --max-tokens must be at least 1 (got {max_tokens}). "
             "Pass a positive total token budget, or omit the flag to use "
-            "the Spec 30 defaults.",
+            "the module defaults.",
             err=True,
         )
         raise typer.Exit(code=2)
@@ -345,7 +345,7 @@ def keywords(
     max_constraint_tokens, max_decision_tokens = _split_token_budget(max_tokens)
     # Dead-path checks must resolve repo-relative bound paths against the
     # stable repo root (graph.db's parent's parent), not the process CWD,
-    # which varies with where the CLI was invoked (Spec 30 review).
+    # which varies with where the CLI was invoked.
     base_dir = Path(".mementic/graph.db").parent.parent
 
     if json_output:

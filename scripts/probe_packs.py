@@ -1,4 +1,4 @@
-"""Empirical context-pack budget probe (Spec 30 Phase 3).
+"""Empirical context-pack budget probe.
 
 Runs ~10 realistic keyword query sets against a mementic graph database and
 renders packs at candidate TOTAL token budgets {400, 600, 800, 1200} (split
@@ -39,7 +39,7 @@ from mementic.format import (
 from mementic.models import Constraint, Decision
 from mementic.store import MementicStore
 
-# Realistic agent query sets (Spec 30): narrow, single-word technical
+# Realistic agent query sets: narrow, single-word technical
 # keywords, as instructed by the enforcement template.
 QUERY_SETS: dict[str, list[str]] = {
     "ruff-lint": ["ruff", "lint", "formatting", "quotes"],
@@ -54,7 +54,7 @@ QUERY_SETS: dict[str, list[str]] = {
     "uv-deps": ["uv", "dependency", "lock", "sync"],
 }
 
-# Candidate TOTAL token budgets to evaluate (Spec 30 Phase 3).
+# Candidate TOTAL token budgets to evaluate.
 BUDGETS: list[int] = [400, 600, 800, 1200]
 
 

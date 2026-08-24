@@ -20,9 +20,6 @@ from mementic.store import MementicStore
 runner = CliRunner()
 
 
-# ── Helpers ─────────────────────────────────────────────────────────
-
-
 def _strip_ansi(text: str) -> str:
     """Strip ANSI escape sequences so assertions are platform-agnostic."""
     return re.sub(r"\x1b\[[0-9;]*[a-zA-Z]", "", text)
@@ -91,9 +88,6 @@ def _constraint(entry_id: str):
         store.close()
 
 
-# ── Fixtures ────────────────────────────────────────────────────────
-
-
 @pytest.fixture()
 def bare_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Isolated empty project directory (no store yet)."""
@@ -106,9 +100,6 @@ def project_dir(bare_dir: Path) -> Path:
     """Isolated project directory with an initialized store."""
     _ok("init")
     return bare_dir
-
-
-# ── 1. Command surface ──────────────────────────────────────────────
 
 
 @pytest.mark.parametrize(
@@ -141,9 +132,6 @@ def test_query_help_lists_subcommands(subcommand: str) -> None:
 def test_list_help_lists_subcommands(subcommand: str) -> None:
     result = _ok("list", "--help")
     assert subcommand in _text(result)
-
-
-# ── 2. init ─────────────────────────────────────────────────────────
 
 
 def test_init_fresh_dir_creates_graph_db(bare_dir: Path) -> None:
@@ -179,9 +167,6 @@ def test_init_noninteractive_without_agent_markers_does_not_inject(
     result = _ok("init")
     assert "Re-run 'mementic init' interactively" in _text(result)
     assert not (bare_dir / "AGENTS.md").exists()
-
-
-# ── 3. add decision lifecycle ───────────────────────────────────────
 
 
 def test_add_decision_new_slug_is_accepted(project_dir: Path) -> None:
@@ -265,9 +250,6 @@ def test_add_decision_reports_counts_per_disposition(
     assert expected_counts in _text(result)
 
 
-# ── 4. add constraint ───────────────────────────────────────────────
-
-
 def test_add_constraint_new_description_is_accepted(project_dir: Path) -> None:
     result = _ok("add", "constraint", "Handlers must remain stateless",
                  "-e", "src/api.py")
@@ -341,9 +323,6 @@ def test_failed_readd_does_not_orphan_tombstone(project_dir: Path) -> None:
     assert "Schema migrations are mandatory" in _text(listing)
 
 
-# ── 5. deprecate ────────────────────────────────────────────────────
-
-
 def test_deprecate_decision_by_slug_marks_it_deprecated(project_dir: Path) -> None:
     _ok("add", "decision", "Use Monolith",
         "-r", "Single deployable keeps operations simple early on")
@@ -366,9 +345,6 @@ def test_deprecate_already_deprecated_is_graceful(project_dir: Path) -> None:
     result = _ok("deprecate", "use-monolith")
     assert "already deprecated" in _text(result).lower()
     assert result.exit_code == 0
-
-
-# ── 6. query keywords ───────────────────────────────────────────────
 
 
 def test_query_keywords_returns_matching_seeded_entries(project_dir: Path) -> None:
@@ -430,9 +406,6 @@ def test_query_keywords_rejects_nonpositive_max_tokens(
     assert "at least 1" in output
 
 
-# ── 7. query file ───────────────────────────────────────────────────
-
-
 def test_query_file_finds_seeded_entry_by_path(project_dir: Path) -> None:
     # The file must exist on disk: dead paths are filtered lazily via a
     # filesystem check at read time (Spec 29), no pre-query cleanup scans.
@@ -453,9 +426,6 @@ def test_query_file_unrelated_path_returns_empty(project_dir: Path) -> None:
     assert "track-auth-flow" not in _text(result)
 
 
-# ── 8. query search / stats ─────────────────────────────────────────
-
-
 def test_query_search_finds_seeded_content_substring(project_dir: Path) -> None:
     _ok("add", "constraint", "Handlers must remain stateless",
         "-e", "src/api.py")
@@ -471,9 +441,6 @@ def test_query_stats_runs_clean_on_seeded_graph(project_dir: Path) -> None:
         "-r", "Jwt authentication guards every endpoint")
     result = _ok("query", "stats")
     assert "Graph statistics" in _text(result)
-
-
-# ── 9. list ─────────────────────────────────────────────────────────
 
 
 def test_list_decisions_shows_seeded_entry(project_dir: Path) -> None:
@@ -509,17 +476,11 @@ def test_list_decisions_status_filter_excludes_deprecated(project_dir: Path) -> 
     assert "drop-legacy-auth" not in output
 
 
-# ── 10. status ──────────────────────────────────────────────────────
-
-
 def test_status_healthy_bundle_exits_zero_with_checklist(project_dir: Path) -> None:
     result = _ok("status")
     output = _text(result)
     assert "Status" in output
     assert "checks passed" in output
-
-
-# ── 11. log ─────────────────────────────────────────────────────────
 
 
 def test_log_lists_mutations_newest_first(project_dir: Path) -> None:
@@ -537,9 +498,6 @@ def test_log_lists_mutations_newest_first(project_dir: Path) -> None:
 def test_log_without_entries_prints_hint_and_exits_zero(project_dir: Path) -> None:
     result = _ok("log")
     assert "No audit log found" in _text(result)
-
-
-# ── 12. Error paths ─────────────────────────────────────────────────
 
 
 def test_unknown_command_exits_nonzero() -> None:
@@ -571,9 +529,6 @@ def test_missing_required_arguments_exit_nonzero(
 ) -> None:
     result = _run(*args)
     assert result.exit_code != 0
-
-
-# ── 13. Review hardening: edge paths ────────────────────────────────
 
 
 def test_cross_type_slug_collision_exits_cleanly(project_dir: Path) -> None:
@@ -625,9 +580,6 @@ def test_unicode_rationale_round_trips_through_add_and_search(
     assert "Unicode Auth" in _text(result)
 
 
-# ── 14. mementic summary-line contract ──────────────────────────────
-
-
 def test_query_keywords_prints_mementic_summary_line(project_dir: Path) -> None:
     _ok("add", "decision", "Use Jwt Auth",
         "-r", "Jwt tokens carry authentication claims")
@@ -665,9 +617,6 @@ def test_query_search_prints_mementic_summary_line(project_dir: Path) -> None:
     line = next((ln for ln in text.splitlines() if "[mementic:" in ln), None)
     assert line is not None, f"no [mementic: ...] summary line in:\n{text}"
     assert "1 constraints, 0 decisions" in line
-
-
-# ── 15. history (Spec 29) ───────────────────────────────────────────
 
 
 def test_history_without_id_lists_full_table_newest_first(

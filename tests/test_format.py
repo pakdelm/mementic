@@ -78,11 +78,6 @@ def c(c: Constraint, score: int = 1) -> tuple[Constraint, int]:
     return (c, score)
 
 
-# ======================================================================
-# rank_and_truncate
-# ======================================================================
-
-
 class TestRankAndTruncate:
     def test_returns_selected_shown_total(self) -> None:
         items = [c(make_constraint(id="c-1"), 3)]
@@ -164,11 +159,6 @@ class TestRankAndTruncate:
         )
         assert shown == 3
         assert total == 3
-
-
-# ======================================================================
-# format_memory_context
-# ======================================================================
 
 
 class TestFormatContextPack:
@@ -366,11 +356,6 @@ class TestFormatContextPack:
         assert "### Relevant Decisions" in output
 
 
-# ======================================================================
-# format_evolution
-# ======================================================================
-
-
 class TestFormatEvolution:
     def test_basic_output(self) -> None:
         decisions = [d(make_decision(id="d-1", title="Title 1", rationale="Rationale 1"))]
@@ -435,11 +420,6 @@ class TestFormatEvolution:
         assert "more decisions omitted" not in output
 
 
-# ======================================================================
-# Compact helper lines
-# ======================================================================
-
-
 class TestCompactConstraintLine:
     def test_format(self) -> None:
         c_obj = make_constraint(id="c-1", description="Use async everywhere")
@@ -489,11 +469,6 @@ class TestCompactEvolutionLine:
         line = _compact_evolution_line(d_obj)
         assert "[2025-01-15T00:00:00Z]" in line
         assert "Pick DB" in line
-
-
-# ======================================================================
-# slugify / timestamp / count_tokens (unchanged, kept for regression)
-# ======================================================================
 
 
 class TestSlugify:
@@ -597,11 +572,6 @@ class TestCountTokens:
         assert count_tokens("hello world foo") == len("hello world foo") // 4
 
 
-# ======================================================================
-# Compact entity enrichment (bound / affects)
-# ======================================================================
-
-
 def _make_constraint_with_entities(paths: list[str]) -> Constraint:
     """Build a Constraint with explicit bound paths for enrichment tests."""
     return Constraint(
@@ -685,17 +655,6 @@ class TestCompactEntityEnrichment:
         long_path = "a" * 200
         result = _truncate_entity_list([long_path], max_chars=50)
         assert result == "a" * 50 + "..."
-
-
-
-
-
-
-
-
-# ======================================================================
-# Spec 30 Phase 1 — IDF-weighted keyword scoring
-# ======================================================================
 
 
 def _corpus() -> list[Constraint | Decision]:
@@ -855,11 +814,6 @@ class TestKeywordIdfScore:
         assert two_kw == pytest.approx(one_kw / 2)
 
 
-# ======================================================================
-# Spec 30 Phase 1 — ordering properties through the pack builder
-# ======================================================================
-
-
 class TestIdfOrderingProperties:
     @staticmethod
     def _id_from_line(line: str) -> str:
@@ -934,17 +888,6 @@ class TestIdfOrderingProperties:
         assert "#c-miss" not in result.text
 
 
-
-
-
-
-
-
-# ======================================================================
-# Spec 14 — integration: keyword-ranked context pack
-# ======================================================================
-
-
 class TestFormatContextPackKeywordRanking:
     """Integration tests for the IDF-weighted keyword path (Spec 30)."""
 
@@ -1006,11 +949,6 @@ class TestFormatContextPackKeywordRanking:
         )
         # Newer constraint should appear first (recency ranking)
         assert output.index("c-new") < output.index("c-old")
-
-
-# ======================================================================
-# Spec 30 Phase 2 — dead-path drop
-# ======================================================================
 
 
 class TestDropDeadPathEntries:
@@ -1211,11 +1149,6 @@ class TestDeadPathDropInPacks:
         assert result.stats.matched_constraints == 1
 
 
-# ======================================================================
-# Spec 30 Phase 3 — empirical default budgets
-# ======================================================================
-
-
 class TestDefaultBudgets:
     def test_defaults_match_probe_evidence(self) -> None:
         """The chosen split must sum near the evidence-chosen 1000 total.
@@ -1243,11 +1176,6 @@ class TestDefaultBudgets:
             CONTEXT_PACK_DEFAULT_MAX_CONSTRAINT_TOKENS,
             CONTEXT_PACK_DEFAULT_MAX_DECISION_TOKENS,
         )
-
-
-# ======================================================================
-# Spec 30 Phase 4 — agent-first pack surface
-# ======================================================================
 
 
 class TestPackSurface:
@@ -1337,11 +1265,6 @@ class TestPackSurface:
         assert stats.matched_constraints == 5
         assert stats.shown_decisions == 0
         assert stats.matched_decisions == 0
-
-
-# ======================================================================
-# Spec 30 review — minimum-shown floor + backfill in _truncate_ranked
-# ======================================================================
 
 
 class TestTruncateFloorAndBackfill:
