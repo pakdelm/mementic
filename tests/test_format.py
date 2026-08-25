@@ -142,11 +142,12 @@ class TestRankAndTruncate:
             items, max_tokens=budget, line_formatter=_compact_constraint_line
         )
         assert shown == 1
-        assert selected[0].id == "c-a"  # type: ignore[attr-defined]
+        assert selected[0].id == "c-a"
 
     def test_empty_items(self) -> None:
+        items: list[tuple[Constraint, int]] = []
         selected, shown, total = rank_and_truncate(
-            [], max_tokens=1000, line_formatter=_compact_constraint_line
+            items, max_tokens=1000, line_formatter=_compact_constraint_line
         )
         assert selected == []
         assert shown == 0
