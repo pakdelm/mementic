@@ -26,6 +26,11 @@ context window):
 2. Run `mementic query keywords <kw1> <kw2> ...` with those keywords.
    Echo the `[mementic: ...]` summary line to the user.
 
+   **Command availability:** Commands assume `mementic` is installed
+   (`uv tool install git+https://github.com/pakdelm/mementic.git`). If the
+   shell cannot find `mementic`, retry as `uv run mementic <command>` in a
+   synced project checkout instead of skipping the step.
+
    **Multi-topic tasks:** When the user request spans multiple distinct
    sub-tasks, run `mementic query keywords` for each sub-task with focused,
    single-topic keywords. Separate queries produce better keyword matches
@@ -35,7 +40,13 @@ context window):
    2. `Files I still need to read and why:` — every code file you will open,
       each with a one-clause justification. If a file is not on this list,
       do not read it.
-4. Run `mementic query file <path>` for each file being modified.
+4. **File gate — before opening ANY file from that list**, run
+   `mementic query file <path>` for every path on it. Locating files with
+   grep/glob first is fine (you need the paths); reading content is not.
+   This covers exploration reads too, not just files being modified. If a
+   file returns constraints, fold them into your plan before the first Read.
+   HARD GATE: opening a code file that has no `query file` result this
+   message violates project constraints, same as skipping `query keywords`.
 5. Validate your plan against every returned constraint. Do NOT write code
    that violates an active constraint. Cite every entity you apply or
    reject with `[mementic: <id>]` so usage is auditable in the session log.
@@ -76,6 +87,15 @@ other write path:**
   content under the same title deprecates the old entry and accepts the new one.
 - **Multiple deprecations** — run `mementic deprecate <id1> <id2> ...`
   to retire outdated rules in one call.
+
+**History first — tombstones and duplicates:**
+
+- When you encounter a deprecated/tombstoned entry in any listing, run
+  `mementic history <id>` before acting on it — the reason and any successor
+  chain are recorded there.
+- Before re-adding content that might already exist, check first with
+  `mementic history <id>` (or `mementic query search <term>`); don't duplicate
+  entries that were retired or already recorded.
 
 **If you skip these steps, you are violating project constraints.**
 A graph with no new decisions after a sprint of development is evidence

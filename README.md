@@ -97,6 +97,7 @@ Agents use these CLI commands:
 | Record a constraint | `mementic add constraint DESC -e PATH` |
 | Retire outdated rules | `mementic deprecate ID1 ID2 ... -r "reason"` |
 | Search the graph | `mementic query search <term>` |
+| Trace why an entry was retired | `mementic history <id>` |
 
 `query keywords` and `query file` support `--json` for programmatic use.
 
@@ -114,7 +115,9 @@ This project uses Mementic as its architectural memory layer.
 1. Generate 5-12 narrow keywords for the task (e.g., "argon2 token login
    session" — skip generic terms like "security" or "password").
 2. Run `mementic query keywords <kw1> <kw2> ...`
-3. Run `mementic query file <path>` for each file being modified.
+3. List the code files you intend to open, then run
+   `mementic query file <path>` for each of them BEFORE reading any file —
+   exploration reads included, not just files you plan to modify.
 4. Validate your plan against every returned constraint.
 
 **When you make a decision or establish a rule:**
@@ -215,19 +218,6 @@ for it exists with a timestamp newer than the entry's `created_at` (so a
 re-added slug derives as live again) — liveness is derived at query time, so
 context packs and keyword queries always exclude tombstones without any
 cleanup scans.
-
-**Upgrading from schema v4?** Run the one-shot migration:
-
-```bash
-uv run python scripts/migrate_v4_to_v5.py            # default .mementic/graph.db
-uv run python scripts/migrate_v4_to_v5.py --db PATH  # custom location
-```
-
-It backs up your database to `graph.db.bak` first, copies decisions and
-constraints into the v5 tables, drops legacy `proposed`-status zombie rows,
-materializes file paths into `entry_paths`, and backfills tombstones for
-entries deprecated under the old scheme. The script refuses to run against
-anything other than a v4 database and prints per-rule counts when done.
 
 ## Project status & roadmap
 

@@ -1,4 +1,4 @@
-"""Tests for mementic CLI commands (Spec 06a D2, D4, 06c, Spec 28, Spec 29)."""
+"""Tests for mementic CLI commands."""
 
 from __future__ import annotations
 
@@ -83,11 +83,8 @@ def _seed_constraint(
     return c
 
 
-# ── 06c F3: list command ───────────────────────────────────────────
-
-
 class TestListCommand:
-    """Tests for mementic list command (Spec 06c F3)."""
+    """Tests for mementic list command."""
 
     def test_list_decisions(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -203,11 +200,8 @@ class TestListCommand:
         assert "does_not_exist.py" in output
 
 
-# ── 06c F4: deprecate command ──────────────────────────────────────
-
-
 class TestDeprecateCommand:
-    """Tests for mementic deprecate command (Spec 06c F4, Spec 29)."""
+    """Tests for mementic deprecate command."""
 
     def test_deprecate_marks_decision_deprecated(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -269,9 +263,6 @@ class TestDeprecateCommand:
 
         output = result.stdout + result.stderr
         assert "already deprecated" in output.lower()
-
-
-# ── history command (Spec 29) ──────────────────────────────────────
 
 
 class TestHistoryCommand:
@@ -339,9 +330,6 @@ class TestHistoryCommand:
         assert "No deprecation history" in _strip_ansi(result.stdout)
 
 
-# ── JSON output modes ───────────────────────────────────────────────
-
-
 class TestQueryKeywordsJson:
     """Tests for `mementic query keywords --json` output."""
 
@@ -386,9 +374,11 @@ class TestQueryKeywordsJson:
         store = _make_store()
         _seed_decision(store, "use-jwt", rationale="Token-based authentication "
                        "for APIs")
+        # No bound paths: a nonexistent path plus an old timestamp would make
+        # this entry a ghost and drop it from packs.
         _seed_constraint(store, "c-stateless",
                          description="All services must be stateless",
-                         enforced_by="use-jwt", paths=["src/services.py"])
+                         enforced_by="use-jwt")
 
         with patch("mementic.cli._resolve_store", return_value=store):
             result = runner.invoke(app, ["query", "keywords", "auth", "--json"])
@@ -538,11 +528,8 @@ class TestDeprecateMultiId:
         assert "1 errors" in output
 
 
-# ── Spec 28 Phase 1: add auto-resolve rules ────────────────────────
-
-
 class TestAddDecisionAutoResolve:
-    """Tests for `mementic add decision` auto-resolve rules (Spec 28)."""
+    """Tests for `mementic add decision` auto-resolve rules."""
 
     def test_new_slug_accepted(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -637,7 +624,7 @@ class TestAddDecisionAutoResolve:
     def test_rejected_flag_removed(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """--rejected was deleted in Spec 29; passing it exits nonzero."""
+        """--rejected was deleted; passing it exits nonzero."""
         monkeypatch.chdir(tmp_path)
 
         store = _make_store()
@@ -670,7 +657,7 @@ class TestAddDecisionAutoResolve:
 
 
 class TestAddConstraintAutoResolve:
-    """Tests for `mementic add constraint` auto-resolve rules (Spec 28)."""
+    """Tests for `mementic add constraint` auto-resolve rules."""
 
     def test_new_constraint_accepted(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -754,11 +741,8 @@ class TestAddConstraintAutoResolve:
         assert "0 deprecated" in output
 
 
-# ── Spec 28 Phase 3: init stub ─────────────────────────────────────
-
-
 class TestInitStub:
-    """Tests for the collapsed init command (Spec 28)."""
+    """Tests for the collapsed init command."""
 
     def test_init_creates_graph_db(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """init creates .mementic/graph.db when missing."""
@@ -793,7 +777,7 @@ class TestInitStub:
         assert "--deep" not in output
 
     def test_capture_command_removed(self) -> None:
-        """The capture command is gone from mementic --help (Spec 28)."""
+        """The capture command is gone from mementic --help."""
         result = runner.invoke(app, ["--help"])
         assert result.exit_code == 0, f"stderr: {result.stderr}"
         output = _strip_ansi(result.stdout)

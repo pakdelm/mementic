@@ -30,12 +30,17 @@ context window), unless the message falls into the skip categories above:
    padding with broad terms. Example for "fix authentication bug":
    ["argon2", "token", "login", "session"] — skip "security", "password",
    "hashing" because they match dozens of unrelated items.
-2. Run `mementic query keywords <kw1> <kw2> ...` with those keywords.
+2. Run `uv run mementic query keywords <kw1> <kw2> ...` with those keywords.
    Echo the `[mementic: ...]` summary line to the user.
+
+   **Invocation:** in this repo always call the CLI as
+   `uv run mementic <command>` — a bare `mementic` is not on PATH here and
+    fails on first use. Do not attempt bare invocations, do not install a
+    global tool.
 
    **Multi-topic tasks:** When the user request spans multiple distinct
    sub-tasks (e.g., "fix bug X in server.py and fix bug Y in graph.py"),
-   run `mementic query keywords` for each sub-task with focused,
+   run `uv run mementic query keywords` for each sub-task with focused,
    single-topic keywords. Separate queries produce better keyword matches
    than one diluted query for the whole.
 3. **Sufficiency gate — output these two lines before any further reads:**
@@ -43,11 +48,17 @@ context window), unless the message falls into the skip categories above:
    2. `Files I still need to read and why:` — every code file you will open,
       each with a one-clause justification. If a file is not on this list,
       do not read it.
-4. Run `mementic query file <path>` for each file being modified.
+4. **File gate — before opening ANY file from that list**, run
+   `uv run mementic query file <path>` for every path on it. Locating files
+   with grep/glob first is fine (you need the paths); reading content is not.
+   This covers exploration reads too, not just files being modified. If a
+   file returns constraints, fold them into your plan before the first Read.
+   HARD GATE: opening a code file that has no `query file` result this
+   message violates project constraints, same as skipping `query keywords`.
 5. Validate your plan against every returned constraint. Do NOT write code
    that violates an active constraint. Cite every entity you apply or
    reject with `[mementic: <id>]` so usage is auditable in the session log.
-5. Only read raw ADR or instruction files if the mementic memory leaves
+6. Only read raw ADR or instruction files if the mementic memory leaves
    ambiguity you must resolve to proceed safely.
 
 **Why every message, not just "before a task":** Context packs are free (no LLM
@@ -80,17 +91,26 @@ no excuse.
 other write path:**
 
 - **Inline proposals — always, no gate.** When you make a decision or establish
-  a rule, run `mementic add decision <title> --rationale "<text>"` and
-  `mementic add constraint <desc> -e <path>` immediately. No judgment call
+  a rule, run `uv run mementic add decision <title> --rationale "<text>"` and
+  `uv run mementic add constraint <desc> -e <path>` immediately. No judgment call
   about "architectural significance" — if it's worth remembering, propose it.
   If it's not, don't. Duplicate proposals are skipped automatically; changed
   content under the same title deprecates the old entry and accepts the new one.
-- **Multiple deprecations** — run `mementic deprecate <id1> <id2> ...`
+- **Multiple deprecations** — run `uv run mementic deprecate <id1> <id2> ...`
   to retire outdated rules in one call.
+
+**History first — tombstones and duplicates:**
+
+- When you encounter a deprecated/tombstoned entry in any listing, run
+  `uv run mementic history <id>` before acting on it — the reason and any successor
+  chain are recorded there.
+- Before re-adding content that might already exist, check first with
+  `uv run mementic history <id>` (or `uv run mementic query search <term>`); don't duplicate
+  entries that were retired or already recorded.
 
 **Post-recording cleanup:** After recording decisions or constraints via
 `mementic add decision` / `mementic add constraint`, call
-`mementic deprecate <id1> <id2> ...` for any rules those decisions
+`uv run mementic deprecate <id1> <id2> ...` for any rules those decisions
 supersede.
 
 **If you skip these steps, you are violating project constraints.**

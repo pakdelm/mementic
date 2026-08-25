@@ -29,16 +29,15 @@ from mementic.console import (
 )
 
 from mementic.format import (
-    CONTEXT_PACK_DEFAULT_MAX_CONSTRAINT_TOKENS,
-    CONTEXT_PACK_DEFAULT_MAX_DECISION_TOKENS,
     DECISION_ID_MAX_LENGTH,
     CONSTRAINT_ID_MAX_LENGTH,
-    detect_repo_path,
+    build_context_pack,
     format_evolution,
-    format_memory_context,
     slugify,
+    split_pack_budget,
     timestamp,
 )
+from mementic.paths import audit_log_path, graph_db_path, resolve_base_dir
 from mementic.store import MementicStore, successor_timestamp
 from mementic.models import Constraint, Decision
 
@@ -46,13 +45,13 @@ app = typer.Typer(help="Mementic — semantic memory for engineering teams and A
 
 
 def _resolve_store() -> MementicStore:
-    """Open the local memory store at .mementic/graph.db.
+    """Open the project graph database.
 
     Exits cleanly when the database exists but has a foreign schema version
     (e.g. v4) so agents see the migration hint instead of a traceback.
     """
     try:
-        return MementicStore(db_path=Path(".mementic/graph.db"))
+        return MementicStore(db_path=graph_db_path(resolve_base_dir()))
     except RuntimeError as exc:
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(code=1) from exc
@@ -223,8 +222,8 @@ def init() -> None:
     (idempotent — running it again is a no-op) and injects enforcement
     instructions into AGENTS.md when absent.
     """
-    cwd = Path(detect_repo_path())
-    db_path = Path(".mementic/graph.db")
+    cwd = resolve_base_dir()
+    db_path = graph_db_path(cwd)
 
     created = False
     if not db_path.exists():
@@ -299,51 +298,89 @@ query_app = typer.Typer(help="Search and retrieve from the knowledge graph")
 app.add_typer(query_app, name="query")
 
 
+def _split_token_budget(
+    total: int | None,
+) -> tuple[int, int]:
+    """Split a total token budget across the two pack sections.
+
+    Thin delegate to :func:`mementic.format.split_pack_budget`, the
+    canonical formula (floor on the constraint share, remainder to the
+    decisions section) shared with the probe harness so neither can drift.
+
+    Args:
+        total: Combined token budget, or ``None`` for the defaults.
+
+    Returns:
+        ``(constraint_tokens, decision_tokens)``.
+    """
+    return split_pack_budget(total)
+
+
 @query_app.command()
 def keywords(
     keywords: list[str] = typer.Argument(
         ..., help="Keywords for matching (e.g. auth login session pydantic)"
     ),
+    max_tokens: int | None = typer.Option(
+        None,
+        "--max-tokens",
+        help="Total token budget for the pack; overrides both section "
+        "budgets proportionally",
+    ),
     json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
 ) -> None:
     """Return ranked context pack of constraints and decisions matched by keywords."""
+    if max_tokens is not None and max_tokens < 1:
+        typer.echo(
+            f"Error: --max-tokens must be at least 1 (got {max_tokens}). "
+            "Pass a positive total token budget, or omit the flag to use "
+            "the module defaults.",
+            err=True,
+        )
+        raise typer.Exit(code=2)
     store = _resolve_store()
     # Derived liveness: tombstoned entries are excluded at the SQL layer.
     constraints = store.get_live_constraints()
     decisions = store.get_live_decisions()
+    max_constraint_tokens, max_decision_tokens = _split_token_budget(max_tokens)
+    base_dir = resolve_base_dir()
 
     if json_output:
         from mementic.format import format_context_pack_json
-        result = format_context_pack_json(
+        result_json = format_context_pack_json(
             decisions, constraints,
-            max_constraint_tokens=CONTEXT_PACK_DEFAULT_MAX_CONSTRAINT_TOKENS,
-            max_decision_tokens=CONTEXT_PACK_DEFAULT_MAX_DECISION_TOKENS,
+            max_constraint_tokens=max_constraint_tokens,
+            max_decision_tokens=max_decision_tokens,
             keywords=keywords,
+            base_dir=base_dir,
         )
-        typer.echo(json.dumps(result, indent=2, default=str))
+        typer.echo(json.dumps(result_json, indent=2, default=str))
         return
 
-    output = format_memory_context(
+    result = build_context_pack(
         decisions, constraints,
-        max_constraint_tokens=CONTEXT_PACK_DEFAULT_MAX_CONSTRAINT_TOKENS,
-        max_decision_tokens=CONTEXT_PACK_DEFAULT_MAX_DECISION_TOKENS,
+        max_constraint_tokens=max_constraint_tokens,
+        max_decision_tokens=max_decision_tokens,
         keywords=keywords,
+        base_dir=base_dir,
     )
+    stats = result.stats
     kw_list = ", ".join(keywords)
     # Agent-enforcement contract: a plain-text summary line agents must echo.
     typer.echo(
-        f"[mementic: {len(constraints)} constraints, {len(decisions)} decisions "
-        f"matched ({kw_list})]"
+        f"[mementic: {stats.shown_constraints} of {stats.matched_constraints} constraints, "
+        f"{stats.shown_decisions} of {stats.matched_decisions} decisions "
+        f"matched ({kw_list}) shown]"
     )
     summary = text(
-        f"[{C_DIM}]{len(constraints)} constraints, "
-        f"{len(decisions)} decisions[/]"
+        f"[{C_DIM}]{stats.shown_constraints} of {stats.matched_constraints} constraints, "
+        f"{stats.shown_decisions} of {stats.matched_decisions} decisions[/]"
     )
     console.print(
         panel(
             summary,
             rule(),
-            Markdown(sanitize(output)),
+            Markdown(sanitize(result.text)),
             title=f"Context pack: {kw_list}",
         )
     )
@@ -521,7 +558,7 @@ def log(
         return
 
     # Fallback: no SQLite project database attached — try legacy JSONL
-    audit_path = Path(".mementic/audit.jsonl")
+    audit_path = audit_log_path(resolve_base_dir())
     if not audit_path.exists():
         typer.echo("No audit log found. Run init or add first.")
         raise typer.Exit()
@@ -551,17 +588,14 @@ def status(
     from mementic.health import check_health
 
     try:
-        store = MementicStore(db_path=Path(".mementic/graph.db"))
+        store = MementicStore(db_path=graph_db_path(resolve_base_dir()))
     except (sqlite3.Error, OSError, ValueError, RuntimeError):
         # Health command must degrade gracefully, not traceback on a
         # corrupt/locked/missing/mis-versioned store — check_health
         # reports the failure.
         store = None
 
-    try:
-        repo = Path(detect_repo_path())
-    except (ValueError, OSError):
-        repo = Path.cwd()
+    repo = resolve_base_dir()
     items = check_health(store, repo_path=repo)
     health_table = table(show_header=False, show_edge=False, padding=(0, 1))
     health_table.add_column("Status", width=7)

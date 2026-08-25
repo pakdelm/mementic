@@ -1,4 +1,4 @@
-"""Tests for the relational memory store (Spec 29 schema v5)."""
+"""Tests for the relational memory store."""
 
 from __future__ import annotations
 
@@ -55,7 +55,56 @@ def _add_constraint(
     )
 
 
-# ── Schema ──────────────────────────────────────────────────────────
+class TestReadOnlyStore:
+    def test_read_only_store_reads_file_database(self, tmp_path: Path) -> None:
+        db = tmp_path / "graph.db"
+        writer = MementicStore(db_path=db)
+        _add_decision(writer, entry_id="d1")
+        _add_constraint(writer, entry_id="c1")
+        writer.close()
+
+        reader = MementicStore(db_path=db, read_only=True)
+        try:
+            assert [d.id for d in reader.get_live_decisions()] == ["d1"]
+            assert [c.id for c in reader.get_live_constraints()] == ["c1"]
+        finally:
+            reader.close()
+
+    def test_read_only_write_raises(self, tmp_path: Path) -> None:
+        """mode=ro is structural: even the driver refuses writes."""
+        db = tmp_path / "graph.db"
+        writer = MementicStore(db_path=db)
+        writer.close()
+
+        reader = MementicStore(db_path=db, read_only=True)
+        try:
+            with pytest.raises(sqlite3.OperationalError):
+                reader.add_decision(
+                    entry_id="d2",
+                    title="T",
+                    rationale="r",
+                    created_at="2024-01-02T00:00:00Z",
+                )
+        finally:
+            reader.close()
+
+    def test_read_only_missing_file_does_not_create_it(self, tmp_path: Path) -> None:
+        db = tmp_path / "missing" / "graph.db"
+        with pytest.raises(sqlite3.OperationalError):
+            MementicStore(db_path=db, read_only=True)
+        assert not (tmp_path / "missing").exists()
+
+    def test_read_only_rejects_uninitialized_database(
+        self, tmp_path: Path,
+    ) -> None:
+        db = tmp_path / "graph.db"
+        db.write_bytes(b"")  # exists but user_version=0, no schema
+        with pytest.raises(RuntimeError, match="Read-only open refused"):
+            MementicStore(db_path=db, read_only=True)
+
+    def test_read_only_memory_database_rejected(self) -> None:
+        with pytest.raises(ValueError, match="file-backed"):
+            MementicStore(db_path=":memory:", read_only=True)
 
 
 def _raw_conn(store: MementicStore) -> sqlite3.Connection:
@@ -103,11 +152,8 @@ class TestSchema:
         conn.execute("PRAGMA user_version = 4")
         conn.commit()
         conn.close()
-        with pytest.raises(RuntimeError, match="migrate_v4_to_v5"):
+        with pytest.raises(RuntimeError, match="not auto-upgraded"):
             MementicStore(db_path=db)
-
-
-# ── Basic CRUD ──────────────────────────────────────────────────────
 
 
 class TestEntryCrud:
@@ -183,9 +229,6 @@ class TestEntryCrud:
             _add_decision(store, "other")
 
 
-# ── FK integrity ────────────────────────────────────────────────────
-
-
 class TestForeignKeyEnforcement:
     def test_dangling_enforced_by_raises_integrity_error(
         self, store: MementicStore,
@@ -209,9 +252,6 @@ class TestForeignKeyEnforcement:
         assert row["enforced_by"] is None  # NULL storage...
         c = store.get_constraint("solo")
         assert c is not None and c.enforced_by == ""  # ..."" at read time
-
-
-# ── UPSERT keeps FK children alive ──────────────────────────────────
 
 
 class TestUpsertPreservesChildren:
@@ -252,9 +292,6 @@ class TestUpsertPreservesChildren:
         assert c is not None
         assert c.description == "v2"
         assert c.paths == ["src/b.py"]
-
-
-# ── Derived liveness ────────────────────────────────────────────────
 
 
 class TestDerivedLiveness:
@@ -325,9 +362,6 @@ class TestDerivedLiveness:
 
         cpairs = {c.id: sb for c, sb in store.get_constraints_with_liveness()}
         assert cpairs["dead-c"] == "retired"
-
-
-# ── Succession timestamps (structural ordering) ─────────────────────
 
 
 class TestSuccessionTimestamps:
@@ -418,9 +452,6 @@ class TestSuccessionTimestamps:
         assert second["at"] > first["at"]
         records = store.get_deprecations_for_entry("decision", "d1")
         assert len(records) == 2
-
-
-# ── Path queries (exact default / prefix opt-in) ────────────────────
 
 
 class TestPathQueries:
@@ -539,9 +570,6 @@ class TestPathQueries:
         ]
 
 
-# ── History / lifecycle queries ─────────────────────────────────────
-
-
 class TestHistoryQueries:
     def test_single_record_lookup(self, store: MementicStore) -> None:
         _add_decision(store, "d1")
@@ -622,9 +650,6 @@ class TestHistoryQueries:
         assert store.is_deprecated("decision", "d1") is False
 
 
-# ── Validation & connection lifecycle ───────────────────────────────
-
-
 class TestValidationAndLifecycle:
     @pytest.mark.parametrize("bad_type", ["entity", "", "DECISION", "rule"])
     def test_deprecate_rejects_unknown_entry_type(
@@ -649,9 +674,6 @@ class TestValidationAndLifecycle:
             s.get_live_decisions()
         # close() stays safe to call twice.
         s.close()
-
-
-# ── Stats & audit ───────────────────────────────────────────────────
 
 
 class TestStatsAndAudit:

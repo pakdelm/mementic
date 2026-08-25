@@ -15,12 +15,10 @@ import pytest
 from typer.testing import CliRunner, Result
 
 from mementic.cli import app
+from mementic.paths import graph_db_path, resolve_base_dir
 from mementic.store import MementicStore
 
 runner = CliRunner()
-
-
-# ── Helpers ─────────────────────────────────────────────────────────
 
 
 def _strip_ansi(text: str) -> str:
@@ -69,8 +67,8 @@ def _ok(*args: str) -> Result:
 
 
 def _store() -> MementicStore:
-    """Open the project store at .mementic/graph.db."""
-    return MementicStore(db_path=Path(".mementic/graph.db"))
+    """Open the project store at the repo-root graph database."""
+    return MementicStore(db_path=graph_db_path(resolve_base_dir()))
 
 
 def _decision(entry_id: str):
@@ -91,9 +89,6 @@ def _constraint(entry_id: str):
         store.close()
 
 
-# ── Fixtures ────────────────────────────────────────────────────────
-
-
 @pytest.fixture()
 def bare_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Isolated empty project directory (no store yet)."""
@@ -106,9 +101,6 @@ def project_dir(bare_dir: Path) -> Path:
     """Isolated project directory with an initialized store."""
     _ok("init")
     return bare_dir
-
-
-# ── 1. Command surface ──────────────────────────────────────────────
 
 
 @pytest.mark.parametrize(
@@ -141,9 +133,6 @@ def test_query_help_lists_subcommands(subcommand: str) -> None:
 def test_list_help_lists_subcommands(subcommand: str) -> None:
     result = _ok("list", "--help")
     assert subcommand in _text(result)
-
-
-# ── 2. init ─────────────────────────────────────────────────────────
 
 
 def test_init_fresh_dir_creates_graph_db(bare_dir: Path) -> None:
@@ -179,9 +168,6 @@ def test_init_noninteractive_without_agent_markers_does_not_inject(
     result = _ok("init")
     assert "Re-run 'mementic init' interactively" in _text(result)
     assert not (bare_dir / "AGENTS.md").exists()
-
-
-# ── 3. add decision lifecycle ───────────────────────────────────────
 
 
 def test_add_decision_new_slug_is_accepted(project_dir: Path) -> None:
@@ -265,9 +251,6 @@ def test_add_decision_reports_counts_per_disposition(
     assert expected_counts in _text(result)
 
 
-# ── 4. add constraint ───────────────────────────────────────────────
-
-
 def test_add_constraint_new_description_is_accepted(project_dir: Path) -> None:
     result = _ok("add", "constraint", "Handlers must remain stateless",
                  "-e", "src/api.py")
@@ -341,9 +324,6 @@ def test_failed_readd_does_not_orphan_tombstone(project_dir: Path) -> None:
     assert "Schema migrations are mandatory" in _text(listing)
 
 
-# ── 5. deprecate ────────────────────────────────────────────────────
-
-
 def test_deprecate_decision_by_slug_marks_it_deprecated(project_dir: Path) -> None:
     _ok("add", "decision", "Use Monolith",
         "-r", "Single deployable keeps operations simple early on")
@@ -368,9 +348,6 @@ def test_deprecate_already_deprecated_is_graceful(project_dir: Path) -> None:
     assert result.exit_code == 0
 
 
-# ── 6. query keywords ───────────────────────────────────────────────
-
-
 def test_query_keywords_returns_matching_seeded_entries(project_dir: Path) -> None:
     _ok("add", "decision", "Use Jwt Auth",
         "-r", "Jwt authentication guards every endpoint")
@@ -392,7 +369,42 @@ def test_query_keywords_nonsense_returns_no_matches_without_crash(
     assert "use-jwt-auth" not in output
 
 
-# ── 7. query file ───────────────────────────────────────────────────
+def test_query_keywords_max_tokens_override_truncates(project_dir: Path) -> None:
+    """--max-tokens overrides both section budgets proportionally (Spec 30)."""
+    _ok("add", "decision", "Use Jwt Auth",
+        "-r", "Jwt tokens carry authentication claims")
+    _ok("add", "decision", "Jwt Refresh Flow",
+        "-r", "Refresh tokens rotate jwt sessions nightly")
+    _ok("add", "decision", "Jwt Clock Skew",
+        "-r", "Jwt token validation tolerates minor clock skew only")
+    _ok("add", "decision", "Jwt Key Rotation",
+        "-r", "Rotate jwt signing tokens before the quarterly audit window")
+    _ok("add", "decision", "Jwt Audience Binding",
+        "-r", "Every jwt token must pin its audience claim to one service")
+    _ok("add", "decision", "Unrelated Note",
+        "-r", "Completely different filler topic for corpus diversity")
+    full = _ok("query", "keywords", "jwt", "tokens")
+    tiny = _ok("query", "keywords", "jwt", "tokens", "--max-tokens", "50")
+    full_text = _text(full)
+    tiny_text = _text(tiny)
+    # Both runs honor the [mementic: ...] echo contract.
+    for text in (full_text, tiny_text):
+        assert "[mementic:" in text
+    # The tiny budget renders fewer pack items than the default budgets
+    # even with the min-shown floor: five long jwt decisions cannot all fit.
+    assert tiny_text.count("(#") < full_text.count("(#")
+    assert "below threshold" in tiny_text
+
+
+def test_query_keywords_rejects_nonpositive_max_tokens(
+    project_dir: Path,
+) -> None:
+    """--max-tokens < 1 exits non-zero with an actionable message."""
+    result = _run("query", "keywords", "jwt", "--max-tokens", "0")
+    assert result.exit_code != 0
+    output = _text(result)
+    assert "--max-tokens" in output
+    assert "at least 1" in output
 
 
 def test_query_file_finds_seeded_entry_by_path(project_dir: Path) -> None:
@@ -415,9 +427,6 @@ def test_query_file_unrelated_path_returns_empty(project_dir: Path) -> None:
     assert "track-auth-flow" not in _text(result)
 
 
-# ── 8. query search / stats ─────────────────────────────────────────
-
-
 def test_query_search_finds_seeded_content_substring(project_dir: Path) -> None:
     _ok("add", "constraint", "Handlers must remain stateless",
         "-e", "src/api.py")
@@ -433,9 +442,6 @@ def test_query_stats_runs_clean_on_seeded_graph(project_dir: Path) -> None:
         "-r", "Jwt authentication guards every endpoint")
     result = _ok("query", "stats")
     assert "Graph statistics" in _text(result)
-
-
-# ── 9. list ─────────────────────────────────────────────────────────
 
 
 def test_list_decisions_shows_seeded_entry(project_dir: Path) -> None:
@@ -471,17 +477,11 @@ def test_list_decisions_status_filter_excludes_deprecated(project_dir: Path) -> 
     assert "drop-legacy-auth" not in output
 
 
-# ── 10. status ──────────────────────────────────────────────────────
-
-
 def test_status_healthy_bundle_exits_zero_with_checklist(project_dir: Path) -> None:
     result = _ok("status")
     output = _text(result)
     assert "Status" in output
     assert "checks passed" in output
-
-
-# ── 11. log ─────────────────────────────────────────────────────────
 
 
 def test_log_lists_mutations_newest_first(project_dir: Path) -> None:
@@ -499,9 +499,6 @@ def test_log_lists_mutations_newest_first(project_dir: Path) -> None:
 def test_log_without_entries_prints_hint_and_exits_zero(project_dir: Path) -> None:
     result = _ok("log")
     assert "No audit log found" in _text(result)
-
-
-# ── 12. Error paths ─────────────────────────────────────────────────
 
 
 def test_unknown_command_exits_nonzero() -> None:
@@ -533,9 +530,6 @@ def test_missing_required_arguments_exit_nonzero(
 ) -> None:
     result = _run(*args)
     assert result.exit_code != 0
-
-
-# ── 13. Review hardening: edge paths ────────────────────────────────
 
 
 def test_cross_type_slug_collision_exits_cleanly(project_dir: Path) -> None:
@@ -587,17 +581,22 @@ def test_unicode_rationale_round_trips_through_add_and_search(
     assert "Unicode Auth" in _text(result)
 
 
-# ── 14. mementic summary-line contract ──────────────────────────────
-
-
 def test_query_keywords_prints_mementic_summary_line(project_dir: Path) -> None:
     _ok("add", "decision", "Use Jwt Auth",
         "-r", "Jwt tokens carry authentication claims")
+    # A second unrelated entry keeps the query keyword rare, so its IDF is
+    # positive and the pack has a real match to report (Spec 30 Phase 1).
+    _ok("add", "decision", "Unrelated Note",
+        "-r", "Completely different filler topic for corpus diversity")
     result = _ok("query", "keywords", "jwt", "auth")
     text = _text(result)
     line = next((ln for ln in text.splitlines() if "[mementic:" in ln), None)
     assert line is not None, f"no [mementic: ...] summary line in:\n{text}"
-    assert re.search(r"\d+ constraints?, \d+ decisions?", line)
+    assert re.search(
+        r"\d+ of \d+ constraints, \d+ of \d+ decisions matched \(.+\) shown",
+        line,
+    ), f"summary line lacks shown/matched wording: {line}"
+    assert "1 of 1 decisions" in line
 
 
 def test_query_file_prints_mementic_summary_line(project_dir: Path) -> None:
@@ -619,9 +618,6 @@ def test_query_search_prints_mementic_summary_line(project_dir: Path) -> None:
     line = next((ln for ln in text.splitlines() if "[mementic:" in ln), None)
     assert line is not None, f"no [mementic: ...] summary line in:\n{text}"
     assert "1 constraints, 0 decisions" in line
-
-
-# ── 15. history (Spec 29) ───────────────────────────────────────────
 
 
 def test_history_without_id_lists_full_table_newest_first(
@@ -681,4 +677,8 @@ def test_deprecated_entry_excluded_from_context_pack(project_dir: Path) -> None:
     result = _ok("query", "keywords", "zebra")
     output = _text(result)
     assert "zebra-protocol" not in output
-    assert "0 constraints, 0 decisions" in output
+    # Shown/matched wording (Spec 30 Phase 4): nothing live, nothing shown.
+    assert (
+        "[mementic: 0 of 0 constraints, 0 of 0 decisions matched (zebra) shown]"
+        in output
+    )

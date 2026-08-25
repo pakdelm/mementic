@@ -34,6 +34,25 @@
 - Use Google-style docstrings for all public functions and classes.
 - Include a brief description, Args, Returns, and Raises sections.
 
+## Comments
+
+- **No section-banner comments.** Never write decorative divider lines
+  (`# --- Foo ---`, `# === Foo ===`, `# ── Foo ──`) to group code. If a
+  region needs a label, extract it into a well-named function with a
+  docstring.
+- **No narration comments.** Never write a comment that restates what the
+  next line obviously does (`# increment counter`, `# call the API`).
+  Comments may only carry non-obvious *why*: rationale, constraints,
+  gotchas, or evidence that cannot be expressed in code.
+- **Intent lives in docstrings, not comments.** If a comment explains the
+  purpose or contract of a function/class/constant, move it into the
+  entity's docstring.
+- **No ticket/spec breadcrumb tags** (`Spec 30 Phase 2`, `JIRA-123`) in
+  comments or docstrings. Provenance belongs in version control and specs,
+  not sprinkled through source.
+- Prefer extracting a helper function with a docstring over writing a
+  paragraph of comments above an inline block.
+
 ## Error Handling
 
 - Raise specific exceptions, never bare `Exception`.

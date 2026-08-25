@@ -1,4 +1,4 @@
-"""Relational storage layer for mementic (schema v5, Spec 29).
+"""Relational storage layer for mementic (schema v5).
 
 A thin data-access module over raw ``sqlite3``. No ORM, no in-memory graph:
 every read is a SQL query and every write is an INSERT/REPLACE on flat
@@ -7,7 +7,7 @@ for it exists with ``at`` newer than the entry's ``created_at`` (the
 timestamp correlation distinguishes incarnations when a deprecated slug is
 re-added). No status column exists anywhere.
 
-Schema note: ``constraints.enforced_by`` carries ``DEFAULT ''`` per Spec 29,
+Schema note: ``constraints.enforced_by`` carries ``DEFAULT ''``,
 but SQLite FK semantics treat '' as a real value that must match a parent
 row. Standalone constraints are therefore stored with ``enforced_by = NULL``
 (mapped transparently to ``""`` at read time); non-empty references remain
@@ -22,12 +22,13 @@ from collections import deque
 from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from urllib.parse import quote
 
 from mementic.models import Constraint, Decision
 
 SCHEMA_VERSION = 5
 
-# Schema v5 DDL (Spec 29). audit_log carried forward unchanged from v2.
+# Schema v5 DDL. audit_log carried forward unchanged from v2.
 SCHEMA_DDL = """
 CREATE TABLE decisions (
     id         TEXT PRIMARY KEY,
@@ -164,16 +165,33 @@ class MementicStore:
 
     Opens (creating if necessary) the database at ``db_path``, applies the
     schema-v5 DDL to fresh databases, and refuses databases from older
-    schema versions (run ``scripts/migrate_v4_to_v5.py`` first).
+    schema versions — those predate the relational store; start fresh with
+    ``mementic init`` or recover data from a pre-upgrade backup.
+
+    With ``read_only=True`` the store opens the file through a SQLite
+    ``mode=ro`` URI: it never creates directories or database files and any
+    write attempt fails at the driver level, so read-only tooling (e.g. the
+    probe harness) structurally cannot mutate a database.
     """
 
-    def __init__(self, db_path: str | Path) -> None:
+    def __init__(self, db_path: str | Path, *, read_only: bool = False) -> None:
         self._db_path = Path(db_path)
+        self._read_only = read_only
         self._conn: sqlite3.Connection | None = None
         if str(db_path) != ":memory:":
-            self._db_path.parent.mkdir(parents=True, exist_ok=True)
-            self._conn = sqlite3.connect(str(self._db_path))
+            if read_only:
+                uri = (
+                    "file:"
+                    + quote(self._db_path.resolve().as_posix(), safe="/:")
+                    + "?mode=ro"
+                )
+                self._conn = sqlite3.connect(uri, uri=True)
+            else:
+                self._db_path.parent.mkdir(parents=True, exist_ok=True)
+                self._conn = sqlite3.connect(str(self._db_path))
         else:
+            if read_only:
+                raise ValueError("read_only=True requires a file-backed database")
             self._conn = sqlite3.connect(":memory:")
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA foreign_keys=ON")
@@ -197,6 +215,12 @@ class MementicStore:
         version: int = conn.execute("PRAGMA user_version").fetchone()[0]
         if version == SCHEMA_VERSION:
             return
+        if self._read_only:
+            raise RuntimeError(
+                f"Read-only open refused: database schema is v{version} but this "
+                f"build requires v{SCHEMA_VERSION} (or the file is not an "
+                f"initialized mementic database). Open it read-write to migrate."
+            )
         if version == 0:
             tables = {
                 row["name"]
@@ -215,13 +239,10 @@ class MementicStore:
             return
         raise RuntimeError(
             f"Database schema is v{version} but this build requires "
-            f"v{SCHEMA_VERSION}. Run: uv run python scripts/migrate_v4_to_v5.py "
-            f"--db {self._db_path}"
+            f"v{SCHEMA_VERSION}. Old-schema databases are not auto-upgraded: "
+            f"start fresh with 'mementic init' (or move the file aside and "
+            f"init), or recover its data with the matching historical build."
         )
-
-    # ------------------------------------------------------------------
-    # Writes
-    # ------------------------------------------------------------------
 
     def add_decision(
         self,
@@ -480,10 +501,6 @@ class MementicStore:
             (entity_type, entity_id, action, json.dumps(details), utc_now()),
         )
 
-    # ------------------------------------------------------------------
-    # Reads: entries
-    # ------------------------------------------------------------------
-
     def get_entry_type(self, entry_id: str) -> str | None:
         """Return ``"decision"``, ``"constraint"``, or None for unknown IDs."""
         conn = self._conn_or_raise()
@@ -621,10 +638,6 @@ class MementicStore:
                 (entry_type, entry_id),
             )
         ]
-
-    # ------------------------------------------------------------------
-    # Reads: paths
-    # ------------------------------------------------------------------
 
     def get_constraints_for_path(
         self,
@@ -773,10 +786,6 @@ class MementicStore:
             seen.setdefault(r["path"], None)
         return list(seen)
 
-    # ------------------------------------------------------------------
-    # Reads: lifecycle
-    # ------------------------------------------------------------------
-
     def is_deprecated(self, entry_type: str, entry_id: str) -> bool:
         """Return True if the entry's current incarnation has a tombstone.
 
@@ -860,10 +869,6 @@ class MementicStore:
         return conn.execute(
             "SELECT rowid, * FROM deprecations ORDER BY at DESC, rowid DESC"
         ).fetchall()
-
-    # ------------------------------------------------------------------
-    # Reads: stats & audit
-    # ------------------------------------------------------------------
 
     def stats(self) -> dict[str, int]:
         """Return store statistics.
