@@ -15,6 +15,7 @@ import pytest
 from typer.testing import CliRunner, Result
 
 from mementic.cli import app
+from mementic.paths import graph_db_path, resolve_base_dir
 from mementic.store import MementicStore
 
 runner = CliRunner()
@@ -66,8 +67,8 @@ def _ok(*args: str) -> Result:
 
 
 def _store() -> MementicStore:
-    """Open the project store at .mementic/graph.db."""
-    return MementicStore(db_path=Path(".mementic/graph.db"))
+    """Open the project store at the repo-root graph database."""
+    return MementicStore(db_path=graph_db_path(resolve_base_dir()))
 
 
 def _decision(entry_id: str):

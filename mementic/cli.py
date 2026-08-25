@@ -38,6 +38,7 @@ from mementic.format import (
     split_pack_budget,
     timestamp,
 )
+from mementic.paths import audit_log_path, graph_db_path, resolve_base_dir
 from mementic.store import MementicStore, successor_timestamp
 from mementic.models import Constraint, Decision
 
@@ -45,13 +46,13 @@ app = typer.Typer(help="Mementic — semantic memory for engineering teams and A
 
 
 def _resolve_store() -> MementicStore:
-    """Open the local memory store at .mementic/graph.db.
+    """Open the project graph database.
 
     Exits cleanly when the database exists but has a foreign schema version
     (e.g. v4) so agents see the migration hint instead of a traceback.
     """
     try:
-        return MementicStore(db_path=Path(".mementic/graph.db"))
+        return MementicStore(db_path=graph_db_path(resolve_base_dir()))
     except RuntimeError as exc:
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(code=1) from exc
@@ -222,8 +223,8 @@ def init() -> None:
     (idempotent — running it again is a no-op) and injects enforcement
     instructions into AGENTS.md when absent.
     """
-    cwd = Path(detect_repo_path())
-    db_path = Path(".mementic/graph.db")
+    cwd = resolve_base_dir()
+    db_path = graph_db_path(cwd)
 
     created = False
     if not db_path.exists():
@@ -343,10 +344,7 @@ def keywords(
     constraints = store.get_live_constraints()
     decisions = store.get_live_decisions()
     max_constraint_tokens, max_decision_tokens = _split_token_budget(max_tokens)
-    # Dead-path checks must resolve repo-relative bound paths against the
-    # stable repo root (graph.db's parent's parent), not the process CWD,
-    # which varies with where the CLI was invoked.
-    base_dir = Path(".mementic/graph.db").parent.parent
+    base_dir = resolve_base_dir()
 
     if json_output:
         from mementic.format import format_context_pack_json
@@ -561,7 +559,7 @@ def log(
         return
 
     # Fallback: no SQLite project database attached — try legacy JSONL
-    audit_path = Path(".mementic/audit.jsonl")
+    audit_path = audit_log_path(resolve_base_dir())
     if not audit_path.exists():
         typer.echo("No audit log found. Run init or add first.")
         raise typer.Exit()
@@ -591,7 +589,7 @@ def status(
     from mementic.health import check_health
 
     try:
-        store = MementicStore(db_path=Path(".mementic/graph.db"))
+        store = MementicStore(db_path=graph_db_path(resolve_base_dir()))
     except (sqlite3.Error, OSError, ValueError, RuntimeError):
         # Health command must degrade gracefully, not traceback on a
         # corrupt/locked/missing/mis-versioned store — check_health
