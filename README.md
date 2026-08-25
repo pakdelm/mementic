@@ -115,7 +115,9 @@ This project uses Mementic as its architectural memory layer.
 1. Generate 5-12 narrow keywords for the task (e.g., "argon2 token login
    session" — skip generic terms like "security" or "password").
 2. Run `mementic query keywords <kw1> <kw2> ...`
-3. Run `mementic query file <path>` for each file being modified.
+3. List the code files you intend to open, then run
+   `mementic query file <path>` for each of them BEFORE reading any file —
+   exploration reads included, not just files you plan to modify.
 4. Validate your plan against every returned constraint.
 
 **When you make a decision or establish a rule:**
