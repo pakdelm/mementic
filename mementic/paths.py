@@ -7,6 +7,7 @@ directory it was invoked from.
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 
 MEMORY_DIR_NAME: str = ".mementic"
@@ -17,14 +18,23 @@ AUDIT_LOG_NAME: str = "audit.jsonl"
 def resolve_base_dir() -> Path:
     """Return the stable repo root that owns this project's memory directory.
 
-    Delegates to :func:`mementic.format.detect_repo_path` (Git toplevel with
-    a CWD fallback outside repositories) and resolves the result to an
-    absolute path. Callers thread the returned root downward as ``base_dir``
+    Uses ``git rev-parse --show-toplevel`` when available and falls back to
+    the resolved process CWD outside Git repositories or when Git is not
+    installed. Callers thread the returned root downward as ``base_dir``
     so downstream consumers never depend on the process CWD.
     """
-    from mementic.format import detect_repo_path
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode == 0:
+            return Path(result.stdout.strip()).resolve()
+    except FileNotFoundError:
+        pass
 
-    return Path(detect_repo_path()).resolve()
+    return Path.cwd().resolve()
 
 
 def memory_dir(base_dir: Path) -> Path:

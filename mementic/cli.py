@@ -32,7 +32,6 @@ from mementic.format import (
     DECISION_ID_MAX_LENGTH,
     CONSTRAINT_ID_MAX_LENGTH,
     build_context_pack,
-    detect_repo_path,
     format_evolution,
     slugify,
     split_pack_budget,
@@ -596,10 +595,7 @@ def status(
         # reports the failure.
         store = None
 
-    try:
-        repo = Path(detect_repo_path())
-    except (ValueError, OSError):
-        repo = Path.cwd()
+    repo = resolve_base_dir()
     items = check_health(store, repo_path=repo)
     health_table = table(show_header=False, show_edge=False, padding=(0, 1))
     health_table.add_column("Status", width=7)

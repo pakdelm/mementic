@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import math
 import re
-import subprocess
 from collections.abc import Sequence
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -98,30 +97,6 @@ def resolve_repo_name(repo_path: str) -> str:
         Short repo name (last path component).
     """
     return Path(repo_path).resolve().name
-
-
-def detect_repo_path() -> str:
-    """Detect the repository root path.
-
-    Tries ``git rev-parse --show-toplevel`` to find the Git repository
-    root directory. Falls back to the current working directory if Git
-    is not available or the directory is not a Git repository.
-
-    Returns:
-        The detected repo path as a string.
-    """
-    try:
-        result = subprocess.run(
-            ["git", "rev-parse", "--show-toplevel"],
-            capture_output=True,
-            text=True,
-        )
-        if result.returncode == 0:
-            return result.stdout.strip()
-    except FileNotFoundError:
-        pass
-
-    return str(Path.cwd())
 
 
 def split_pack_budget(total: int | None) -> tuple[int, int]:
