@@ -1,7 +1,17 @@
+"""Formatting and ranking for context packs, evolution traces, and JSON views.
+
+This module owns the presentation layer over live graph entries: IDF-weighted
+keyword scoring, dead-path filtering, deterministic ranking, token-budget
+truncation, and the markdown/JSON renderers built on top of them. It holds no
+state and performs no I/O beyond optional filesystem liveness checks threaded
+in by callers.
+"""
+
 from __future__ import annotations
 
 import math
 import re
+import subprocess
 from collections.abc import Sequence
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -12,10 +22,26 @@ from pydantic import BaseModel
 from mementic.models import Constraint, Decision
 from mementic.store import utc_now
 
-# ID length constants for slugify(). Both decision and constraint IDs
-# share the same max length for consistency.
 DECISION_ID_MAX_LENGTH: int = 40
 CONSTRAINT_ID_MAX_LENGTH: int = 40
+
+CONTEXT_PACK_DEFAULT_MAX_CONSTRAINT_TOKENS: int = 500
+CONTEXT_PACK_DEFAULT_MAX_DECISION_TOKENS: int = 500
+
+FIELD_WEIGHT_TITLE: float = 3.0
+FIELD_WEIGHT_DESCRIPTION: float = 2.0
+FIELD_WEIGHT_RATIONALE: float = 1.0
+
+DEAD_PATH_GRACE_HOURS: int = 24
+
+MIN_SHOWN_PER_SECTION: int = 3
+
+_MAX_ENTITY_LIST_CHARS: int = 80
+_RATIONALE_MAX_CHARS: int = 200
+_TRUNCATION_HINT: str = "refine keywords or raise --max-tokens"
+
+EntryT = TypeVar("EntryT", bound="Constraint | Decision")
+ItemT = TypeVar("ItemT", bound="Constraint | Decision")
 
 
 def count_tokens(text: str) -> int:
@@ -47,7 +73,6 @@ def slugify(text: str, max_length: int | None = None) -> str:
     text = re.sub(r"[\s_]+", "-", text)
     text = text.strip("-")
     if max_length is not None and len(text) > max_length:
-        # Truncate at word boundary (last hyphen within the limit)
         text = text[:max_length].rsplit("-", 1)[0].strip("-")
     return text
 
@@ -79,14 +104,12 @@ def detect_repo_path() -> str:
     """Detect the repository root path.
 
     Tries ``git rev-parse --show-toplevel`` to find the Git repository
-    root directory.  Falls back to the current working directory if Git
+    root directory. Falls back to the current working directory if Git
     is not available or the directory is not a Git repository.
 
     Returns:
         The detected repo path as a string.
     """
-    import subprocess
-
     try:
         result = subprocess.run(
             ["git", "rev-parse", "--show-toplevel"],
@@ -101,9 +124,34 @@ def detect_repo_path() -> str:
     return str(Path.cwd())
 
 
-# Max character width for the joined entity list in compact format lines.
-# Truncation happens at a ``, `` boundary so a path is never split mid-token.
-_MAX_ENTITY_LIST_CHARS = 80
+def split_pack_budget(total: int | None) -> tuple[int, int]:
+    """Split a total pack token budget into ``(constraints, decisions)``.
+
+    ``None`` returns the empirical defaults unchanged. Otherwise the total
+    is divided proportionally to the default split so a ``--max-tokens``
+    override keeps the evidence-chosen constraint/decision ratio. The
+    constraint share is floored and the rounding remainder goes to the
+    decisions section, so no zero-token section is reachable.
+
+    This is the canonical split formula; the CLI and the probe harness both
+    derive from it so their logic cannot drift.
+
+    Args:
+        total: Combined token budget, or ``None`` for the defaults.
+
+    Returns:
+        ``(constraint_tokens, decision_tokens)``.
+    """
+    if total is None:
+        return (
+            CONTEXT_PACK_DEFAULT_MAX_CONSTRAINT_TOKENS,
+            CONTEXT_PACK_DEFAULT_MAX_DECISION_TOKENS,
+        )
+    share = CONTEXT_PACK_DEFAULT_MAX_CONSTRAINT_TOKENS / (
+        CONTEXT_PACK_DEFAULT_MAX_CONSTRAINT_TOKENS + CONTEXT_PACK_DEFAULT_MAX_DECISION_TOKENS
+    )
+    constraint_tokens = math.floor(total * share)
+    return (constraint_tokens, total - constraint_tokens)
 
 
 def _truncate_entity_list(entities: list[str], max_chars: int = _MAX_ENTITY_LIST_CHARS) -> str:
@@ -129,14 +177,12 @@ def _truncate_entity_list(entities: list[str], max_chars: int = _MAX_ENTITY_LIST
         joined form exceeds ``max_chars``. Returns ``""`` for an empty list.
     """
     joined = ", ".join(entities)
-    if len(joined) > max_chars:
-        cut = joined.rfind(", ", 0, max_chars)
-        if cut == -1:
-            # No separator before the limit: single very long path. Fall
-            # back to a hard character-boundary cut.
-            return joined[:max_chars] + "..."
-        return joined[:cut] + "..."
-    return joined
+    if len(joined) <= max_chars:
+        return joined
+    cut = joined.rfind(", ", 0, max_chars)
+    if cut == -1:
+        return joined[:max_chars] + "..."
+    return joined[:cut] + "..."
 
 
 def _compact_constraint_line(constraint: Constraint) -> str:
@@ -190,64 +236,6 @@ def _compact_evolution_line(d: Decision) -> str:
     return f"- [{d.created_at}] {d.title}: {d.rationale} (#{d.id})"
 
 
-# Empirically chosen pack budgets (revised post-merge; evidence below).
-# First probe measured precision decay only: score percentile fell mildly
-# with budget (90.2 -> 82.9 across totals {400..1200}), so 400 total was
-# chosen. Post-merge floor-clamp measurement corrected that: at 200/200
-# every realistic query clamps at the 3-item minimum while dozens-hundreds
-# of gate-passed matches go unshown (10/10 decision sections clamped).
-# Re-measured across the same queries, raising to 500/500 (~1000 total)
-# roughly doubles shown items (60 -> 102) for ~+40% tokens, and the earlier
-# precision-decay data shows below-median junk stays <1 item/pack even at
-# double this size -- recall is worth far more than that decay.
-CONTEXT_PACK_DEFAULT_MAX_CONSTRAINT_TOKENS: int = 500
-CONTEXT_PACK_DEFAULT_MAX_DECISION_TOKENS: int = 500
-
-
-def split_pack_budget(total: int | None) -> tuple[int, int]:
-    """Split a total pack token budget into ``(constraints, decisions)``.
-
-    ``None`` returns the empirical defaults unchanged. Otherwise the total
-    is divided proportionally to the default split so a ``--max-tokens``
-    override keeps the evidence-chosen constraint/decision ratio. The
-    constraint share is floored and the rounding remainder goes to the
-    decisions section, so no zero-token section is reachable.
-
-    This is the canonical split formula; the CLI and the probe harness both
-    derive from it so their logic cannot drift.
-
-    Args:
-        total: Combined token budget, or ``None`` for the defaults.
-
-    Returns:
-        ``(constraint_tokens, decision_tokens)``.
-    """
-    if total is None:
-        return (
-            CONTEXT_PACK_DEFAULT_MAX_CONSTRAINT_TOKENS,
-            CONTEXT_PACK_DEFAULT_MAX_DECISION_TOKENS,
-        )
-    share = CONTEXT_PACK_DEFAULT_MAX_CONSTRAINT_TOKENS / (
-        CONTEXT_PACK_DEFAULT_MAX_CONSTRAINT_TOKENS
-        + CONTEXT_PACK_DEFAULT_MAX_DECISION_TOKENS
-    )
-    constraint_tokens = math.floor(total * share)
-    return (constraint_tokens, total - constraint_tokens)
-
-# Max character count for rationale in file_history_json output.
-# Longer rationales are truncated with "..." appended.
-_RATIONALE_MAX_CHARS: int = 200
-
-
-# Field weights for keyword matches. A keyword matched in
-# several fields of one entry counts its highest matching field weight once.
-FIELD_WEIGHT_TITLE: float = 3.0
-FIELD_WEIGHT_DESCRIPTION: float = 2.0
-FIELD_WEIGHT_RATIONALE: float = 1.0
-
-EntryT = TypeVar("EntryT", bound="Constraint | Decision")
-
-
 def _matches_keyword(field_text: str, keyword: str) -> bool:
     """Return True when ``keyword`` occurs in ``field_text``.
 
@@ -263,6 +251,8 @@ def _searchable_fields(entry: Constraint | Decision) -> list[tuple[str, float]]:
 
     Constraints expose only their description; decisions expose title and
     rationale. Weights come from the :data:`FIELD_WEIGHT_*` constants.
+    A keyword matched in several fields counts its highest matching field
+    weight once.
     """
     if isinstance(entry, Constraint):
         return [(entry.description, FIELD_WEIGHT_DESCRIPTION)]
@@ -316,9 +306,7 @@ def idf_weights(n_docs: int, doc_freq: dict[str, int]) -> dict[str, float]:
     """
     if n_docs <= 0:
         return dict.fromkeys(doc_freq, 0.0)
-    return {
-        kw: math.log(1 + n_docs / (df + 1)) for kw, df in doc_freq.items()
-    }
+    return {kw: math.log(1 + n_docs / (df + 1)) for kw, df in doc_freq.items()}
 
 
 def keyword_idf_score(
@@ -346,10 +334,7 @@ def keyword_idf_score(
     total = 0.0
     for kw in keywords:
         weight = max(
-            (
-                w for text, w in _searchable_fields(entry)
-                if _matches_keyword(text, kw)
-            ),
+            (w for text, w in _searchable_fields(entry) if _matches_keyword(text, kw)),
             default=0.0,
         )
         if weight > 0.0:
@@ -357,9 +342,106 @@ def keyword_idf_score(
     return total / len(keywords)
 
 
-# Entries created within this many hours are exempt from the dead-path drop,
-# protecting fresh work whose files are not committed yet.
-DEAD_PATH_GRACE_HOURS: int = 24
+def rank_and_truncate(
+    items: Sequence[tuple[ItemT, int]],
+    max_tokens: int,
+    *,
+    line_formatter: Callable[[Any], str],
+) -> tuple[list[ItemT], int, int]:
+    """Rank items by recency then overlap, truncate to token budget.
+
+    Sorting (two-pass stable sort, least-significant first):
+
+    1. **Recency** — ``created_at`` descending (newer first).
+    2. **Overlap score** — higher first.
+
+    Deprecated entries never reach this function: callers pass the derived
+    live-set from the store, so no status sort exists.
+
+    Walks the sorted items, computes the token count of each compact format
+    line, and stops **before** the item that would push the total over
+    ``max_tokens`` (whole-item cut — never mid-line).
+
+    Args:
+        items: List of ``(item, overlap_score)`` tuples.
+        max_tokens: Maximum token budget for the compact-formatted lines.
+        line_formatter: Function to format an item as a compact line (one
+            of ``_compact_*_line``).
+
+    Returns:
+        ``(selected_items, shown_count, total_count)``.
+    """
+    total = len(items)
+
+    sorted_items = sorted(items, key=lambda x: x[0].created_at, reverse=True)
+    sorted_items = sorted(sorted_items, key=lambda x: x[1], reverse=True)
+
+    selected: list[ItemT] = []
+    tokens_used = 0
+    for item, _overlap in sorted_items:
+        line = line_formatter(item)
+        line_tokens = count_tokens(line)
+        if tokens_used + line_tokens > max_tokens:
+            break
+        selected.append(item)
+        tokens_used += line_tokens
+
+    return selected, len(selected), total
+
+
+def _rank_keyword_section(
+    items: Sequence[EntryT],
+    keywords: list[str],
+    idf: dict[str, float],
+) -> list[tuple[EntryT, float]]:
+    """Score items against the query, gate zero scores, sort deterministically.
+
+    Ordering: score descending, then ``created_at``
+    descending, then ``id`` ascending — implemented as three stable
+    least-significant-first passes.
+
+    Returns:
+        ``(item, score)`` tuples with score > 0 only.
+    """
+    scored = [(it, keyword_idf_score(it, keywords, idf)) for it in items]
+    gated = [(it, s) for it, s in scored if s > 0.0]
+    gated.sort(key=lambda pair: pair[0].id)
+    gated.sort(key=lambda pair: pair[0].created_at, reverse=True)
+    gated.sort(key=lambda pair: pair[1], reverse=True)
+    return gated
+
+
+def _truncate_ranked(
+    ranked: Sequence[tuple[EntryT, float]],
+    max_tokens: int,
+    line_formatter: Callable[[Any], str],
+) -> list[EntryT]:
+    """Select ranked items under a token budget, with floor and backfill.
+
+    Walks the items in deterministic ranked order and:
+
+    - admits any item whose line fits the remaining budget;
+    - **floor**: while fewer than ``min(len(ranked), MIN_SHOWN_PER_SECTION)``
+      items are selected, admits even over-budget items — so a single long
+      top-ranked line can neither empty the section nor reduce it to one
+      line when dozens of entries matched;
+    - **backfill**: skips an over-budget item instead of breaking, so
+      shorter lower-ranked lines further down still fit. Output preserves
+      strict score-descending order because selection follows ranked order.
+
+    The truncation marker is computed by callers as
+    ``len(ranked) - len(selected)`` and stays exact under all three rules.
+    """
+    selected: list[EntryT] = []
+    tokens_used = 0
+    floor = min(len(ranked), MIN_SHOWN_PER_SECTION)
+    for item, _score in ranked:
+        line_tokens = count_tokens(line_formatter(item))
+        if tokens_used + line_tokens > max_tokens and len(selected) >= floor:
+            continue
+        selected.append(item)
+        tokens_used += line_tokens
+    return selected
 
 
 def _try_parse_timestamp(value: str) -> datetime | None:
@@ -438,6 +520,7 @@ def drop_dead_path_entries(
 
         def exists(p: str) -> bool:
             return Path(p).exists()
+
     now_dt = _parse_timestamp(now if now is not None else utc_now())
     cutoff = now_dt - timedelta(hours=DEAD_PATH_GRACE_HOURS)
     kept: list[EntryT] = []
@@ -448,66 +531,11 @@ def drop_dead_path_entries(
         if any(exists(p) for p in entry.paths):
             kept.append(entry)
             continue
-        # Fail open: only drop when the stamp is parseable AND demonstrably
-        # outside the grace window. Garbage stamps get fresh-work protection.
         created = _try_parse_timestamp(entry.created_at)
         if created is not None and created < cutoff:
             continue
         kept.append(entry)
     return kept
-
-
-def rank_and_truncate(
-    items: Sequence[tuple[Constraint | Decision, int]],
-    max_tokens: int,
-    *,
-    line_formatter: Callable[[Any], str],
-) -> tuple[list[Constraint | Decision], int, int]:
-    """Rank items by recency then overlap, truncate to token budget.
-
-    Sorting (two-pass stable sort, least-significant first):
-
-    1. **Recency** — ``created_at`` descending (newer first).
-    2. **Overlap score** — higher first.
-
-    Deprecated entries never reach this function: callers pass the derived
-    live-set from the store, so no status sort exists.
-
-    Walks the sorted items, computes the token count of each compact format
-    line, and stops **before** the item that would push the total over
-    ``max_tokens`` (whole-item cut — never mid-line).
-
-    Args:
-        items: List of ``(item, overlap_score)`` tuples.
-        max_tokens: Maximum token budget for the compact-formatted lines.
-        line_formatter: Function to format an item as a compact line (one
-            of ``_compact_*_line``).
-
-    Returns:
-        ``(selected_items, shown_count, total_count)``.
-    """
-    total = len(items)
-
-    # Two-pass stable sort: least significant first, most significant last
-    sorted_items = sorted(items, key=lambda x: x[0].created_at, reverse=True)
-    sorted_items = sorted(sorted_items, key=lambda x: x[1], reverse=True)
-
-    selected: list[Constraint | Decision] = []
-    tokens_used = 0
-    for item, _overlap in sorted_items:
-        line = line_formatter(item)
-        line_tokens = count_tokens(line)
-        if tokens_used + line_tokens > max_tokens:
-            break
-        selected.append(item)
-        tokens_used += line_tokens
-
-    return selected, len(selected), total
-
-
-# Truncation marker shown per section when matched items were cut by the
-# token budget. Tells the agent how to get more.
-_TRUNCATION_HINT: str = "refine keywords or raise --max-tokens"
 
 
 class ContextPackStats(BaseModel):
@@ -546,66 +574,6 @@ class ContextPackResult(BaseModel):
     decisions: list[Decision] = []
 
 
-def _rank_keyword_section(
-    items: Sequence[EntryT],
-    keywords: list[str],
-    idf: dict[str, float],
-) -> list[tuple[EntryT, float]]:
-    """Score items against the query, gate zero scores, sort deterministically.
-
-    Ordering: score descending, then ``created_at``
-    descending, then ``id`` ascending — implemented as three stable
-    least-significant-first passes.
-
-    Returns:
-        ``(item, score)`` tuples with score > 0 only.
-    """
-    scored = [(it, keyword_idf_score(it, keywords, idf)) for it in items]
-    gated = [(it, s) for it, s in scored if s > 0.0]
-    gated.sort(key=lambda pair: pair[0].id)
-    gated.sort(key=lambda pair: pair[0].created_at, reverse=True)
-    gated.sort(key=lambda pair: pair[1], reverse=True)
-    return gated
-
-
-# Minimum items rendered per section regardless of budget: one long
-# top-ranked line must never starve a section that matched dozens of items.
-MIN_SHOWN_PER_SECTION: int = 3
-
-
-def _truncate_ranked(
-    ranked: Sequence[tuple[EntryT, float]],
-    max_tokens: int,
-    line_formatter: Callable[[Any], str],
-) -> list[EntryT]:
-    """Select ranked items under a token budget, with floor and backfill.
-
-    Walks the items in deterministic ranked order and:
-
-    - admits any item whose line fits the remaining budget;
-    - **floor**: while fewer than ``min(len(ranked), MIN_SHOWN_PER_SECTION)``
-      items are selected, admits even over-budget items — so a single long
-      top-ranked line can neither empty the section nor reduce it to one
-      line when dozens of entries matched;
-    - **backfill**: skips an over-budget item instead of breaking, so
-      shorter lower-ranked lines further down still fit. Output preserves
-      strict score-descending order because selection follows ranked order.
-
-    The truncation marker is computed by callers as
-    ``len(ranked) - len(selected)`` and stays exact under all three rules.
-    """
-    selected: list[EntryT] = []
-    tokens_used = 0
-    floor = min(len(ranked), MIN_SHOWN_PER_SECTION)
-    for item, _score in ranked:
-        line_tokens = count_tokens(line_formatter(item))
-        if tokens_used + line_tokens > max_tokens and len(selected) >= floor:
-            continue  # backfill: keep scanning for shorter lower-ranked lines
-        selected.append(item)
-        tokens_used += line_tokens
-    return selected
-
-
 def _render_keyword_section(
     heading: str,
     total_in: int,
@@ -628,10 +596,77 @@ def _render_keyword_section(
     for item in selected:
         lines.append(line_formatter(item))
     if len(selected) < matched:
-        lines.append(
-            f"+{matched - len(selected)} more below threshold - {_TRUNCATION_HINT}"
-        )
+        lines.append(f"+{matched - len(selected)} more below threshold - {_TRUNCATION_HINT}")
     return lines
+
+
+def _render_recency_fallback(
+    decisions: list[Decision],
+    constraints: list[Constraint],
+    max_constraint_tokens: int,
+    max_decision_tokens: int,
+) -> ContextPackResult:
+    """Render the legacy no-keywords pack: recency ranking, budget caps.
+
+    Both sections always appear; each reports an honest omission note when
+    the token budget cut items.
+    """
+    stats = ContextPackStats()
+
+    constraint_tuples = [(c, 0) for c in constraints]
+    selected_c, shown_c, _ = rank_and_truncate(
+        constraint_tuples,
+        max_constraint_tokens,
+        line_formatter=_compact_constraint_line,
+    )
+
+    decision_tuples = [(d, 0) for d in decisions]
+    selected_d, shown_d, _ = rank_and_truncate(
+        decision_tuples,
+        max_decision_tokens,
+        line_formatter=_compact_decision_line,
+    )
+
+    stats.matched_constraints = len(constraints)
+    stats.shown_constraints = shown_c
+    stats.matched_decisions = len(decisions)
+    stats.shown_decisions = shown_d
+
+    lines = ["## Architectural Context"]
+    lines.append("")
+    lines.append("### Constraints (MUST follow)")
+    if shown_c == 0:
+        if len(constraints) == 0:
+            lines.append("_None_")
+        else:
+            lines.append(f"_... and {len(constraints)} constraints omitted (token budget)._")
+    else:
+        for c in selected_c:
+            lines.append(_compact_constraint_line(c))
+        if shown_c < len(constraints):
+            omitted = len(constraints) - shown_c
+            lines.append(f"... and {omitted} more constraints omitted (token budget).")
+
+    lines.append("")
+    lines.append("### Relevant Decisions")
+    if shown_d == 0:
+        if len(decisions) == 0:
+            lines.append("_None_")
+        else:
+            lines.append(f"_... and {len(decisions)} decisions omitted (token budget)._")
+    else:
+        for d in selected_d:
+            lines.append(_compact_decision_line(d))
+        if shown_d < len(decisions):
+            omitted = len(decisions) - shown_d
+            lines.append(f"... and {omitted} more decisions omitted (token budget).")
+
+    return ContextPackResult(
+        text="\n".join(lines),
+        stats=stats,
+        constraints=selected_c,
+        decisions=selected_d,
+    )
 
 
 def build_context_pack(
@@ -672,27 +707,35 @@ def build_context_pack(
     stats = ContextPackStats()
 
     if keywords:
-        # Ghosts whose every bound path is gone never rank usefully.
         live_constraints = drop_dead_path_entries(
-            constraints, path_exists=path_exists, base_dir=base_dir,
+            constraints,
+            path_exists=path_exists,
+            base_dir=base_dir,
         )
         live_decisions = drop_dead_path_entries(
-            decisions, path_exists=path_exists, base_dir=base_dir,
+            decisions,
+            path_exists=path_exists,
+            base_dir=base_dir,
         )
 
         n_docs = len(live_constraints) + len(live_decisions)
         doc_freq = document_frequencies(
-            [*live_constraints, *live_decisions], keywords,
+            [*live_constraints, *live_decisions],
+            keywords,
         )
         idf = idf_weights(n_docs, doc_freq)
 
         ranked_c = _rank_keyword_section(live_constraints, keywords, idf)
         ranked_d = _rank_keyword_section(live_decisions, keywords, idf)
         selected_c = _truncate_ranked(
-            ranked_c, max_constraint_tokens, _compact_constraint_line,
+            ranked_c,
+            max_constraint_tokens,
+            _compact_constraint_line,
         )
         selected_d = _truncate_ranked(
-            ranked_d, max_decision_tokens, _compact_decision_line,
+            ranked_d,
+            max_decision_tokens,
+            _compact_decision_line,
         )
 
         stats.matched_constraints = len(ranked_c)
@@ -707,16 +750,26 @@ def build_context_pack(
         header += f" - shown {total_shown} of {total_matched} matched"
 
         lines = [header]
-        lines.extend(_render_keyword_section(
-            "### Constraints (MUST follow)",
-            len(constraints), stats.matched_constraints, selected_c,
-            _compact_constraint_line, "constraints",
-        ))
-        lines.extend(_render_keyword_section(
-            "### Relevant Decisions",
-            len(decisions), stats.matched_decisions, selected_d,
-            _compact_decision_line, "decisions",
-        ))
+        lines.extend(
+            _render_keyword_section(
+                "### Constraints (MUST follow)",
+                len(constraints),
+                stats.matched_constraints,
+                selected_c,
+                _compact_constraint_line,
+                "constraints",
+            )
+        )
+        lines.extend(
+            _render_keyword_section(
+                "### Relevant Decisions",
+                len(decisions),
+                stats.matched_decisions,
+                selected_d,
+                _compact_decision_line,
+                "decisions",
+            )
+        )
         return ContextPackResult(
             text="\n".join(lines),
             stats=stats,
@@ -724,65 +777,11 @@ def build_context_pack(
             decisions=selected_d,
         )
 
-    # --- Fallback: recency ranking (no keywords available) ---
-    constraint_tuples = [(c, 0) for c in constraints]
-    fallback_c, shown_c = rank_and_truncate(
-        constraint_tuples,
+    return _render_recency_fallback(
+        decisions,
+        constraints,
         max_constraint_tokens,
-        line_formatter=_compact_constraint_line,
-    )[:2]
-    selected_c_fallback: list[Constraint] = fallback_c  # type: ignore[assignment]
-
-    if decisions:
-        decision_tuples = [(d, 0) for d in decisions]
-        fallback_d, shown_d = rank_and_truncate(
-            decision_tuples,
-            max_decision_tokens,
-            line_formatter=_compact_decision_line,
-        )[:2]
-        selected_d_fallback: list[Decision] = fallback_d  # type: ignore[assignment]
-    else:
-        selected_d_fallback, shown_d = [], 0
-
-    stats.matched_constraints = len(constraints)
-    stats.shown_constraints = shown_c
-    stats.matched_decisions = len(decisions)
-    stats.shown_decisions = shown_d
-
-    lines = ["## Architectural Context"]
-    lines.append("")
-    lines.append("### Constraints (MUST follow)")
-    if shown_c == 0:
-        if len(constraints) == 0:
-            lines.append("_None_")
-        else:
-            lines.append(f"_... and {len(constraints)} constraints omitted (token budget)._")
-    else:
-        for c in selected_c_fallback:
-            lines.append(_compact_constraint_line(c))
-        if shown_c < len(constraints):
-            omitted = len(constraints) - shown_c
-            lines.append(f"... and {omitted} more constraints omitted (token budget).")
-
-    lines.append("")
-    lines.append("### Relevant Decisions")
-    if shown_d == 0:
-        if len(decisions) == 0:
-            lines.append("_None_")
-        else:
-            lines.append(f"_... and {len(decisions)} decisions omitted (token budget)._")
-    else:
-        for d in selected_d_fallback:
-            lines.append(_compact_decision_line(d))
-        if shown_d < len(decisions):
-            omitted = len(decisions) - shown_d
-            lines.append(f"... and {omitted} more decisions omitted (token budget).")
-
-    return ContextPackResult(
-        text="\n".join(lines),
-        stats=stats,
-        constraints=selected_c_fallback,
-        decisions=selected_d_fallback,
+        max_decision_tokens,
     )
 
 
@@ -858,7 +857,7 @@ def format_evolution(
         lines.append(f"No architectural decisions found for {entity_path}.")
     else:
         for d in selected:
-            lines.append(_compact_evolution_line(d))  # type: ignore[arg-type]
+            lines.append(_compact_evolution_line(d))
         if shown < total:
             lines.append(f"... and {total - shown} more decisions omitted (token budget).")
 
@@ -879,7 +878,7 @@ def format_context_pack_json(
 
     Uses the same IDF-weighted keyword scoring, dead-path drop, relevance
     gate, deterministic ordering, and token budget truncation as
-    :func:`format_memory_context`.  Without keywords, falls back
+    :func:`format_memory_context`. Without keywords, falls back
     to recency ranking.
 
     Args:
@@ -887,7 +886,7 @@ def format_context_pack_json(
         constraints: List of ``Constraint`` objects.
         max_constraint_tokens: Maximum token budget for constraint lines.
         max_decision_tokens: Maximum token budget for decision lines.
-        keywords: Keywords for matching (agent-generated).  When ``None``,
+        keywords: Keywords for matching (agent-generated). When ``None``,
             items are ranked by recency.
         path_exists: Optional liveness predicate for the dead-path drop;
             defaults to real filesystem checks.
@@ -956,7 +955,7 @@ def format_file_history_json(
     """Produces a JSON-serializable dict for the ``query file`` command.
 
     Formats decisions with ``id``, ``title``, ``rationale`` (truncated to
-    :data:`_RATIONALE_MAX_CHARS` chars), and ``created_at``.  Formats
+    :data:`_RATIONALE_MAX_CHARS` chars), and ``created_at``. Formats
     constraints with ``id``, ``description``, and ``created_at``.
 
     Args:
