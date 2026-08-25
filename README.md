@@ -219,12 +219,6 @@ re-added slug derives as live again) — liveness is derived at query time, so
 context packs and keyword queries always exclude tombstones without any
 cleanup scans.
 
-**Upgrading from schema v4 (memento 0.3.0 or earlier)?** Old-schema databases
-are not auto-upgraded. Start fresh: move the old `.mementic/graph.db` aside
-(or delete it) and run `mementic init`. If you need data out of a v4
-database, check out the v0.3.0 tag, which shipped the one-shot conversion
-script.
-
 ## Project status & roadmap
 
 Active development, used daily by the maintainer. The core loop — init,
