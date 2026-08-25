@@ -10,8 +10,8 @@ build/
 # Secrets
 .env
 
-# Mementic runtime (graph lives at ~/.mementic/projects/)
-.mementic/
+# Mementic runtime (graph.db lives in the repo-root .mementic/ directory)
+/.mementic/
 audit.jsonl
 
 # IDE

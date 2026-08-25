@@ -14,7 +14,9 @@ precision proxy:
 Usage:
     uv run python scripts/probe_packs.py [--db PATH]
 
-The default DB path is ``.mementic/graph.db``. The database is opened
+The default DB path resolves from the repo root (``.mementic/graph.db``
+under the Git toplevel, or the working directory outside repositories).
+The database is opened
 READ-ONLY (SQLite ``mode=ro``): the harness fails fast when the file does
 not exist and structurally cannot create or write one, so it is safe to
 point at a production database.
@@ -37,7 +39,10 @@ from mementic.format import (
     split_pack_budget,
 )
 from mementic.models import Constraint, Decision
+from mementic.paths import graph_db_path, resolve_base_dir
 from mementic.store import MementicStore
+
+_DEFAULT_DB: str = str(graph_db_path(resolve_base_dir()))
 
 # Realistic agent query sets: narrow, single-word technical
 # keywords, as instructed by the enforcement template.
@@ -142,8 +147,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--db",
-        default=".mementic/graph.db",
-        help="Path to the mementic graph database (default: .mementic/graph.db)",
+        default=_DEFAULT_DB,
+        help="Path to the mementic graph database (default: repo-root graph.db)",
     )
     args = parser.parse_args()
 
