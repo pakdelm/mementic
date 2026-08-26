@@ -1,7 +1,9 @@
-"""Instruction injection for agent enforcement blocks.
+"""Enforcement section sync for AGENTS.md.
 
-Detects agents in the repo and injects the mementic enforcement block
-into AGENTS.md.
+The mementic enforcement block is marker-wrapped and synced into AGENTS.md:
+created when absent, replaced in place when present, and everything outside
+the section is preserved byte-for-byte. Re-running sync with a newer
+template upgrades the section in existing files.
 """
 
 from __future__ import annotations
@@ -9,23 +11,11 @@ from __future__ import annotations
 import importlib.resources
 from pathlib import Path
 
+_START_MARKER = "<!-- mementic:start -->"
+_END_MARKER = "<!-- mementic:end -->"
 
-# Agent detection: directory name -> agent identifier
-_AGENT_MARKERS: dict[str, str] = {
-    ".opencode": "opencode",
-    ".claude": "claude-code",
-    ".cursor": "cursor",
-    ".windsurf": "windsurf",
-}
-
-# Agent -> rules file path (relative to repo root)
-_AGENT_RULES_FILES: dict[str, str] = {
-    "claude-code": "CLAUDE.md",
-    "cursor": ".cursorrules",
-    "windsurf": ".windsurfrules",
-}
-
-_ENFORCEMENT_HEADING = "## Mementic Memory (HARD CONSTRAINT — ALWAYS ACTIVE)"
+# Pre-marker heading from old templates; used to migrate existing files.
+_LEGACY_HEADING = "## Mementic Memory (HARD CONSTRAINT — ALWAYS ACTIVE)"
 
 
 def load_template() -> str:
@@ -34,85 +24,74 @@ def load_template() -> str:
     return ref.read_text(encoding="utf-8")
 
 
-def detect_agents(repo_root: Path) -> list[str]:
-    """Detect agents present in the repo by directory markers.
-
-    Args:
-        repo_root: Path to the repository root.
-
-    Returns:
-        List of agent identifiers found (e.g. ["opencode", "cursor"]).
-    """
-    found: list[str] = []
-    for marker, agent in _AGENT_MARKERS.items():
-        if (repo_root / marker).is_dir():
-            found.append(agent)
-    return found
+def _rendered_block() -> str:
+    """The marker-wrapped enforcement block without a trailing newline."""
+    return load_template().strip()
 
 
-def has_enforcement(agents_md_path: Path) -> bool:
-    """Check if AGENTS.md already contains the enforcement block.
+def sync_enforcement(agents_md_path: Path, dry_run: bool = False) -> str:
+    """Create or replace the mementic enforcement section in AGENTS.md.
+
+    Precedence: a marker-wrapped section is replaced between its markers; a
+    legacy pre-marker section is replaced from its heading through the next
+    ``## `` heading (or EOF); otherwise the block is appended, creating the
+    file when missing. Content outside the section is preserved byte-for-byte.
 
     Args:
         agents_md_path: Path to AGENTS.md.
+        dry_run: If True, return the action description without writing.
 
     Returns:
-        True if the enforcement heading is found.
+        Status message describing the action taken (or would be taken).
     """
+    block = _rendered_block()
+
     if not agents_md_path.exists():
-        return False
+        if dry_run:
+            return f"Would create {agents_md_path} with enforcement block."
+        agents_md_path.write_text(f"{block}\n", encoding="utf-8")
+        return f"Created {agents_md_path} with enforcement block."
+
     content = agents_md_path.read_text(encoding="utf-8")
-    return _ENFORCEMENT_HEADING in content
 
+    if _START_MARKER in content:
+        if _END_MARKER not in content:
+            return (
+                f"Warning: mementic start marker without end marker in "
+                f"{agents_md_path}; manual fix required, no changes written."
+            )
+        head, _, tail = content.partition(_START_MARKER)
+        _, _, tail = tail.partition(_END_MARKER)
+        new_content = f"{head}{block}{tail}"
+        if new_content == content:
+            return f"Enforcement section already up to date in {agents_md_path}."
+        if dry_run:
+            return f"Would update enforcement section in {agents_md_path}."
+        agents_md_path.write_text(new_content, encoding="utf-8")
+        return f"Updated enforcement section in {agents_md_path}."
 
-def get_rules_file(agent: str) -> str | None:
-    """Get the rules file path for a non-OpenCode agent.
-
-    Args:
-        agent: Agent identifier.
-
-    Returns:
-        Relative path to the rules file, or None if agent doesn't need one.
-    """
-    return _AGENT_RULES_FILES.get(agent)
-
-
-def inject_enforcement(
-    agents_md_path: Path,
-    dry_run: bool = False,
-) -> str:
-    """Append the enforcement block to AGENTS.md.
-
-    Args:
-        agents_md_path: Path to AGENTS.md.
-        dry_run: If True, return the content that would be written without
-            modifying the file.
-
-    Returns:
-        Status message describing what was done (or would be done).
-    """
-    template = load_template()
-
-    if has_enforcement(agents_md_path):
-        return "Enforcement block already exists in AGENTS.md. Skipped."
+    if _LEGACY_HEADING in content:
+        start = content.index(_LEGACY_HEADING)
+        rest = content[start + len(_LEGACY_HEADING) :]
+        next_heading = rest.find("\n## ")
+        if next_heading == -1:
+            end = len(content)
+        else:
+            end = start + len(_LEGACY_HEADING) + next_heading + 1
+        new_content = f"{content[:start]}{block}\n{content[end:]}"
+        if new_content == content:
+            return f"Enforcement section already up to date in {agents_md_path}."
+        if dry_run:
+            return f"Would update enforcement section in {agents_md_path}."
+        agents_md_path.write_text(new_content, encoding="utf-8")
+        return f"Updated enforcement section in {agents_md_path}."
 
     if dry_run:
-        if agents_md_path.exists():
-            return f"Would append enforcement block to {agents_md_path}:\n\n{template}"
-        return f"Would create {agents_md_path} with enforcement block:\n\n{template}"
-
-    if agents_md_path.exists():
-        existing = agents_md_path.read_text(encoding="utf-8")
-        # Ensure blank line before enforcement block
-        if existing and not existing.endswith("\n\n"):
-            if existing.endswith("\n"):
-                new_content = existing + "\n" + template
-            else:
-                new_content = existing + "\n\n" + template
-        else:
-            new_content = existing + template
-        agents_md_path.write_text(new_content, encoding="utf-8")
-        return f"Appended enforcement block to {agents_md_path}."
+        return f"Would append enforcement block to {agents_md_path}."
+    if content and not content.endswith("\n\n"):
+        separator = "\n" if content.endswith("\n") else "\n\n"
+        new_content = f"{content}{separator}{block}\n"
     else:
-        agents_md_path.write_text(template, encoding="utf-8")
-        return f"Created {agents_md_path} with enforcement block."
+        new_content = f"{content}{block}\n"
+    agents_md_path.write_text(new_content, encoding="utf-8")
+    return f"Appended enforcement block to {agents_md_path}."

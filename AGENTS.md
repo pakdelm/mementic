@@ -2,117 +2,40 @@
 
 This is a Python project.
 
+<!-- mementic:start -->
 ## Mementic Memory (HARD CONSTRAINT — ALWAYS ACTIVE)
 
-This project dogfoods Mementic as its own architectural memory layer. These rules
-are mandatory whenever architectural context could affect your work. They apply
-when the task involves **code changes, architectural decisions, file
-modifications, or exploring unfamiliar parts of the codebase.** Skip the
-mementic query for purely conversational messages ("thanks", "looks good"),
-trivial confirmations ("commit and push", "y"), or informational questions
-with no code impact ("what version of Python?"). If you are about to read
-files or search code, you need context first.
+This project keeps its architectural rules in a local graph (`.mementic/`).
+These steps apply to EVERY user message — questions, exploration, planning,
+review, and informational queries included. There are no read-only exceptions.
+Query before any read; record decisions inline as you make them.
 
-The mementic memory replaces reading **ADRs, specs, and instruction files** — it
-tells you WHAT rules exist. It does NOT replace reading the **code you are about
-to edit** — that tells you WHERE the change goes. Read code surgically: grep/glob
-to the exact function, then read that section. Never batch-read ADRs or specs;
-that is the token waste the graph eliminates.
+1. **Query.** Before reading files or searching code, run
+   `mementic query keywords <5-12 narrow terms>` (retry as
+   `uv run mementic <command>` if `mementic` is not on PATH). For
+   multi-topic requests, run one focused query per sub-task. Echo the
+   `[mementic: ...]` summary line verbatim in your response — it is the
+   auditable trace of what mementic contributed.
+2. **Sufficiency gate.** Before any further reads, output two lines:
+   `mementic:` (1-2 sentence summary, or "returned nothing relevant") and
+   `Files I still need to read and why:` (every file you will open, each
+   with a one-clause justification).
+3. **File gate.** Before opening ANY file from that list, run
+   `mementic query file <path>` for every path. Locating files with
+   grep/glob is fine; reading content without a query is not. This covers
+   exploration reads too.
+4. **Validate.** Do not write code that violates an active constraint. Cite
+   every entity you apply or reject as `[mementic: <id>]`.
+5. **Record inline.** When you make a decision or establish a rule, run
+   `mementic add decision TITLE -r "..."` or
+   `mementic add constraint DESC -e PATH` immediately — no gate. Retire
+   superseded rules with `mementic deprecate ID... -r "reason"`. Before
+   re-adding content, check `mementic history <id>` — tombstones carry
+   reasons and successor chains.
 
-**After EVERY user message** (not just "before a task" — each message is a new
-context window), unless the message falls into the skip categories above:
-1. Think about the task: what domains, concepts, and concerns are relevant?
-   Generate 5-12 narrow, single-word technical keywords. Favor specific
-   terms (e.g., ``argon2``, ``pydantic``, ``SessionMiddleware``) over
-   generic ones (e.g., ``security``, ``validation``, ``middleware``).
-   Generic keywords match too many items and bloat context packs.
-   If fewer than 5 keywords apply, 3-4 precise ones are better than
-   padding with broad terms. Example for "fix authentication bug":
-   ["argon2", "token", "login", "session"] — skip "security", "password",
-   "hashing" because they match dozens of unrelated items.
-2. Run `uv run mementic query keywords <kw1> <kw2> ...` with those keywords.
-   Echo the `[mementic: ...]` summary line to the user.
-
-   **Invocation:** in this repo always call the CLI as
-   `uv run mementic <command>` — a bare `mementic` is not on PATH here and
-    fails on first use. Do not attempt bare invocations, do not install a
-    global tool.
-
-   **Multi-topic tasks:** When the user request spans multiple distinct
-   sub-tasks (e.g., "fix bug X in server.py and fix bug Y in graph.py"),
-   run `uv run mementic query keywords` for each sub-task with focused,
-   single-topic keywords. Separate queries produce better keyword matches
-   than one diluted query for the whole.
-3. **Sufficiency gate — output these two lines before any further reads:**
-   1. `mementic:` — 1-2 sentence summary (or "returned nothing relevant").
-   2. `Files I still need to read and why:` — every code file you will open,
-      each with a one-clause justification. If a file is not on this list,
-      do not read it.
-4. **File gate — before opening ANY file from that list**, run
-   `uv run mementic query file <path>` for every path on it. Locating files
-   with grep/glob first is fine (you need the paths); reading content is not.
-   This covers exploration reads too, not just files being modified. If a
-   file returns constraints, fold them into your plan before the first Read.
-   HARD GATE: opening a code file that has no `query file` result this
-   message violates project constraints, same as skipping `query keywords`.
-5. Validate your plan against every returned constraint. Do NOT write code
-   that violates an active constraint. Cite every entity you apply or
-   reject with `[mementic: <id>]` so usage is auditable in the session log.
-6. Only read raw ADR or instruction files if the mementic memory leaves
-   ambiguity you must resolve to proceed safely.
-
-**Why every message, not just "before a task":** Context packs are free (no LLM
-calls, just SQLite reads). Architectural constraints can change between messages
-(e.g., another agent session captured a new decision). Assuming previous context
-is still valid is how violations happen. The cost of re-fetching is near zero;
-the cost of stale context is a violated constraint.
-
-**When to skip:** The mementic query is for catching architectural constraints
-that affect code decisions. If the user says "thanks", "commit and push", or
-"what Python version?" there is no code decision to constrain — skip it.
-If you're about to read code or make changes, don't skip.
-
-**If the mementic memory fails:** State the error explicitly, fall back to
-targeted reads only (grep first, read specific sections), and report the
-failure to the user. Do not silently read entire files wholesale.
-
-**Echo summaries (HARD GATE — check before responding):** EVERY mementic
-tool call returns a `[mementic: ...]` summary line. You MUST echo that line
-verbatim to the user in your response. This applies to `query keywords`,
-`query file`, `add decision`, `add constraint`, `deprecate`, and every
-other mementic command. If you called a mementic command and the
-`[mementic: ...]` line is not in your response text, fix it before sending.
-The user should see exactly what mementic contributed to every message.
-Skipping this is a hard constraint violation — equivalent to skipping
-`query keywords` itself. The cost is zero (already computed), so there is
-no excuse.
-
-**Proposing decisions/constraints is cheap (SQLite writes, no LLM). There is no
-other write path:**
-
-- **Inline proposals — always, no gate.** When you make a decision or establish
-  a rule, run `uv run mementic add decision <title> --rationale "<text>"` and
-  `uv run mementic add constraint <desc> -e <path>` immediately. No judgment call
-  about "architectural significance" — if it's worth remembering, propose it.
-  If it's not, don't. Duplicate proposals are skipped automatically; changed
-  content under the same title deprecates the old entry and accepts the new one.
-- **Multiple deprecations** — run `uv run mementic deprecate <id1> <id2> ...`
-  to retire outdated rules in one call.
-
-**History first — tombstones and duplicates:**
-
-- When you encounter a deprecated/tombstoned entry in any listing, run
-  `uv run mementic history <id>` before acting on it — the reason and any successor
-  chain are recorded there.
-- Before re-adding content that might already exist, check first with
-  `uv run mementic history <id>` (or `uv run mementic query search <term>`); don't duplicate
-  entries that were retired or already recorded.
-
-**Post-recording cleanup:** After recording decisions or constraints via
-`mementic add decision` / `mementic add constraint`, call
-`uv run mementic deprecate <id1> <id2> ...` for any rules those decisions
-supersede.
-
-**If you skip these steps, you are violating project constraints.**
-A graph with no new decisions after a sprint of development is evidence
-of a broken enforcement loop. Fix the instructions, not the agent.
+The pack replaces reading ADRs, specs, and instruction files wholesale; it
+does not replace reading the code you are about to edit. If mementic fails,
+state the error, fall back to targeted reads (grep first), and report it.
+Re-query every message: constraints change between sessions, and the cost of
+re-fetching is near zero.
+<!-- mementic:end -->

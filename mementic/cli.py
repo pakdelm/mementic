@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
-import sys
 from pathlib import Path
 
 import typer
@@ -55,11 +54,6 @@ def _resolve_store() -> MementicStore:
     except RuntimeError as exc:
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(code=1) from exc
-
-
-def _interactive() -> bool:
-    """Return True when a human is driving the terminal."""
-    return sys.stdin.isatty()
 
 
 # Minimum word-set overlap (Jaccard) for two entries to count as the same
@@ -218,9 +212,9 @@ def _accepted_status_label(disposition: str, noun: str) -> str:
 def init() -> None:
     """Initialize mementic for this repository.
 
-    Creates ``.mementic/graph.db`` as an empty memory store when missing
-    (idempotent — running it again is a no-op) and injects enforcement
-    instructions into AGENTS.md when absent.
+    Creates ``.mementic/graph.db`` when missing (idempotent) and syncs the
+    enforcement section in AGENTS.md (created, updated, or left unchanged).
+    Deterministic: no prompts, no interactivity branching.
     """
     cwd = resolve_base_dir()
     db_path = graph_db_path(cwd)
@@ -231,50 +225,12 @@ def init() -> None:
         store.close()
         created = True
 
-    # --- Inject enforcement template ---
-    from mementic.inject import detect_agents, has_enforcement, inject_enforcement
+    from mementic.inject import sync_enforcement
 
     agents_md_path = cwd / "AGENTS.md"
-    injection_note = ""
-    if not has_enforcement(agents_md_path):
-        detected = detect_agents(cwd)
-        if _interactive():
-            # Interactive human run: always ask before touching AGENTS.md.
-            console.print()
-            inject_ok = typer.confirm(
-                "No enforcement instructions found. Add to AGENTS.md?",
-                default=True,
-            )
-            if inject_ok:
-                injection_note = inject_enforcement(agents_md_path)
-                console.print(text(f"  [{C_SUCCESS}]{injection_note}[/]"))
-            else:
-                console.print(
-                    text(
-                        f"  [{C_WARN}]Warning: Without enforcement, "
-                        f"mementic operates as CLI-only.[/]\n"
-                        f"  [{C_DIM}]Agents won't automatically query "
-                        f"the graph. Re-run 'mementic init' to retry.[/]"
-                    )
-                )
-        elif detected:
-            # Non-interactive run in a repo with agent markers (agent-driven
-            # bootstrap): inject so the harness picks up enforcement.
-            injection_note = inject_enforcement(agents_md_path)
-        else:
-            console.print(
-                text(
-                    f"  [{C_DIM}]No enforcement instructions found. "
-                    f"Re-run 'mementic init' interactively to add them.[/]"
-                )
-            )
+    enforcement_note = sync_enforcement(agents_md_path)
 
     graph_state = "created" if created else "already exists"
-    enforcement_state = (
-        injection_note
-        if injection_note
-        else "Enforcement instructions already present in AGENTS.md."
-    )
     console.print(
         panel(
             text(
@@ -282,7 +238,7 @@ def init() -> None:
                 f"[{C_PATH}].mementic/graph.db[/] [{C_DIM}]({graph_state})[/]"
             ),
             rule(),
-            text(enforcement_state),
+            text(enforcement_note),
             rule(),
             text(
                 f"[{C_DIM} italic]Next: agents record rules inline via "
