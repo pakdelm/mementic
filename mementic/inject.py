@@ -14,9 +14,6 @@ from pathlib import Path
 _START_MARKER = "<!-- mementic:start -->"
 _END_MARKER = "<!-- mementic:end -->"
 
-# Pre-marker heading from old templates; used to migrate existing files.
-_LEGACY_HEADING = "## Mementic Memory (HARD CONSTRAINT — ALWAYS ACTIVE)"
-
 
 def load_template() -> str:
     """Load the enforcement template from package resources."""
@@ -32,10 +29,9 @@ def _rendered_block() -> str:
 def sync_enforcement(agents_md_path: Path, dry_run: bool = False) -> str:
     """Create or replace the mementic enforcement section in AGENTS.md.
 
-    Precedence: a marker-wrapped section is replaced between its markers; a
-    legacy pre-marker section is replaced from its heading through the next
-    ``## `` heading (or EOF); otherwise the block is appended, creating the
-    file when missing. Content outside the section is preserved byte-for-byte.
+    A marker-wrapped section is replaced between its markers; otherwise the
+    block is appended, creating the file when missing. Content outside the
+    section is preserved byte-for-byte.
 
     Args:
         agents_md_path: Path to AGENTS.md.
@@ -63,22 +59,6 @@ def sync_enforcement(agents_md_path: Path, dry_run: bool = False) -> str:
         head, _, tail = content.partition(_START_MARKER)
         _, _, tail = tail.partition(_END_MARKER)
         new_content = f"{head}{block}{tail}"
-        if new_content == content:
-            return f"Enforcement section already up to date in {agents_md_path}."
-        if dry_run:
-            return f"Would update enforcement section in {agents_md_path}."
-        agents_md_path.write_text(new_content, encoding="utf-8")
-        return f"Updated enforcement section in {agents_md_path}."
-
-    if _LEGACY_HEADING in content:
-        start = content.index(_LEGACY_HEADING)
-        rest = content[start + len(_LEGACY_HEADING) :]
-        next_heading = rest.find("\n## ")
-        if next_heading == -1:
-            end = len(content)
-        else:
-            end = start + len(_LEGACY_HEADING) + next_heading + 1
-        new_content = f"{content[:start]}{block}\n{content[end:]}"
         if new_content == content:
             return f"Enforcement section already up to date in {agents_md_path}."
         if dry_run:

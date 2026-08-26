@@ -6,7 +6,6 @@ from pathlib import Path
 
 from mementic.inject import (
     _END_MARKER,
-    _LEGACY_HEADING,
     _START_MARKER,
     load_template,
     sync_enforcement,
@@ -43,7 +42,7 @@ def test_load_template_contains_markers() -> None:
 def test_load_template_contains_heading() -> None:
     """The loaded template contains the enforcement heading."""
     template = load_template()
-    assert _LEGACY_HEADING in template
+    assert "## Mementic Memory (HARD CONSTRAINT" in template
 
 
 def test_load_template_contains_cli_commands() -> None:
@@ -79,7 +78,7 @@ def test_sync_appends_to_existing_preserving_user_content(tmp_path: Path) -> Non
     assert "Appended" in result
     content = md.read_text(encoding="utf-8")
     assert content.startswith("# My Project\n\nSome user rules.\n")
-    assert _LEGACY_HEADING in content
+    assert "## Mementic Memory (HARD CONSTRAINT" in content
 
 
 def test_sync_replaces_between_markers_preserving_surrounding_content(
@@ -124,40 +123,6 @@ def test_sync_updates_older_section_in_place(tmp_path: Path) -> None:
     assert "Outdated enforcement content." not in content
     assert content.count(_START_MARKER) == 1
     assert content.count(_END_MARKER) == 1
-
-
-def test_sync_migrates_legacy_heading(tmp_path: Path) -> None:
-    """A pre-marker section is migrated in place."""
-    md = tmp_path / "AGENTS.md"
-    legacy = (
-        "# Project\n\n"
-        f"{_LEGACY_HEADING}\n\nOld enforcement content.\n"
-        "\n## User Section\n\nUser content below.\n"
-    )
-    md.write_text(legacy, encoding="utf-8")
-
-    result = sync_enforcement(md)
-
-    assert "Updated" in result
-    content = md.read_text(encoding="utf-8")
-    assert content.startswith("# Project\n\n")
-    assert "Old enforcement content." not in content
-    assert _block() in content
-    assert content.endswith("\n## User Section\n\nUser content below.\n")
-
-
-def test_sync_migrates_legacy_heading_at_eof(tmp_path: Path) -> None:
-    """A legacy section running to EOF is replaced; content above stays."""
-    md = tmp_path / "AGENTS.md"
-    legacy = f"# Project\n\n{_LEGACY_HEADING}\n\nOld enforcement content.\n"
-    md.write_text(legacy, encoding="utf-8")
-
-    sync_enforcement(md)
-
-    content = md.read_text(encoding="utf-8")
-    assert content.startswith("# Project\n\n")
-    assert "Old enforcement content." not in content
-    assert content.count(_LEGACY_HEADING) == 1
 
 
 def test_sync_warns_on_corrupt_markers(tmp_path: Path) -> None:
