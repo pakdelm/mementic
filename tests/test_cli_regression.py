@@ -147,13 +147,9 @@ def test_init_second_run_is_idempotent(project_dir: Path) -> None:
     assert (project_dir / ".mementic" / "graph.db").exists()
 
 
-def test_init_writes_agents_md_enforcement_block(
-    bare_dir: Path, monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Interactive consent (piped 'y') injects the enforcement block."""
-    monkeypatch.setattr("mementic.cli._interactive", lambda: True)
-    result = runner.invoke(app, ["init"], input="y\n", env=_CONSOLE_ENV)
-    assert result.exit_code == 0
+def test_init_writes_agents_md_enforcement_block(bare_dir: Path) -> None:
+    """init always syncs the enforcement block into AGENTS.md."""
+    _ok("init")
     agents_md = bare_dir / "AGENTS.md"
     assert agents_md.exists()
     content = agents_md.read_text(encoding="utf-8")
@@ -161,13 +157,13 @@ def test_init_writes_agents_md_enforcement_block(
     assert "ALWAYS ACTIVE" in content
 
 
-def test_init_noninteractive_without_agent_markers_does_not_inject(
-    bare_dir: Path,
-) -> None:
-    """Consent gradient: silent non-TTY runs never touch AGENTS.md."""
-    result = _ok("init")
-    assert "Re-run 'mementic init' interactively" in _text(result)
-    assert not (bare_dir / "AGENTS.md").exists()
+def test_init_second_run_updates_section_in_place(bare_dir: Path) -> None:
+    """Re-running init updates the section without duplicating it."""
+    _ok("init")
+    _ok("init")
+    content = (bare_dir / "AGENTS.md").read_text(encoding="utf-8")
+    assert content.count("<!-- mementic:start -->") == 1
+    assert content.count("<!-- mementic:end -->") == 1
 
 
 def test_add_decision_new_slug_is_accepted(project_dir: Path) -> None:

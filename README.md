@@ -72,10 +72,12 @@ mementic query keywords auth rate limit session
 mementic log
 ```
 
-`init` also injects enforcement instructions into `AGENTS.md` so your agent
-knows to query before working and to record new rules inline via
-`mementic add`. Duplicate adds are skipped automatically; changed content
-under the same title deprecates the old entry and accepts the new one.
+`init` also syncs an enforcement section into `AGENTS.md` — created when
+missing, replaced in place on every re-run — so your agent knows to query
+before working and to record new rules inline via `mementic add`. Everything
+outside that section is left untouched. Duplicate adds are skipped
+automatically; changed content under the same title deprecates the old entry
+and accepts the new one.
 
 Everything lives in `.mementic/` — no global config, no registration,
 no API keys.
@@ -187,7 +189,7 @@ If any of this sounds like fun to fix, [contributions are welcome](CONTRIBUTING.
 
 | Command | What it does |
 |---|---|
-| `mementic init` | Create `.mementic/graph.db` when missing (idempotent) + inject AGENTS.md enforcement |
+| `mementic init` | Create `.mementic/graph.db` when missing (idempotent) + create or update the AGENTS.md enforcement section |
 | `mementic query keywords <kw...> [--json]` | Get ranked context for a task |
 | `mementic query file <path> [--prefix] [--json]` | Constraints/decisions for a file (exact match by default) |
 | `mementic query search <term>` | Full-text search the graph |
