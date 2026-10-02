@@ -84,10 +84,10 @@ no API keys.
 
 ## Agent setup
 
-`mementic init` detects your agent and injects enforcement instructions into
-`AGENTS.md`. Agents that read `AGENTS.md` — OpenCode and Claude Code — pick
-the instructions up automatically. For Cursor and Windsurf, copy the
-enforcement block from `AGENTS.md` into your agent's own instruction file.
+`mementic init` syncs an enforcement section into `AGENTS.md`; agents that
+read `AGENTS.md` — OpenCode and Claude Code — pick the instructions up
+automatically. For Cursor and Windsurf, copy the enforcement block from
+`AGENTS.md` into your agent's own instruction file.
 
 Agents use these CLI commands:
 
@@ -101,7 +101,10 @@ Agents use these CLI commands:
 | Search the graph | `mementic query search <term>` |
 | Trace why an entry was retired | `mementic history <id>` |
 
-`query keywords` and `query file` support `--json` for programmatic use.
+`query keywords` and `query file` support `--json` for programmatic use and
+`--compact` for undecorated, agent-friendly output: the `[mementic: ...]` echo
+line plus the plain pack text, no Rich panel. The echo line is compact —
+`shown/matched` ratios where relevant, with `|`-separated terms or paths.
 
 ### The enforcement instruction (summary)
 
@@ -111,21 +114,34 @@ file. Your agent follows these rules to keep the graph current:
 ```markdown
 ## Mementic Memory (HARD CONSTRAINT)
 
-This project uses Mementic as its architectural memory layer.
+This project keeps its architectural rules in a local graph (`.mementic/`).
+These steps apply to code work — reading, searching, editing, or making
+architectural claims. Messages that trigger none of those (acknowledgements,
+ops commands, meta discussion) need no query.
 
-**After EVERY user message:**
-1. Generate 5-12 narrow keywords for the task (e.g., "argon2 token login
-   session" — skip generic terms like "security" or "password").
-2. Run `mementic query keywords <kw1> <kw2> ...`
-3. List the code files you intend to open, then run
-   `mementic query file <path>` for each of them BEFORE reading any file —
-   exploration reads included, not just files you plan to modify.
-4. Validate your plan against every returned constraint.
+1. **Query.** Before the first file read, search, or code decision of a task,
+   run `mementic query keywords --compact <5-12 narrow terms>`. Re-query when
+   the task shifts to a new module, domain, or file area, after recording an
+   entry, and after context compaction. Echo the `[mementic: ...]` summary
+   line verbatim — it is the auditable trace of what mementic contributed.
+2. **Sufficiency gate.** After the first query and before further reads,
+   output two lines: `mementic:` (1-2 sentence summary) and
+   `Files I still need to read and why:` (every file, each with a one-clause
+   justification).
+3. **File gate.** Before opening ANY file from that list, run
+   `mementic query file <path> --compact` for every path. Locating files with
+   grep/glob is fine; reading content without a query is not. No read-only
+   exceptions.
+4. **Validate.** Do not write code that violates an active constraint; cite
+   every entity you apply or reject as `[mementic: <id>]`.
+5. **Record inline.** Run `mementic add decision TITLE -r "..."` or
+   `mementic add constraint DESC -e PATH` immediately — no gate. Retire
+   superseded rules with `mementic deprecate ID... -r "reason"`.
 
-**When you make a decision or establish a rule:**
-1. `mementic add decision TITLE --rationale "..."` immediately — no gate.
-2. `mementic add constraint DESC -e PATH` immediately.
-3. `mementic deprecate ID1 ID2 ...` to retire superseded rules.
+The pack replaces reading ADRs, specs, and instruction files wholesale, but
+not the code you are about to edit. If mementic fails, state the error and
+fall back to targeted reads. Re-query at task boundaries and after graph
+writes.
 ```
 
 ## Why I built this
@@ -190,8 +206,8 @@ If any of this sounds like fun to fix, [contributions are welcome](CONTRIBUTING.
 | Command | What it does |
 |---|---|
 | `mementic init` | Create `.mementic/graph.db` when missing (idempotent) + create or update the AGENTS.md enforcement section |
-| `mementic query keywords <kw...> [--json]` | Get ranked context for a task |
-| `mementic query file <path> [--prefix] [--json]` | Constraints/decisions for a file (exact match by default) |
+| `mementic query keywords <kw...> [--json] [--compact]` | Get ranked context for a task |
+| `mementic query file <path> [--prefix] [--json] [--compact]` | Constraints/decisions for a file (exact match by default) |
 | `mementic query search <term>` | Full-text search the graph |
 | `mementic query stats` | Store statistics |
 | `mementic add decision <title> -r TEXT [-e PATH]` | Record a decision (auto-resolves duplicates) |

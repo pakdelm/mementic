@@ -284,6 +284,9 @@ def keywords(
         "budgets proportionally",
     ),
     json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
+    compact: bool = typer.Option(
+        False, "--compact", help="Agent-friendly output: summary line plus undecorated pack text"
+    ),
 ) -> None:
     """Return ranked context pack of constraints and decisions matched by keywords."""
     if max_tokens is not None and max_tokens < 1:
@@ -324,10 +327,12 @@ def keywords(
     kw_list = ", ".join(keywords)
     # Agent-enforcement contract: a plain-text summary line agents must echo.
     typer.echo(
-        f"[mementic: {stats.shown_constraints} of {stats.matched_constraints} constraints, "
-        f"{stats.shown_decisions} of {stats.matched_decisions} decisions "
-        f"matched ({kw_list}) shown]"
+        f"[mementic: {stats.shown_constraints}/{stats.matched_constraints} constraints, "
+        f"{stats.shown_decisions}/{stats.matched_decisions} decisions | {kw_list}]"
     )
+    if compact:
+        typer.echo(sanitize(result.text))
+        return
     summary = text(
         f"[{C_DIM}]{stats.shown_constraints} of {stats.matched_constraints} constraints, "
         f"{stats.shown_decisions} of {stats.matched_decisions} decisions[/]"
@@ -353,6 +358,9 @@ def file(
     prefix: bool = typer.Option(False, "--prefix", help="Use prefix matching for entity paths"),
     max_tokens: int = typer.Option(1500, "--max-tokens", help="Maximum token budget for output"),
     json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
+    compact: bool = typer.Option(
+        False, "--compact", help="Agent-friendly output: summary line plus undecorated pack text"
+    ),
 ) -> None:
     """Show constraints and decisions affecting a specific file."""
     store = _resolve_store()
@@ -379,9 +387,11 @@ def file(
             evolution_text += f"- {c.description} (#{c.id}, bound: {entities})\n"
     # Agent-enforcement contract: a plain-text summary line agents must echo.
     typer.echo(
-        f"[mementic: {len(constraints)} constraints, {len(decisions)} decisions "
-        f"matched ({path})]"
+        f"[mementic: {len(constraints)} constraints, {len(decisions)} decisions | {path}]"
     )
+    if compact:
+        typer.echo(sanitize(evolution_text))
+        return
     console.print(
         panel(Markdown(sanitize(evolution_text)), title=f"File history: {path}")
     )
@@ -424,8 +434,7 @@ def search(
         panel_lines.append(constraints_table)
     # Agent-enforcement contract: a plain-text summary line agents must echo.
     typer.echo(
-        f"[mementic: {len(matching_c)} constraints, {len(matching_d)} decisions "
-        f'matched ("{term}")]'
+        f"[mementic: {len(matching_c)} constraints, {len(matching_d)} decisions | {term}]"
     )
     console.print(
         panel(*panel_lines, title=f'Search: "{term}"')

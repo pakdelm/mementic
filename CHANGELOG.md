@@ -37,6 +37,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   materializes entry paths, backfills tombstones). Run
   `uv run python scripts/migrate_v4_to_v5.py` before using mementic against
   an existing database.
+- **Compact query output (Spec 33)** — `mementic query keywords` and
+  `query file` gain `--compact` (echo line plus undecorated pack text, no
+  Rich panel); the `[mementic: ...]` summary line is compacted across
+  `query keywords`, `query file`, and `query search` (keywords keeps
+  `shown/matched` ratios; file/search use plain counts; `|`-separated
+  terms or path).
+- **Task-scoped enforcement (Spec 33)** — the AGENTS.md template now triggers
+  queries on actions (the first read, search, or code decision of a task, task
+  shifts, after graph writes, after compaction) instead of after every
+  message; acknowledgement, ops, and meta messages need no query, and the
+  per-file gate remains absolute.
 
 ### Removed
 - `mementic/graph.py`, `mementic/lint.py`, code-entity/edge machinery
