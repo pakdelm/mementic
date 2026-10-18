@@ -589,10 +589,10 @@ def test_query_keywords_prints_mementic_summary_line(project_dir: Path) -> None:
     line = next((ln for ln in text.splitlines() if "[mementic:" in ln), None)
     assert line is not None, f"no [mementic: ...] summary line in:\n{text}"
     assert re.search(
-        r"\d+ of \d+ constraints, \d+ of \d+ decisions matched \(.+\) shown",
+        r"\d+/\d+ constraints, \d+/\d+ decisions \| .+",
         line,
-    ), f"summary line lacks shown/matched wording: {line}"
-    assert "1 of 1 decisions" in line
+    ), f"summary line lacks compact shown/matched format: {line}"
+    assert "1/1 decisions" in line
 
 
 def test_query_file_prints_mementic_summary_line(project_dir: Path) -> None:
@@ -604,7 +604,9 @@ def test_query_file_prints_mementic_summary_line(project_dir: Path) -> None:
     text = _text(result)
     line = next((ln for ln in text.splitlines() if "[mementic:" in ln), None)
     assert line is not None, f"no [mementic: ...] summary line in:\n{text}"
-    assert "src/auth.py" in line
+    assert re.search(
+        r"\d+ constraints, \d+ decisions \| src/auth\.py\]", line
+    ), f"file summary line lacks compact format: {line}"
 
 
 def test_query_search_prints_mementic_summary_line(project_dir: Path) -> None:
@@ -613,7 +615,9 @@ def test_query_search_prints_mementic_summary_line(project_dir: Path) -> None:
     text = _text(result)
     line = next((ln for ln in text.splitlines() if "[mementic:" in ln), None)
     assert line is not None, f"no [mementic: ...] summary line in:\n{text}"
-    assert "1 constraints, 0 decisions" in line
+    assert re.search(
+        r"\d+ constraints, \d+ decisions \| stateless\]", line
+    ), f"search summary line lacks compact format: {line}"
 
 
 def test_history_without_id_lists_full_table_newest_first(
@@ -673,8 +677,5 @@ def test_deprecated_entry_excluded_from_context_pack(project_dir: Path) -> None:
     result = _ok("query", "keywords", "zebra")
     output = _text(result)
     assert "zebra-protocol" not in output
-    # Shown/matched wording (Spec 30 Phase 4): nothing live, nothing shown.
-    assert (
-        "[mementic: 0 of 0 constraints, 0 of 0 decisions matched (zebra) shown]"
-        in output
-    )
+    # Compact echo (Spec 33 Phase 1): nothing live, nothing shown.
+    assert "[mementic: 0/0 constraints, 0/0 decisions | zebra]" in output

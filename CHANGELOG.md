@@ -7,11 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.3.3] - 2026-08-26
 
-- Merge pull request #57 from pakdelm/feat/spec-31## [0.3.2] - 2026-08-25
+- Merge pull request #57 from pakdelm/feat/spec-31
 
-- Merge pull request #55 from pakdelm/feat/spec-30## [0.3.1] - 2026-08-23
+## [0.3.2] - 2026-08-25
 
-- Merge pull request #53 from pakdelm/feat/spec-29## [Unreleased]
+- Merge pull request #55 from pakdelm/feat/spec-30
+
+## [0.3.1] - 2026-08-23
+
+- Merge pull request #53 from pakdelm/feat/spec-29
+
+## [Unreleased]
+
+### Added
+- **Compact query output (Spec 33)** — `mementic query keywords` and
+  `query file` gain `--compact` (echo line plus undecorated pack text, no
+  Rich panel); the `[mementic: ...]` summary line is compacted across
+  `query keywords`, `query file`, and `query search` (keywords keeps
+  `shown/matched` ratios; file/search use plain counts; `|`-separated
+  terms or path).
 
 ### Changed
 - **Relational storage simplification (Spec 29, schema v5).** Replaced the
@@ -37,6 +51,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   materializes entry paths, backfills tombstones). Run
   `uv run python scripts/migrate_v4_to_v5.py` before using mementic against
   an existing database.
+- **Task-scoped enforcement (Spec 33)** — the AGENTS.md template now triggers
+  queries on actions (the first read, search, or code decision of a task, task
+  shifts, after graph writes, after compaction) instead of after every
+  message; acknowledgement, ops, and meta messages need no query, and the
+  per-file gate remains absolute.
 
 ### Removed
 - `mementic/graph.py`, `mementic/lint.py`, code-entity/edge machinery
