@@ -330,8 +330,6 @@ class TestHistoryCommand:
         assert "No deprecation history" in _strip_ansi(result.stdout)
 
 
-_PANEL_GLYPHS = ("┌", "│", "─", "╭", "╰")
-
 _COMPACT_QUERIES = [
     ["query", "keywords", "auth", "--compact"],
     ["query", "file", "src/auth.py", "--compact"],
@@ -341,6 +339,13 @@ _DEFAULT_QUERIES = [
     ["query", "keywords", "auth"],
     ["query", "file", "src/auth.py"],
 ]
+
+_PANEL_TITLES = {"keywords": "Context pack:", "file": "File history:"}
+
+
+def _panel_title(args: list[str]) -> str:
+    """Return the rich panel title expected for a query invocation."""
+    return _PANEL_TITLES[args[1]]
 
 
 def _seed_query_store(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
@@ -404,22 +409,21 @@ class TestQueryCompactOutput:
         assert "use-jwt" in _strip_ansi(result.stdout)
 
     @pytest.mark.parametrize("args", _COMPACT_QUERIES)
-    def test_compact_output_omits_panel_glyphs(
+    def test_compact_output_omits_panel(
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
         args: list[str],
     ) -> None:
-        """Undecorated output carries no Rich panel box-drawing characters."""
+        """Undecorated output omits the rich panel entirely."""
         store = _seed_query_store(tmp_path, monkeypatch)
         with patch("mementic.cli._resolve_store", return_value=store):
             result = runner.invoke(app, args)
         assert result.exit_code == 0, f"stderr: {result.stderr}"
-        output = _strip_ansi(result.stdout)
-        assert not any(glyph in output for glyph in _PANEL_GLYPHS)
+        assert _panel_title(args) not in _strip_ansi(result.stdout)
 
     @pytest.mark.parametrize("args", _DEFAULT_QUERIES)
-    def test_default_output_keeps_panel_glyphs(
+    def test_default_output_keeps_panel(
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
@@ -430,21 +434,23 @@ class TestQueryCompactOutput:
         with patch("mementic.cli._resolve_store", return_value=store):
             result = runner.invoke(app, args)
         assert result.exit_code == 0, f"stderr: {result.stderr}"
-        output = _strip_ansi(result.stdout)
-        assert any(glyph in output for glyph in _PANEL_GLYPHS)
+        assert _panel_title(args) in _strip_ansi(result.stdout)
 
-    def test_compact_empty_match_emits_only_echo_line(
+    def test_compact_empty_match_omits_matched_entities(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """--compact with no matches emits the echo line and no entity body."""
+        """--compact with no matches keeps the zero-match body but no entities."""
         store = _seed_query_store(tmp_path, monkeypatch)
         with patch("mementic.cli._resolve_store", return_value=store):
             result = runner.invoke(app, ["query", "keywords", "zzqxv", "--compact"])
         assert result.exit_code == 0, f"stderr: {result.stderr}"
         output = _strip_ansi(result.stdout)
         assert output.count("[mementic:") == 1
+        assert "[mementic: 0/0 constraints, 0/0 decisions | zzqxv]" in output
+        assert "0 of 1 constraints matched your keywords" in output
+        assert "0 of 1 decisions matched your keywords" in output
         assert "use-jwt" not in output
-        assert not any(glyph in output for glyph in _PANEL_GLYPHS)
+        assert "Context pack:" not in output
 
     def test_search_output_prints_echo_line_once(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
