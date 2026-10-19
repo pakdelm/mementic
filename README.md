@@ -124,17 +124,13 @@ ops commands, meta discussion) need no query.
    the task shifts to a new module, domain, or file area, after recording an
    entry, and after context compaction. Echo the `[mementic: ...]` summary
    line verbatim — it is the auditable trace of what mementic contributed.
-2. **Sufficiency gate.** After the first query and before further reads,
-   output two lines: `mementic:` (1-2 sentence summary) and
-   `Files I still need to read and why:` (every file, each with a one-clause
-   justification).
-3. **File gate.** Before opening ANY file from that list, run
+2. **File gate.** Before opening ANY file, run
    `mementic query file <path> --compact` for every path. Locating files with
    grep/glob is fine; reading content without a query is not. No read-only
    exceptions.
-4. **Validate.** Do not write code that violates an active constraint; cite
+3. **Validate.** Do not write code that violates an active constraint; cite
    every entity you apply or reject as `[mementic: <id>]`.
-5. **Record inline.** Run `mementic add decision TITLE -r "..."` or
+4. **Record inline.** Run `mementic add decision TITLE -r "..."` or
    `mementic add constraint DESC -e PATH` immediately — no gate. Retire
    superseded rules with `mementic deprecate ID... -r "reason"`.
 
