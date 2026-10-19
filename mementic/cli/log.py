@@ -9,23 +9,24 @@ import typer
 from mementic.cli import context
 from mementic.cli.views import ellipsize
 from mementic.console import (
-    C_DIM,
-    C_FAIL,
-    C_ID,
-    C_SUCCESS,
-    C_WARN,
+    COLOR_DIM,
+    COLOR_FAIL,
+    COLOR_ID,
+    COLOR_SUCCESS,
+    COLOR_WARN,
     console,
     escape,
     panel,
     table,
     text,
 )
+from mementic.text import format_timestamp
 
 _ACTION_STYLES = {
-    "add": C_SUCCESS,
-    "remove": C_FAIL,
-    "deprecate": C_WARN,
-    "update": C_SUCCESS,
+    "add": COLOR_SUCCESS,
+    "remove": COLOR_FAIL,
+    "deprecate": COLOR_WARN,
+    "update": COLOR_SUCCESS,
 }
 
 
@@ -58,10 +59,10 @@ def log(
         raise typer.Exit()
 
     audit_table = table()
-    audit_table.add_column("Timestamp", style=C_DIM, no_wrap=True, width=16)
+    audit_table.add_column("Timestamp", style=COLOR_DIM, no_wrap=True, width=16)
     audit_table.add_column("Action", no_wrap=True, width=10)
     audit_table.add_column(
-        "Rule ID", style=C_ID, no_wrap=True, overflow="ellipsis", width=18
+        "Rule ID", style=COLOR_ID, no_wrap=True, overflow="ellipsis", width=18
     )
     audit_table.add_column(
         "Summary",
@@ -78,7 +79,7 @@ def log(
         action_style = _ACTION_STYLES.get(action, "")
         action_text = f"[{action_style}]{action}[/]" if action_style else action
         audit_table.add_row(
-            str(row["timestamp"])[:16].replace("T", " "),
+            format_timestamp(row["timestamp"]),
             action_text,
             escape(row["entity_id"]),
             ellipsize(

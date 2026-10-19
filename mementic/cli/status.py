@@ -6,9 +6,9 @@ import typer
 
 from mementic.cli import context
 from mementic.console import (
-    C_DIM,
-    C_FAIL,
-    C_SUCCESS,
+    COLOR_DIM,
+    COLOR_FAIL,
+    COLOR_SUCCESS,
     STATUS_FAIL,
     STATUS_OK,
     console,
@@ -33,21 +33,21 @@ def status() -> None:
     health_table = table(show_header=False, show_edge=False, padding=(0, 1))
     health_table.add_column("Status", width=7)
     health_table.add_column("Check", style="bold")
-    health_table.add_column("Hint", style=C_DIM)
+    health_table.add_column("Hint", style=COLOR_DIM)
     ok_count = 0
     for item in items:
         if item.status == "ok":
-            health_table.add_row(f"[{C_SUCCESS}]{STATUS_OK}[/]", item.label, "")
+            health_table.add_row(f"[{COLOR_SUCCESS}]{STATUS_OK}[/]", item.label, "")
             ok_count += 1
         else:
             health_table.add_row(
-                f"[{C_FAIL}]{STATUS_FAIL}[/]", item.label, item.hint or ""
+                f"[{COLOR_FAIL}]{STATUS_FAIL}[/]", item.label, item.hint or ""
             )
     console.print(
         panel(
             health_table,
             rule(),
-            text(f"[{C_DIM}]{ok_count}/{len(items)} checks passed[/]"),
+            text(f"[{COLOR_DIM}]{ok_count}/{len(items)} checks passed[/]"),
             title="Status",
         )
     )

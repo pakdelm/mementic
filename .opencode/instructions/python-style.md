@@ -28,6 +28,9 @@
 - Functions, methods, variables: `snake_case`
 - Constants: `UPPER_SNAKE_CASE`
 - Private members: prefix with single underscore `_private`
+- Module-level constants must be declared near the top of the module,
+  before the functions and classes that use them. Never bury a constant
+  below the code that references it.
 
 ## Docstrings
 

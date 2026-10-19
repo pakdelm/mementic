@@ -3,8 +3,26 @@
 from __future__ import annotations
 
 import re
+from datetime import datetime
 
 _MAX_ENTITY_LIST_CHARS: int = 80
+
+
+def format_timestamp(value: str) -> str:
+    """Render an ISO 8601 timestamp as ``YYYY-MM-DD HH:MM``.
+
+    Args:
+        value: ISO 8601 timestamp, optionally ``Z``-suffixed or carrying a
+            UTC offset.
+
+    Returns:
+        A display timestamp. Unparseable values are returned unchanged so
+        legacy rows remain visible instead of rendering blank cells.
+    """
+    try:
+        return datetime.fromisoformat(value).strftime("%Y-%m-%d %H:%M")
+    except ValueError:
+        return value
 
 
 def estimate_tokens(text: str) -> int:

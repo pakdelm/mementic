@@ -94,27 +94,41 @@ class MementicStore:
         self._in_transaction = False
         self._conn: sqlite3.Connection | None = None
         try:
-            if str(db_path) != ":memory:":
-                if read_only:
-                    uri = (
-                        "file:"
-                        + quote(self._db_path.resolve().as_posix(), safe="/:")
-                        + "?mode=ro"
-                    )
-                    self._conn = sqlite3.connect(uri, uri=True)
-                else:
-                    self._db_path.parent.mkdir(parents=True, exist_ok=True)
-                    self._conn = sqlite3.connect(str(self._db_path))
-            else:
-                if read_only:
-                    raise ValueError("read_only=True requires a file-backed database")
-                self._conn = sqlite3.connect(":memory:")
+            self._conn = self._connect()
             self._conn.row_factory = sqlite3.Row
             self._conn.execute("PRAGMA foreign_keys=ON")
             self._ensure_schema()
         except BaseException:
             self.close()
             raise
+
+    def _connect(self) -> sqlite3.Connection:
+        """Open the connection selected by the configured path and access mode.
+
+        In-memory databases are read-write only. File-backed read-only
+        stores open through a ``mode=ro`` URI so SQLite itself refuses
+        writes and never creates directories or database files.
+
+        Returns:
+            An unconfigured connection; the caller sets row access and
+            pragmas.
+
+        Raises:
+            ValueError: If ``read_only=True`` is combined with ``:memory:``.
+        """
+        if str(self._db_path) == ":memory:":
+            if self._read_only:
+                raise ValueError("read_only=True requires a file-backed database")
+            return sqlite3.connect(":memory:")
+        if self._read_only:
+            uri = (
+                "file:"
+                + quote(self._db_path.resolve().as_posix(), safe="/:")
+                + "?mode=ro"
+            )
+            return sqlite3.connect(uri, uri=True)
+        self._db_path.parent.mkdir(parents=True, exist_ok=True)
+        return sqlite3.connect(str(self._db_path))
 
     def close(self) -> None:
         """Close the SQLite connection. Safe to call multiple times."""
@@ -143,7 +157,13 @@ class MementicStore:
 
     @contextmanager
     def _write_scope(self) -> Iterator[None]:
-        """Commit a write immediately unless an outer transaction owns it."""
+        """Bound one write with a commit-or-rollback boundary.
+
+        Outside an explicit transaction, the sqlite3 connection is used as
+        a context manager: it commits when the block exits cleanly and
+        rolls back when it raises. Inside :meth:`transaction`, this scope
+        is a no-op so the outer transaction owns the final commit.
+        """
         if self._in_transaction:
             yield
             return

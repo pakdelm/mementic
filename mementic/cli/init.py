@@ -8,9 +8,9 @@ import typer
 
 from mementic.cli import context
 from mementic.console import (
-    C_DIM,
-    C_HEADER,
-    C_PATH,
+    COLOR_DIM,
+    COLOR_HEADER,
+    COLOR_PATH,
     console,
     escape,
     panel,
@@ -49,15 +49,15 @@ def init() -> None:
     console.print(
         panel(
             text(
-                f"[{C_HEADER} bold]Graph[/]: "
-                f"[{C_PATH}]{escape(_display_path(paths.graph_db, paths.base_dir))}[/] "
-                f"[{C_DIM}]({graph_state})[/]"
+                f"[{COLOR_HEADER} bold]Graph[/]: "
+                f"[{COLOR_PATH}]{escape(_display_path(paths.graph_db, paths.base_dir))}[/] "
+                f"[{COLOR_DIM}]({graph_state})[/]"
             ),
             rule(),
             text(escape(enforcement_note)),
             rule(),
             text(
-                f"[{C_DIM} italic]Next: agents record rules inline via "
+                f"[{COLOR_DIM} italic]Next: agents record rules inline via "
                 f"'mementic add decision|constraint', then query with "
                 f"'mementic query keywords <kw1> <kw2> ...'[/]"
             ),

@@ -8,11 +8,11 @@ import typer
 
 from mementic.cli import context
 from mementic.console import (
-    C_DIM,
-    C_FAIL,
-    C_HEADER,
-    C_SUCCESS,
-    C_WARN,
+    COLOR_DIM,
+    COLOR_FAIL,
+    COLOR_HEADER,
+    COLOR_SUCCESS,
+    COLOR_WARN,
     console,
     escape,
     text,
@@ -54,20 +54,20 @@ def deprecate(
 
     parts: list[str] = []
     if deprecated:
-        parts.append(f"[{C_SUCCESS}]{deprecated} deprecated[/]")
+        parts.append(f"[{COLOR_SUCCESS}]{deprecated} deprecated[/]")
     if already:
-        parts.append(f"[{C_WARN}]{already} already deprecated[/]")
+        parts.append(f"[{COLOR_WARN}]{already} already deprecated[/]")
     if errors:
-        parts.append(f"[{C_FAIL}]{errors} errors[/]")
+        parts.append(f"[{COLOR_FAIL}]{errors} errors[/]")
     if reason:
-        parts.append(f"[{C_DIM}]reason: {escape(reason)}[/]")
+        parts.append(f"[{COLOR_DIM}]reason: {escape(reason)}[/]")
 
     id_list = ", ".join(escape(entry_id) for entry_id in ids)
     console.print(
         text(
-            f"[{C_HEADER}]Deprecated:[/] "
+            f"[{COLOR_HEADER}]Deprecated:[/] "
             + ", ".join(parts)
-            + f" ([{C_DIM}]{id_list}[/])"
+            + f" ([{COLOR_DIM}]{id_list}[/])"
         )
     )
 

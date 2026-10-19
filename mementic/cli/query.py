@@ -12,9 +12,9 @@ import typer
 
 from mementic.cli import context
 from mementic.console import (
-    C_DIM,
-    C_HEADER,
-    C_ID,
+    COLOR_DIM,
+    COLOR_HEADER,
+    COLOR_ID,
     console,
     escape,
     kv_table,
@@ -102,7 +102,7 @@ def keywords(
         return
 
     summary = text(
-        f"[{C_DIM}]{stats.shown_constraints} of {stats.matched_constraints} constraints, "
+        f"[{COLOR_DIM}]{stats.shown_constraints} of {stats.matched_constraints} constraints, "
         f"{stats.shown_decisions} of {stats.matched_decisions} decisions[/]"
     )
     console.print(
@@ -202,26 +202,26 @@ def search(
     panel_lines: list = []
     if matching_decisions:
         decisions_table = table(show_header=False, show_edge=False, padding=(0, 1))
-        decisions_table.add_column("ID", style=C_ID)
+        decisions_table.add_column("ID", style=COLOR_ID)
         decisions_table.add_column("Title")
         for decision in matching_decisions:
             decisions_table.add_row(escape(decision.id), escape(decision.title))
         panel_lines.append(
-            text(f"[{C_HEADER} bold]Decisions ({len(matching_decisions)})[/]")
+            text(f"[{COLOR_HEADER} bold]Decisions ({len(matching_decisions)})[/]")
         )
         panel_lines.append(decisions_table)
     if matching_constraints:
         if panel_lines:
             panel_lines.append(text(""))
         constraints_table = table(show_header=False, show_edge=False, padding=(0, 1))
-        constraints_table.add_column("ID", style=C_ID)
+        constraints_table.add_column("ID", style=COLOR_ID)
         constraints_table.add_column("Description")
         for constraint in matching_constraints:
             constraints_table.add_row(
                 escape(constraint.id), escape(constraint.description)
             )
         panel_lines.append(
-            text(f"[{C_HEADER} bold]Constraints ({len(matching_constraints)})[/]")
+            text(f"[{COLOR_HEADER} bold]Constraints ({len(matching_constraints)})[/]")
         )
         panel_lines.append(constraints_table)
 

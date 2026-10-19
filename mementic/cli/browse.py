@@ -6,10 +6,10 @@ import typer
 
 from mementic.cli import context
 from mementic.console import (
-    C_DIM,
-    C_ID,
-    C_SUCCESS,
-    C_WARN,
+    COLOR_DIM,
+    COLOR_ID,
+    COLOR_SUCCESS,
+    COLOR_WARN,
     STATUS_DEPRECATED,
     STATUS_OK,
     console,
@@ -19,6 +19,7 @@ from mementic.console import (
     table,
     text,
 )
+from mementic.text import format_timestamp
 
 list_app = typer.Typer(help="Browse decisions, constraints, and entities")
 
@@ -41,6 +42,21 @@ def _superseded_label(superseded_by: str | None) -> str:
     if superseded_by is None:
         return ""
     return "retired" if superseded_by == "retired" else superseded_by
+
+
+def _replacement_chain(entry_id: str, records: list) -> list[str]:
+    """Return the ordered ``entry -> successor -> ...`` ID trail.
+
+    ``records`` arrive chronologically from the store. Skipping successors
+    already in the chain keeps self-replacements and cycles out of the
+    rendered trail.
+    """
+    chain = [entry_id]
+    for record in records:
+        successor = record["replaced_by"]
+        if successor and successor not in chain:
+            chain.append(successor)
+    return chain
 
 
 @list_app.command()
@@ -72,9 +88,9 @@ def decisions(
     decision_table = table()
     decision_table.add_column("", width=6)
     decision_table.add_column(
-        "ID", style=C_ID, no_wrap=True, overflow="ellipsis", width=24
+        "ID", style=COLOR_ID, no_wrap=True, overflow="ellipsis", width=24
     )
-    decision_table.add_column("Date", style=C_DIM, no_wrap=True, width=10)
+    decision_table.add_column("Date", style=COLOR_DIM, no_wrap=True, width=10)
     decision_table.add_column(
         "Title",
         no_wrap=True,
@@ -83,12 +99,12 @@ def decisions(
     )
     if show_superseded:
         decision_table.add_column(
-            "Superseded By", style=C_WARN, no_wrap=True, overflow="ellipsis", width=12
+            "Superseded By", style=COLOR_WARN, no_wrap=True, overflow="ellipsis", width=12
         )
     for decision, superseded_by in pairs:
         date = decision.created_at[:10] if decision.created_at else ""
         icon = STATUS_OK if superseded_by is None else STATUS_DEPRECATED
-        color = C_SUCCESS if superseded_by is None else C_WARN
+        color = COLOR_SUCCESS if superseded_by is None else COLOR_WARN
         row = [
             f"[{color}]{icon}[/]",
             escape(decision.id),
@@ -138,22 +154,22 @@ def constraints(
     constraint_table = table()
     constraint_table.add_column("", width=6)
     constraint_table.add_column(
-        "ID", style=C_ID, no_wrap=True, overflow="ellipsis", width=30
+        "ID", style=COLOR_ID, no_wrap=True, overflow="ellipsis", width=30
     )
     if show_enforced:
         constraint_table.add_column(
-            "Enforced By", style=C_DIM, no_wrap=True, width=14
+            "Enforced By", style=COLOR_DIM, no_wrap=True, width=14
         )
     constraint_table.add_column(
         "Description", no_wrap=True, overflow="ellipsis", width=description_width
     )
     if show_superseded:
         constraint_table.add_column(
-            "Superseded By", style=C_WARN, no_wrap=True, overflow="ellipsis", width=12
+            "Superseded By", style=COLOR_WARN, no_wrap=True, overflow="ellipsis", width=12
         )
     for constraint, superseded_by in pairs:
         icon = STATUS_OK if superseded_by is None else STATUS_DEPRECATED
-        color = C_SUCCESS if superseded_by is None else C_WARN
+        color = COLOR_SUCCESS if superseded_by is None else COLOR_WARN
         row = [f"[{color}]{icon}[/]", escape(constraint.id)]
         if show_enforced:
             row.append(
@@ -194,7 +210,7 @@ def entities(
         raise typer.Exit()
 
     entity_table = table()
-    entity_table.add_column("Path", style=C_ID, no_wrap=True, overflow="ellipsis")
+    entity_table.add_column("Path", style=COLOR_ID, no_wrap=True, overflow="ellipsis")
     for path in all_paths:
         entity_table.add_row(escape(path))
     console.print(
@@ -233,14 +249,14 @@ def history(
         if n > 0:
             rows = rows[:n]
         dep_table = table()
-        dep_table.add_column("At", style=C_DIM, no_wrap=True, width=16)
+        dep_table.add_column("At", style=COLOR_DIM, no_wrap=True, width=16)
         dep_table.add_column(
-            "Entry", style=C_ID, no_wrap=True, overflow="ellipsis", width=30
+            "Entry", style=COLOR_ID, no_wrap=True, overflow="ellipsis", width=30
         )
         dep_table.add_column("Reason", no_wrap=True, overflow="ellipsis", width=28)
         for record in rows:
             dep_table.add_row(
-                str(record["at"])[:16].replace("T", " "),
+                format_timestamp(record["at"]),
                 escape(record["entry_id"]),
                 escape(record["reason"] or ""),
             )
@@ -253,15 +269,11 @@ def history(
         console.print(text(f"No deprecation history for '{escape(entry_id)}'."))
         return
 
-    chain_ids: list[str] = [entry_id]
-    for record in records:
-        successor = record["replaced_by"]
-        if successor and successor != chain_ids[-1]:
-            chain_ids.append(successor)
+    chain_ids = _replacement_chain(entry_id, records)
 
     dep_table = table()
-    dep_table.add_column("At", style=C_DIM)
-    dep_table.add_column("Entry", style=C_ID)
+    dep_table.add_column("At", style=COLOR_DIM)
+    dep_table.add_column("Entry", style=COLOR_ID)
     dep_table.add_column("Replaced By")
     dep_table.add_column("Reason", overflow="fold")
     for record in records:
@@ -279,7 +291,7 @@ def history(
     chain = " -> ".join(escape(chain_id) for chain_id in chain_ids)
     console.print(
         panel(
-            text(f"[{C_ID} bold]{chain}[/]"),
+            text(f"[{COLOR_ID} bold]{chain}[/]"),
             rule(),
             dep_table,
             title=f"History: {escape(entry_id)}",

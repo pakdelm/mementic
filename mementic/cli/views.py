@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from mementic.console import C_ID, C_SUCCESS, C_WARN
+from mementic.console import COLOR_ID, COLOR_SUCCESS, COLOR_WARN
 from mementic.entries import AddOutcome, EntryKind
 
 
@@ -56,10 +56,10 @@ def add_summary(kind: EntryKind, entry_id: str, outcome: AddOutcome) -> str:
     noun = kind.value
     if outcome is AddOutcome.DUPLICATE:
         return (
-            f"[{C_WARN}]Skipped {noun}[/] [{C_ID}]{entry_id}[/] "
+            f"[{COLOR_WARN}]Skipped {noun}[/] [{COLOR_ID}]{entry_id}[/] "
             f"({add_outcome_label(outcome, kind)})"
         )
     return (
-        f"[{C_SUCCESS}]Added {noun}[/] [{C_ID}]{entry_id}[/] "
+        f"[{COLOR_SUCCESS}]Added {noun}[/] [{COLOR_ID}]{entry_id}[/] "
         f"({add_outcome_label(outcome, kind)})"
     )
