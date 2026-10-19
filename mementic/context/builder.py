@@ -4,11 +4,10 @@ from __future__ import annotations
 
 import math
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, TypeVar
-
-from pydantic import BaseModel, Field
 
 from mementic.context.ranking import (
     document_frequencies,
@@ -131,7 +130,8 @@ def drop_dead_path_entries(
     return kept
 
 
-class ContextPackStats(BaseModel):
+@dataclass(kw_only=True)
+class ContextPackStats:
     """Shown-vs-matched accounting for one rendered context pack."""
 
     matched_constraints: int = 0
@@ -140,13 +140,14 @@ class ContextPackStats(BaseModel):
     shown_decisions: int = 0
 
 
-class ContextPackResult(BaseModel):
+@dataclass(kw_only=True)
+class ContextPackResult:
     """Rendered context pack text plus its accounting and selected items."""
 
     text: str
     stats: ContextPackStats
-    constraints: list[Constraint] = Field(default_factory=list)
-    decisions: list[Decision] = Field(default_factory=list)
+    constraints: list[Constraint] = field(default_factory=list)
+    decisions: list[Decision] = field(default_factory=list)
 
 
 def _render_keyword_section(

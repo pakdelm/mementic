@@ -5,10 +5,9 @@ All checks are presence-only: no network calls, no inference.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
-
-from pydantic import BaseModel
 
 from mementic.inject import START_MARKER
 
@@ -16,7 +15,8 @@ if TYPE_CHECKING:
     from mementic.store import MementicStore
 
 
-class HealthItem(BaseModel):
+@dataclass(kw_only=True)
+class HealthItem:
     """A single health check result."""
 
     label: str

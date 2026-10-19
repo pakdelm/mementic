@@ -8,10 +8,11 @@ status field on either model.
 
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from dataclasses import dataclass, field
 
 
-class Decision(BaseModel):
+@dataclass(kw_only=True)
+class Decision:
     """An architectural decision.
 
     Attributes:
@@ -26,10 +27,11 @@ class Decision(BaseModel):
     title: str
     rationale: str
     created_at: str
-    paths: list[str] = Field(default_factory=list)
+    paths: list[str] = field(default_factory=list)
 
 
-class Constraint(BaseModel):
+@dataclass(kw_only=True)
+class Constraint:
     """A rule that constrains how code is written.
 
     Attributes:
@@ -44,4 +46,4 @@ class Constraint(BaseModel):
     description: str
     enforced_by: str = ""
     created_at: str
-    paths: list[str] = Field(default_factory=list)
+    paths: list[str] = field(default_factory=list)

@@ -57,6 +57,24 @@ def _add_constraint(
     )
 
 
+def test_bulk_load_reads_entry_paths_once_per_type(store: MementicStore) -> None:
+    """Bulk entry loads batch entry_paths instead of querying per entry."""
+    _add_decision(store, entry_id="d1", paths=["a.py", "b.py"])
+    _add_constraint(store, entry_id="c1", paths=["c.py"])
+    assert store._conn is not None
+
+    statements: list[str] = []
+    store._conn.set_trace_callback(statements.append)
+    try:
+        store.get_live_decisions()
+        store.get_live_constraints()
+    finally:
+        store._conn.set_trace_callback(None)
+
+    path_selects = [sql for sql in statements if "FROM entry_paths" in sql]
+    assert len(path_selects) == 2
+
+
 class TestReadOnlyStore:
     def test_read_only_store_reads_file_database(self, tmp_path: Path) -> None:
         db = tmp_path / "graph.db"

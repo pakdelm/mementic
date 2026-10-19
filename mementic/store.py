@@ -533,22 +533,26 @@ class MementicStore:
     def get_live_decisions(self) -> list[Decision]:
         """Return all decisions not superseded/retired (derived liveness)."""
         rows = self._query_entries("decisions", live_only=True)
-        return [self._row_to_decision(r) for r in rows]
+        paths = self._paths_by_entry("decision")
+        return [self._row_to_decision(r, paths) for r in rows]
 
     def get_all_decisions(self) -> list[Decision]:
         """Return all decisions regardless of deprecation state."""
         rows = self._query_entries("decisions", live_only=False)
-        return [self._row_to_decision(r) for r in rows]
+        paths = self._paths_by_entry("decision")
+        return [self._row_to_decision(r, paths) for r in rows]
 
     def get_live_constraints(self) -> list[Constraint]:
         """Return all constraints not superseded/retired (derived liveness)."""
         rows = self._query_entries("constraints", live_only=True)
-        return [self._row_to_constraint(r) for r in rows]
+        paths = self._paths_by_entry("constraint")
+        return [self._row_to_constraint(r, paths) for r in rows]
 
     def get_all_constraints(self) -> list[Constraint]:
         """Return all constraints regardless of deprecation state."""
         rows = self._query_entries("constraints", live_only=False)
-        return [self._row_to_constraint(r) for r in rows]
+        paths = self._paths_by_entry("constraint")
+        return [self._row_to_constraint(r, paths) for r in rows]
 
     def get_decisions_with_liveness(self) -> list[tuple[Decision, str | None]]:
         """Return ``(decision, superseded_by)`` pairs for every decision.
@@ -559,14 +563,16 @@ class MementicStore:
         rows = self._query_entries(
             "decisions", live_only=False, with_superseded=True,
         )
-        return [(self._row_to_decision(r), r["superseded_by"]) for r in rows]
+        paths = self._paths_by_entry("decision")
+        return [(self._row_to_decision(r, paths), r["superseded_by"]) for r in rows]
 
     def get_constraints_with_liveness(self) -> list[tuple[Constraint, str | None]]:
         """Return ``(constraint, superseded_by)`` pairs for every constraint."""
         rows = self._query_entries(
             "constraints", live_only=False, with_superseded=True,
         )
-        return [(self._row_to_constraint(r), r["superseded_by"]) for r in rows]
+        paths = self._paths_by_entry("constraint")
+        return [(self._row_to_constraint(r, paths), r["superseded_by"]) for r in rows]
 
     def _query_entries(
         self, table: str, *, live_only: bool, with_superseded: bool = False,
@@ -591,25 +597,64 @@ class MementicStore:
         )
         return conn.execute(sql, {"etype": etype}).fetchall()
 
-    def _row_to_decision(self, row: sqlite3.Row) -> Decision:
-        """Build a Decision (with paths) from a decisions row."""
+    def _row_to_decision(
+        self,
+        row: sqlite3.Row,
+        paths_by_entry: dict[str, list[str]] | None = None,
+    ) -> Decision:
+        """Build a Decision (with paths) from a decisions row.
+
+        Callers that load many rows pass a pre-grouped path map so the
+        entry_paths table is read once instead of once per entry.
+        """
+        paths = (
+            paths_by_entry.get(row["id"], [])
+            if paths_by_entry is not None
+            else self._paths_for("decision", row["id"])
+        )
         return Decision(
             id=row["id"],
             title=row["title"],
             rationale=row["rationale"],
             created_at=row["created_at"],
-            paths=self._paths_for("decision", row["id"]),
+            paths=paths,
         )
 
-    def _row_to_constraint(self, row: sqlite3.Row) -> Constraint:
-        """Build a Constraint (with paths) from a constraints row."""
+    def _row_to_constraint(
+        self,
+        row: sqlite3.Row,
+        paths_by_entry: dict[str, list[str]] | None = None,
+    ) -> Constraint:
+        """Build a Constraint (with paths) from a constraints row.
+
+        Callers that load many rows pass a pre-grouped path map so the
+        entry_paths table is read once instead of once per entry.
+        """
+        paths = (
+            paths_by_entry.get(row["id"], [])
+            if paths_by_entry is not None
+            else self._paths_for("constraint", row["id"])
+        )
         return Constraint(
             id=row["id"],
             description=row["description"],
             enforced_by=row["enforced_by"] or "",
             created_at=row["created_at"],
-            paths=self._paths_for("constraint", row["id"]),
+            paths=paths,
         )
+
+    def _paths_by_entry(self, entry_type: str) -> dict[str, list[str]]:
+        """Return entry ID to ordered paths for one entry type."""
+        conn = self._conn_or_raise()
+        grouped: dict[str, list[str]] = {}
+        rows = conn.execute(
+            "SELECT entry_id, path FROM entry_paths WHERE entry_type = ? "
+            "ORDER BY rowid",
+            (entry_type,),
+        )
+        for row in rows:
+            grouped.setdefault(row["entry_id"], []).append(row["path"])
+        return grouped
 
     def _paths_for(self, entry_type: str, entry_id: str) -> list[str]:
         """Return ordered entry_paths rows for one entry."""
@@ -655,7 +700,8 @@ class MementicStore:
             for r in self._query_entries("constraints", live_only=True)
             if r["id"] in ids
         ]
-        return [self._row_to_constraint(r) for r in rows]
+        paths = self._paths_by_entry("constraint")
+        return [self._row_to_constraint(r, paths) for r in rows]
 
     def get_decisions_for_path(
         self,

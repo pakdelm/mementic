@@ -4,9 +4,8 @@ from __future__ import annotations
 
 import re
 from collections.abc import Sequence
+from dataclasses import dataclass
 from enum import StrEnum
-
-from pydantic import BaseModel, ConfigDict
 
 from mementic.models import Decision
 from mementic.schema import successor_timestamp, utc_now
@@ -43,10 +42,9 @@ class DeprecateOutcome(StrEnum):
     NOT_FOUND = "not_found"
 
 
-class AddResult(BaseModel):
+@dataclass(frozen=True, kw_only=True)
+class AddResult:
     """Outcome of one add operation."""
-
-    model_config = ConfigDict(frozen=True)
 
     kind: EntryKind
     entry_id: str
@@ -54,10 +52,9 @@ class AddResult(BaseModel):
     tombstone_at: str | None = None
 
 
-class DeprecateResult(BaseModel):
+@dataclass(frozen=True, kw_only=True)
+class DeprecateResult:
     """Outcome of one deprecate operation."""
-
-    model_config = ConfigDict(frozen=True)
 
     entry_id: str
     outcome: DeprecateOutcome
