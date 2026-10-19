@@ -167,7 +167,7 @@ def update_changelog(version: str, dry_run: bool) -> None:
     # Build section and insert after preamble, before first existing version header.
     content = CHANGELOG.read_text(encoding="utf-8")
     section_lines = [header, ""] + [f"- {msg}" for msg in merge_messages]
-    new_section = "\n".join(section_lines)
+    new_section = "\n".join(section_lines) + "\n\n"
 
     first_version = re.search(r"^## \[", content, re.MULTILINE)
     if first_version:
