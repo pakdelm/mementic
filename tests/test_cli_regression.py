@@ -221,30 +221,28 @@ def test_add_decision_same_title_new_rationale_deprecates_and_accepts(
 
 
 @pytest.mark.parametrize(
-    ("second_rationale", "expected_counts"),
+    ("second_rationale", "expected_outcome"),
     [
         # Identical text: 100% overlap >= threshold -> duplicate skip.
         ("Jwt tokens carry authentication claims across every service boundary",
-         "0 accepted, 1 skipped, 0 deprecated"),
+         "skipped"),
         # One word changed out of ten: ~82% Jaccard overlap >= threshold
         # -> still a duplicate skip.
         ("Jwt tokens carry authentication claims across every service nightly",
-         "0 accepted, 1 skipped, 0 deprecated"),
-        # Wholly different content -> deprecate old + accept new. Counts
-        # reflect which auto-resolve rule fired; the acceptance of the new
-        # entry is reported by the status line.
+         "skipped"),
+        # Wholly different content -> deprecate old + accept new.
         ("Signed certificates replace bearer tokens entirely",
-         "0 accepted, 0 skipped, 1 deprecated"),
+         "previous entry deprecated"),
     ],
     ids=["identical-duplicate", "near-duplicate", "changed-content"],
 )
-def test_add_decision_reports_counts_per_disposition(
-    project_dir: Path, second_rationale: str, expected_counts: str,
+def test_add_decision_reports_outcome_per_disposition(
+    project_dir: Path, second_rationale: str, expected_outcome: str,
 ) -> None:
     _ok("add", "decision", "Use Jwt Auth",
         "-r", "Jwt tokens carry authentication claims across every service boundary")
     result = _ok("add", "decision", "Use Jwt Auth", "-r", second_rationale)
-    assert expected_counts in _text(result)
+    assert expected_outcome in _text(result).lower()
 
 
 def test_add_constraint_new_description_is_accepted(project_dir: Path) -> None:
@@ -261,7 +259,7 @@ def test_add_constraint_duplicate_description_is_skipped(project_dir: Path) -> N
     result = _ok("add", "constraint", desc, "-e", "src/api.py")
     output = _text(result)
     assert "skipped" in output.lower()
-    assert "0 accepted, 1 skipped, 0 deprecated" in output
+    assert "duplicate" in output.lower()
 
 
 def test_add_constraint_decision_id_links_constraint_to_decision(
@@ -403,6 +401,13 @@ def test_query_keywords_rejects_nonpositive_max_tokens(
     assert "at least 1" in output
 
 
+def test_query_file_rejects_nonpositive_max_tokens(project_dir: Path) -> None:
+    """--max-tokens < 1 exits non-zero before opening the store."""
+    result = _run("query", "file", "src/auth.py", "--max-tokens", "0")
+    assert result.exit_code != 0
+    assert "--max-tokens" in _text(result)
+
+
 def test_query_file_finds_seeded_entry_by_path(project_dir: Path) -> None:
     # The file must exist on disk: dead paths are filtered lazily via a
     # filesystem check at read time (Spec 29), no pre-query cleanup scans.
@@ -440,6 +445,21 @@ def test_query_stats_runs_clean_on_seeded_graph(project_dir: Path) -> None:
     assert "Graph statistics" in _text(result)
 
 
+def test_cli_command_closes_its_store(
+    project_dir: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    closed: list[MementicStore] = []
+    original_close = MementicStore.close
+
+    def tracking_close(self: MementicStore) -> None:
+        closed.append(self)
+        original_close(self)
+
+    monkeypatch.setattr(MementicStore, "close", tracking_close)
+    _ok("query", "stats")
+    assert closed
+
+
 def test_list_decisions_shows_seeded_entry(project_dir: Path) -> None:
     _ok("add", "decision", "Use Jwt Auth",
         "-r", "Jwt authentication guards every endpoint")
@@ -461,6 +481,12 @@ def test_list_entities_shows_entity_created_via_add(project_dir: Path) -> None:
     assert "src/foo.py" in _text(result)
 
 
+def test_list_rejects_invalid_status(project_dir: Path) -> None:
+    result = _run("list", "decisions", "--status", "bogus")
+    assert result.exit_code == 1
+    assert "Invalid status" in _text(result)
+
+
 def test_list_decisions_status_filter_excludes_deprecated(project_dir: Path) -> None:
     _ok("add", "decision", "Keep Api Stable",
         "-r", "Public contract changes require a major version bump")
@@ -478,6 +504,18 @@ def test_status_healthy_bundle_exits_zero_with_checklist(project_dir: Path) -> N
     output = _text(result)
     assert "Status" in output
     assert "checks passed" in output
+
+
+def test_status_missing_agents_md_reports_failure(project_dir: Path) -> None:
+    (project_dir / "AGENTS.md").unlink()
+    result = _ok("status")
+    assert "No enforcement section" in _text(result)
+
+
+def test_status_corrupt_store_reports_failure(project_dir: Path) -> None:
+    (project_dir / ".mementic" / "graph.db").write_bytes(b"not a database")
+    result = _ok("status")
+    assert "Could not load graph" in _text(result)
 
 
 def test_log_lists_mutations_newest_first(project_dir: Path) -> None:

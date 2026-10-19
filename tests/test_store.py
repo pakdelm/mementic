@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import warnings
 from collections.abc import Generator
 from pathlib import Path
 
 import pytest
 
-from mementic.store import SCHEMA_VERSION, MementicStore, successor_timestamp
+from mementic.schema import SCHEMA_VERSION, successor_timestamp, utc_now
+from mementic.store import MementicStore
 
 
 @pytest.fixture
@@ -117,19 +119,19 @@ def _raw_conn(store: MementicStore) -> sqlite3.Connection:
 class TestSchema:
     def test_fresh_database_gets_schema_v5(self, tmp_path: Path) -> None:
         db = tmp_path / "graph.db"
-        store = MementicStore(db_path=db)
-        version = _raw_conn(store).execute("PRAGMA user_version").fetchone()[0]
-        assert version == SCHEMA_VERSION == 5
-        tables = {
-            r["name"]
-            for r in _raw_conn(store).execute(
-                "SELECT name FROM sqlite_master WHERE type='table'"
-            )
-        }
-        assert {"decisions", "constraints", "entry_paths", "deprecations",
-                "audit_log"}.issubset(tables)
-        # Legacy v4 tables are gone.
-        assert "entities" not in tables and "edges" not in tables
+        with MementicStore(db_path=db) as store:
+            version = _raw_conn(store).execute("PRAGMA user_version").fetchone()[0]
+            assert version == SCHEMA_VERSION == 5
+            tables = {
+                r["name"]
+                for r in _raw_conn(store).execute(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                )
+            }
+            assert {"decisions", "constraints", "entry_paths", "deprecations",
+                    "audit_log"}.issubset(tables)
+            # Legacy v4 tables are gone.
+            assert "entities" not in tables and "edges" not in tables
 
     def test_no_status_column_anywhere(self, store: MementicStore) -> None:
         for table in ("decisions", "constraints"):
@@ -154,6 +156,36 @@ class TestSchema:
         conn.close()
         with pytest.raises(RuntimeError, match="not auto-upgraded"):
             MementicStore(db_path=db)
+
+
+class TestConnectionLifecycle:
+    def test_context_manager_closes_connection(self, tmp_path: Path) -> None:
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            with MementicStore(db_path=tmp_path / "graph.db") as store:
+                assert store._conn is not None
+        assert store._conn is None
+        assert [w for w in caught if issubclass(w.category, ResourceWarning)] == []
+
+    def test_context_manager_closes_on_exception(self, tmp_path: Path) -> None:
+        store = MementicStore(db_path=tmp_path / "graph.db")
+        with pytest.raises(RuntimeError, match="boom"):
+            with store:
+                raise RuntimeError("boom")
+        assert store._conn is None
+
+    def test_failed_open_closes_connection(self, tmp_path: Path) -> None:
+        db = tmp_path / "old.db"
+        conn = sqlite3.connect(str(db))
+        conn.execute("CREATE TABLE decisions (id TEXT PRIMARY KEY)")
+        conn.execute("PRAGMA user_version = 4")
+        conn.commit()
+        conn.close()
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            with pytest.raises(RuntimeError, match="not auto-upgraded"):
+                MementicStore(db_path=db)
+        assert [w for w in caught if issubclass(w.category, ResourceWarning)] == []
 
 
 class TestEntryCrud:
@@ -332,7 +364,6 @@ class TestDerivedLiveness:
         are stamped at call time (as the CLI does), so they postdate the
         tombstone.
         """
-        from mementic.format import timestamp
 
         _add_decision(store, "d1", rationale="old truth",
                       created_at="2024-01-01T00:00:00Z")
@@ -341,7 +372,7 @@ class TestDerivedLiveness:
         # Re-add with a current timestamp: new incarnation, tombstone
         # predates it.
         _add_decision(store, "d1", rationale="new truth",
-                      created_at=timestamp())
+                      created_at=utc_now())
         live = store.get_live_decisions()
         assert [d.id for d in live] == ["d1"]
         assert live[0].rationale == "new truth"
@@ -612,7 +643,6 @@ class TestHistoryQueries:
         self, store: MementicStore,
     ) -> None:
         """Replace-path succession rows precede the new incarnation."""
-        from mementic.format import timestamp
 
         _add_decision(store, "d1", rationale="v1",
                       created_at="2024-01-01T00:00:00Z")
@@ -622,7 +652,7 @@ class TestHistoryQueries:
             reason="superseded by re-added entry",
         )
         # New incarnation stamped after the succession row derives live.
-        _add_decision(store, "d1", rationale="v2", created_at=timestamp())
+        _add_decision(store, "d1", rationale="v2", created_at=utc_now())
         assert [d.id for d in store.get_live_decisions()] == ["d1"]
         records = store.get_deprecations_for_entry("decision", "d1")
         reasons = [r["reason"] for r in records]
@@ -636,17 +666,17 @@ class TestHistoryQueries:
         rows = store.get_all_deprecations()
         assert [r["entry_id"] for r in rows] == ["c1", "d1"]
 
-    def test_find_deprecation_ignores_prior_incarnations(
+    def test_prior_incarnation_tombstone_does_not_kill_re_add(
         self, store: MementicStore,
     ) -> None:
-        from mementic.format import timestamp
-
         _add_decision(store, "d1", created_at="2024-01-01T00:00:00Z")
         store.deprecate("decision", "d1", reason="old death")
         # Re-add at call time (as the CLI does): the prior tombstone now
         # belongs to a replaced incarnation.
-        _add_decision(store, "d1", created_at=timestamp())
-        assert store.find_deprecation("decision", "d1") is None
+        _add_decision(store, "d1", created_at=utc_now())
+        records = store.get_deprecations_for_entry("decision", "d1")
+        assert len(records) == 1
+        assert records[0]["reason"] == "old death"
         assert store.is_deprecated("decision", "d1") is False
 
 

@@ -11,26 +11,23 @@ from typing import Any
 
 from rich.box import SIMPLE_HEAD
 from rich.console import Console, Group as _Group
+from rich.markdown import Markdown as _Markdown
+from rich.markup import escape as _escape
 from rich.panel import Panel as _Panel
 from rich.rule import Rule as _Rule
 from rich.table import Table as _Table
 from rich.text import Text as _Text
 
-# Reconfigure stdout/stderr for UTF-8 so Rich output containing graph
-# data (descriptions, rationales from ADRs) does not crash legacy
-# Windows codepages (cp1252).  ``errors="replace"`` ensures any truly
-# unencodable bytes degrade to ``?`` instead of raising UnicodeEncodeError.
-if hasattr(sys.stdout, "reconfigure"):
-    sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
-if hasattr(sys.stderr, "reconfigure"):
-    sys.stderr.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
+COLOR_SUCCESS: str = "#3fb950"
+COLOR_FAIL: str = "#f85149"
+COLOR_WARN: str = "#d29922"
+COLOR_ID: str = "#58a6ff"
+COLOR_PATH: str = "#79c0ff"
+COLOR_HEADER: str = "#e6edf3"
+COLOR_DIM: str = "#8b949e"
+COLOR_BORDER: str = "#30363d"
 
-console = Console(highlight=False)
-
-
-# Map of Unicode chars that can crash cp1252 terminals -> ASCII fallbacks.
-# Keep in sync if new problematic characters are discovered.
-_UNICODE_FALLBACKS: dict[str, str] = {
+UNICODE_FALLBACKS: dict[str, str] = {
     "\u2014": "--",   # em dash
     "\u2013": "-",    # en dash
     "\u2018": "'",    # left single quote
@@ -49,6 +46,45 @@ _UNICODE_FALLBACKS: dict[str, str] = {
     "\u2122": "(TM)", # trademark
 }
 
+PANEL_KWARGS: dict[str, Any] = {
+    "border_style": COLOR_BORDER,
+    "safe_box": True,
+}
+
+TABLE_KWARGS: dict[str, Any] = {
+    "box": SIMPLE_HEAD,
+    "show_header": True,
+}
+
+KV_TABLE_KWARGS: dict[str, Any] = {
+    "box": SIMPLE_HEAD,
+    "show_header": False,
+    "show_edge": False,
+    "padding": (0, 2),
+}
+
+STATUS_OK: str = "[OK]"
+STATUS_FAIL: str = "[FAIL]"
+STATUS_DEPRECATED: str = "[DEPR]"
+
+
+def _configure_utf8_streams() -> None:
+    """Force UTF-8 output on streams that support reconfiguration.
+
+    Rich output can carry graph-sourced text outside legacy Windows
+    codepages (cp1252). ``errors="replace"`` degrades truly unencodable
+    characters to ``?`` instead of raising ``UnicodeEncodeError``.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is not None:
+            reconfigure(encoding="utf-8", errors="replace")
+
+
+_configure_utf8_streams()
+
+console = Console(highlight=False)
+
 
 def sanitize(text: str) -> str:
     """Replace Unicode characters with ASCII equivalents for terminal safety.
@@ -64,55 +100,26 @@ def sanitize(text: str) -> str:
     Returns:
         ASCII-safe string with fallback substitutions.
     """
-    for uni, ascii_fb in _UNICODE_FALLBACKS.items():
+    for uni, ascii_fb in UNICODE_FALLBACKS.items():
         text = text.replace(uni, ascii_fb)
     return text
-
-
-C_SUCCESS: str = "#3fb950"
-C_FAIL: str = "#f85149"
-C_WARN: str = "#d29922"
-C_ID: str = "#58a6ff"
-C_PATH: str = "#79c0ff"
-C_HEADER: str = "#e6edf3"
-C_DIM: str = "#8b949e"
-C_BORDER: str = "#30363d"
-
-
-PANEL_KWARGS: dict[str, Any] = {
-    "border_style": C_BORDER,
-    "safe_box": True,
-}
-
-TABLE_KWARGS: dict[str, Any] = {
-    "box": SIMPLE_HEAD,
-    "show_header": True,
-}
-
-# Table for key-value data (no header row, two columns)
-KV_TABLE_KWARGS: dict[str, Any] = {
-    "box": SIMPLE_HEAD,
-    "show_header": False,
-    "show_edge": False,
-    "padding": (0, 2),
-}
 
 
 def panel(
     *renderables: Any,
     title: str = "",
-    border_style: str = C_BORDER,
+    border_style: str = COLOR_BORDER,
     **kwargs: Any,
 ) -> _Panel:
     """Build a Panel with project-default styling.
 
     The ``title`` string may contain Rich markup.  It is automatically
-    wrapped in ``[bold C_HEADER]`` if it does not already contain
+    wrapped in ``[bold COLOR_HEADER]`` if it does not already contain
     square-bracket markup.
     """
     styled_title = title
     if "[" not in title:
-        styled_title = f"[bold {C_HEADER}]{title}[/]"
+        styled_title = f"[bold {COLOR_HEADER}]{title}[/]"
     merged = {**PANEL_KWARGS, "border_style": border_style, **kwargs}
     if len(renderables) == 1:
         content = renderables[0]
@@ -135,7 +142,7 @@ def kv_table(**kwargs: Any) -> _Table:
     return _Table(**{**KV_TABLE_KWARGS, **kwargs})
 
 
-def rule(style: str = C_BORDER) -> _Rule:
+def rule(style: str = COLOR_BORDER) -> _Rule:
     """Build a horizontal Rule separator."""
     return _Rule(style=style)
 
@@ -145,6 +152,11 @@ def text(markup: str, **kwargs: Any) -> _Text:
     return _Text.from_markup(markup, **kwargs)
 
 
-STATUS_OK: str = "[OK]"
-STATUS_FAIL: str = "[FAIL]"
-STATUS_DEPRECATED: str = "[DEPR]"
+def markdown(source: str) -> _Markdown:
+    """Build a sanitized Markdown renderable."""
+    return _Markdown(sanitize(source))
+
+
+def escape(value: str) -> str:
+    """Escape Rich markup in user-supplied text."""
+    return _escape(value)

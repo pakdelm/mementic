@@ -3,35 +3,46 @@ from __future__ import annotations
 import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Any
 
 import pytest
 
-from mementic.format import (
+from mementic.context import (
     CONTEXT_PACK_DEFAULT_MAX_CONSTRAINT_TOKENS,
     CONTEXT_PACK_DEFAULT_MAX_DECISION_TOKENS,
     DEAD_PATH_GRACE_HOURS,
     FIELD_WEIGHT_DESCRIPTION,
     FIELD_WEIGHT_RATIONALE,
     FIELD_WEIGHT_TITLE,
-    _compact_constraint_line,
-    _compact_decision_line,
-    _compact_evolution_line,
-    _truncate_entity_list,
-    build_context_pack,
     ContextPackResult,
-    count_tokens,
+    build_context_pack,
     document_frequencies,
     drop_dead_path_entries,
-    format_memory_context,
     format_evolution,
+    format_file_history_json,
     idf_weights,
     keyword_idf_score,
     rank_and_truncate,
-    slugify,
-    timestamp,
 )
+from mementic.context.builder import (
+    _compact_constraint_line,
+    _compact_decision_line,
+)
+from mementic.context.render import _compact_evolution_line
 from mementic.models import Constraint, Decision
-from mementic.store import utc_now
+from mementic.schema import utc_now
+from mementic.text import estimate_tokens, slugify, truncate_entity_list
+
+
+def build_pack(*args: Any, **kwargs: Any) -> ContextPackResult:
+    """Build a pack anchored at the repository root."""
+    kwargs.setdefault("base_dir", Path(__file__).resolve().parent.parent)
+    return build_context_pack(*args, **kwargs)
+
+
+def _render_pack(*args: Any, **kwargs: Any) -> str:
+    """Render a context pack body through the canonical builder."""
+    return build_pack(*args, **kwargs).text
 
 
 def make_decision(
@@ -65,8 +76,6 @@ def make_constraint(
         paths=paths or [],
     )
 
-
-# ---- helpers for tuple lists ----
 
 def d(d: Decision, score: int = 1) -> tuple[Decision, int]:
     """Wrap a Decision with overlap score."""
@@ -134,9 +143,9 @@ class TestRankAndTruncate:
         ]
         # First line is ~12 tokens; max_tokens=20 fits first but not both.
         line_a = _compact_constraint_line(items[0][0])
-        tokens_a = count_tokens(line_a)
+        tokens_a = estimate_tokens(line_a)
         line_b = _compact_constraint_line(items[1][0])
-        tokens_b = count_tokens(line_b)
+        tokens_b = estimate_tokens(line_b)
         budget = tokens_a + (tokens_b // 2)  # fits first, not second
         selected, shown, _ = rank_and_truncate(
             items, max_tokens=budget, line_formatter=_compact_constraint_line
@@ -167,7 +176,7 @@ class TestFormatContextPack:
         decisions = [make_decision()]
         constraints = [make_constraint()]
 
-        output = format_memory_context(
+        output = _render_pack(
             decisions, constraints,
             max_constraint_tokens=CONTEXT_PACK_DEFAULT_MAX_CONSTRAINT_TOKENS,
             max_decision_tokens=CONTEXT_PACK_DEFAULT_MAX_DECISION_TOKENS,
@@ -181,7 +190,7 @@ class TestFormatContextPack:
         assert "- Better performance (#d-001)" in output
 
     def test_with_empty_lists(self) -> None:
-        output: str = format_memory_context(
+        output: str = _render_pack(
             [], [],
             max_constraint_tokens=CONTEXT_PACK_DEFAULT_MAX_CONSTRAINT_TOKENS,
             max_decision_tokens=CONTEXT_PACK_DEFAULT_MAX_DECISION_TOKENS,
@@ -196,7 +205,7 @@ class TestFormatContextPack:
 
     def test_with_only_decisions(self) -> None:
         decisions = [make_decision(title="Use pydantic")]
-        output = format_memory_context(
+        output = _render_pack(
             decisions, [],
             max_constraint_tokens=CONTEXT_PACK_DEFAULT_MAX_CONSTRAINT_TOKENS,
             max_decision_tokens=CONTEXT_PACK_DEFAULT_MAX_DECISION_TOKENS,
@@ -210,7 +219,7 @@ class TestFormatContextPack:
 
     def test_with_only_constraints(self) -> None:
         constraints = [make_constraint(description="Must use type hints")]
-        output = format_memory_context(
+        output = _render_pack(
             [], constraints,
             max_constraint_tokens=CONTEXT_PACK_DEFAULT_MAX_CONSTRAINT_TOKENS,
             max_decision_tokens=CONTEXT_PACK_DEFAULT_MAX_DECISION_TOKENS,
@@ -225,7 +234,7 @@ class TestFormatContextPack:
     def test_compact_format_no_c_prefix(self) -> None:
         """Compact format drops the [C] prefix."""
         constraints = [make_constraint(description="Must use double quotes")]
-        output = format_memory_context(
+        output = _render_pack(
             [], constraints,
             max_constraint_tokens=CONTEXT_PACK_DEFAULT_MAX_CONSTRAINT_TOKENS,
             max_decision_tokens=CONTEXT_PACK_DEFAULT_MAX_DECISION_TOKENS,
@@ -238,7 +247,7 @@ class TestFormatContextPack:
     def test_compact_format_no_enforced_by(self) -> None:
         """Compact format drops (enforced by: X)."""
         constraints = [make_constraint(description="A test rule", enforced_by="dec-42")]
-        output = format_memory_context(
+        output = _render_pack(
             [], constraints,
             max_constraint_tokens=CONTEXT_PACK_DEFAULT_MAX_CONSTRAINT_TOKENS,
             max_decision_tokens=CONTEXT_PACK_DEFAULT_MAX_DECISION_TOKENS,
@@ -251,7 +260,7 @@ class TestFormatContextPack:
     def test_compact_format_no_decision_title_date(self) -> None:
         """Compact decision format drops title and date."""
         decisions = [make_decision(title="Pick DB", rationale="Chose PostgreSQL")]
-        output = format_memory_context(
+        output = _render_pack(
             decisions, [],
             max_constraint_tokens=CONTEXT_PACK_DEFAULT_MAX_CONSTRAINT_TOKENS,
             max_decision_tokens=CONTEXT_PACK_DEFAULT_MAX_DECISION_TOKENS,
@@ -271,7 +280,7 @@ class TestFormatContextPack:
             make_constraint(id="c-1", description="Constraint 1"),
             make_constraint(id="c-2", description="Constraint 2"),
         ]
-        output = format_memory_context(
+        output = _render_pack(
             decisions, constraints,
             max_constraint_tokens=CONTEXT_PACK_DEFAULT_MAX_CONSTRAINT_TOKENS,
             max_decision_tokens=CONTEXT_PACK_DEFAULT_MAX_DECISION_TOKENS,
@@ -289,7 +298,7 @@ class TestFormatContextPack:
             make_constraint(id=f"c-{i}", description=f"Constraint {i}")
             for i in range(1, 20)
         ]
-        output = format_memory_context(
+        output = _render_pack(
             [], constraints, max_constraint_tokens=60,
             max_decision_tokens=9999,
 
@@ -302,7 +311,7 @@ class TestFormatContextPack:
             make_decision(id=f"d-{i}", rationale=f"Rationale {i}")
             for i in range(1, 20)
         ]
-        output = format_memory_context(
+        output = _render_pack(
             decisions, [], max_constraint_tokens=9999,
             max_decision_tokens=60,
 
@@ -314,7 +323,7 @@ class TestFormatContextPack:
         constraints = [
             make_constraint(id="c-1", description="Only one")
         ]
-        output = format_memory_context(
+        output = _render_pack(
             [], constraints, max_constraint_tokens=9999,
             max_decision_tokens=9999,
 
@@ -326,7 +335,7 @@ class TestFormatContextPack:
         constraints = [
             make_constraint(id="c-1", description="A somewhat long description")
         ]
-        output = format_memory_context(
+        output = _render_pack(
             [], constraints, max_constraint_tokens=1,  # impossibly small
             max_decision_tokens=9999,
 
@@ -344,7 +353,7 @@ class TestFormatContextPack:
             make_decision(id=f"d-{i}", rationale=f"Rationale {i}")
             for i in range(1, 10)
         ]
-        output = format_memory_context(
+        output = _render_pack(
             decisions, constraints, max_constraint_tokens=100,
             max_decision_tokens=100,
 
@@ -411,6 +420,16 @@ class TestFormatEvolution:
 
         assert "more decisions omitted (token budget)" in output
 
+    def test_tiny_budget_reports_omission_not_missing_history(self) -> None:
+        """An over-budget decision is omitted, not reported as nonexistent."""
+        decisions = [
+            d(make_decision(id="d-1", rationale="A very long rationale line"))
+        ]
+        output = format_evolution("test.py", decisions, max_tokens=1)
+
+        assert "No architectural decisions found" not in output
+        assert "more decisions omitted (token budget)" in output
+
     def test_no_omission_note_when_all_fit(self) -> None:
         """No omission note when all decisions fit within budget."""
         decisions = [
@@ -419,6 +438,20 @@ class TestFormatEvolution:
         output = format_evolution("test.py", decisions, max_tokens=9999)
 
         assert "more decisions omitted" not in output
+
+
+class TestFormatFileHistoryJson:
+    def test_preserves_caller_decision_order(self) -> None:
+        """Decisions serialize in the order the store returned them."""
+        decisions = [
+            d(make_decision(id="d-old", ts="2023-01-01T00:00:00Z"), 3),
+            d(make_decision(id="d-new", ts="2025-01-01T00:00:00Z"), 1),
+        ]
+
+        data = format_file_history_json("src/foo.py", decisions, [])
+
+        assert [entry["id"] for entry in data["decisions"]] == ["d-old", "d-new"]
+        assert data["file"] == "src/foo.py"
 
 
 class TestCompactConstraintLine:
@@ -529,48 +562,48 @@ class TestTimestamp:
     )
 
     def test_returns_iso8601_format(self) -> None:
-        ts = timestamp()
+        ts = utc_now()
         assert self.ISO_8601_RE.match(ts), f"{ts!r} does not match ISO 8601"
 
     def test_returns_utc_timezone(self) -> None:
-        ts = timestamp()
+        ts = utc_now()
         assert ts.endswith("+00:00") or ts.endswith("Z")
 
     def test_two_calls_structure_identical(self) -> None:
-        ts1 = timestamp()
-        ts2 = timestamp()
+        ts1 = utc_now()
+        ts2 = utc_now()
         assert len(ts1) == len(ts2)
         assert self.ISO_8601_RE.match(ts1)
         assert self.ISO_8601_RE.match(ts2)
 
 
 class TestCountTokens:
-    """Tests for count_tokens()."""
+    """Tests for estimate_tokens()."""
 
     def test_returns_integer(self) -> None:
-        """count_tokens returns an int."""
-        result = count_tokens("hello world")
+        """estimate_tokens returns an int."""
+        result = estimate_tokens("hello world")
         assert isinstance(result, int)
 
     def test_short_text(self) -> None:
         """A short text returns a positive token count."""
-        result = count_tokens("hello")
+        result = estimate_tokens("hello")
         assert result > 0
 
     def test_empty_string(self) -> None:
         """An empty string returns 0 tokens."""
-        result = count_tokens("")
+        result = estimate_tokens("")
         assert result == 0
 
     def test_longer_text(self) -> None:
         """A 100-character string returns a reasonable estimate."""
-        result = count_tokens("a" * 100)
+        result = estimate_tokens("a" * 100)
         # len//4 heuristic: 25 tokens.
         assert result == 25
 
     def test_exact_quotient(self) -> None:
-        """count_tokens uses the len(text) // 4 estimate exactly."""
-        assert count_tokens("hello world foo") == len("hello world foo") // 4
+        """estimate_tokens uses the len(text) // 4 estimate exactly."""
+        assert estimate_tokens("hello world foo") == len("hello world foo") // 4
 
 
 def _make_constraint_with_entities(paths: list[str]) -> Constraint:
@@ -629,10 +662,10 @@ class TestCompactEntityEnrichment:
         assert len(bound_portion) <= 83  # 80 + 3 for the ellipsis
 
     def test_truncate_entity_list_short(self) -> None:
-        assert _truncate_entity_list(["a.py", "b.py"]) == "a.py, b.py"
+        assert truncate_entity_list(["a.py", "b.py"]) == "a.py, b.py"
 
     def test_truncate_entity_list_empty(self) -> None:
-        assert _truncate_entity_list([]) == ""
+        assert truncate_entity_list([]) == ""
 
     def test_truncate_entity_list_at_separator_boundary(self) -> None:
         """Truncation cuts at the last `, ` boundary, not mid-token.
@@ -643,7 +676,7 @@ class TestCompactEntityEnrichment:
         entities = ["src/very/deep/module/path_one.py",
                     "src/very/deep/module/path_two.py",
                     "src/very/deep/module/path_three.py"]
-        result = _truncate_entity_list(entities, max_chars=50)
+        result = truncate_entity_list(entities, max_chars=50)
         assert result.endswith("...")
         # No partial path token should appear: every comma-delimited segment
         # in the output must be a complete entry from the input.
@@ -654,7 +687,7 @@ class TestCompactEntityEnrichment:
     def test_truncate_entity_list_single_long_path_fallback(self) -> None:
         """When no separator fits, fall back to a hard char-boundary cut."""
         long_path = "a" * 200
-        result = _truncate_entity_list([long_path], max_chars=50)
+        result = truncate_entity_list([long_path], max_chars=50)
         assert result == "a" * 50 + "..."
 
 
@@ -823,7 +856,7 @@ class TestIdfOrderingProperties:
         return tail.split(",", 1)[0].split(")", 1)[0]
 
     def _pack_lines(self, constraints: list[Constraint], kws: list[str]) -> list[str]:
-        result = build_context_pack(
+        result = build_pack(
             [], constraints, max_constraint_tokens=9999, max_decision_tokens=9999,
             keywords=kws,
         )
@@ -869,7 +902,7 @@ class TestIdfOrderingProperties:
             make_constraint(id=f"c-{i}", description=f"api rule number {i}")
             for i in range(3)
         ]
-        result = build_context_pack(
+        result = build_pack(
             [], constraints, max_constraint_tokens=9999, max_decision_tokens=9999,
             keywords=["api"],
         )
@@ -882,7 +915,7 @@ class TestIdfOrderingProperties:
     def test_gate_excludes_zero_score_entries(self) -> None:
         matching = make_constraint(id="c-hit", description="argon2 hashing")
         other = make_constraint(id="c-miss", description="completely different topic")
-        result = build_context_pack(
+        result = build_pack(
             [], [matching, other], 9999, 9999, keywords=["argon2"],
         )
         assert result.stats.matched_constraints == 1
@@ -900,7 +933,7 @@ class TestFormatContextPackKeywordRanking:
             make_constraint(id="c-style", description="use snake_case for variables"),
         ]
         task_keywords = ["auth", "token"]
-        output = format_memory_context(
+        output = _render_pack(
             [], constraints,
             max_constraint_tokens=CONTEXT_PACK_DEFAULT_MAX_CONSTRAINT_TOKENS,
             max_decision_tokens=CONTEXT_PACK_DEFAULT_MAX_DECISION_TOKENS,
@@ -926,7 +959,7 @@ class TestFormatContextPackKeywordRanking:
             ),
         ]
         task_keywords = ["type", "hints", "function", "csrf", "token", "middleware"]
-        output = format_memory_context(
+        output = _render_pack(
             [], constraints, keywords=task_keywords,
             max_constraint_tokens=500, max_decision_tokens=500,
 
@@ -943,7 +976,7 @@ class TestFormatContextPackKeywordRanking:
         new = make_constraint(
             id="c-new", description="new rule", ts="2025-01-01T00:00:00Z",
         )
-        output = format_memory_context(
+        output = _render_pack(
             [], [old, new], max_constraint_tokens=9999,
             max_decision_tokens=9999,
 
@@ -1046,18 +1079,19 @@ class TestDropDeadPathEntries:
         assert kept == [garbage]
 
     def test_defaults_to_real_filesystem_checks(self) -> None:
-        """Without an injected predicate, Path.exists decides."""
+        """With a base_dir anchor, Path.exists decides."""
         existing = make_constraint(
             id="c-real",
             ts="2020-01-01T00:00:00Z",
-            paths=["pyproject.toml"],  # exists relative to repo cwd
+            paths=["pyproject.toml"],
         )
         missing = make_constraint(
             id="c-missing",
             ts="2020-01-01T00:00:00Z",
             paths=["no/such/file_really.py"],
         )
-        kept = drop_dead_path_entries([existing, missing])
+        repo_root = Path(__file__).resolve().parent.parent
+        kept = drop_dead_path_entries([existing, missing], base_dir=repo_root)
         assert [e.id for e in kept] == ["c-real"]
 
 
@@ -1081,17 +1115,12 @@ class TestBaseDirPathResolution:
         )
         assert kept == [entry]
 
-    def test_without_base_dir_default_predicate_uses_cwd(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        monkeypatch.chdir(tmp_path)
+    def test_missing_liveness_anchor_is_rejected(self) -> None:
         entry = make_constraint(
             id="c-bound", ts="2020-01-01T00:00:00Z", paths=["src/foo.py"],
         )
-        kept = drop_dead_path_entries(
-            [entry], now="2026-01-01T00:00:00+00:00",
-        )
-        assert kept == []
+        with pytest.raises(ValueError, match="path_exists or base_dir"):
+            drop_dead_path_entries([entry])
 
     def test_absolute_bound_paths_bypass_base_dir(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
@@ -1119,7 +1148,7 @@ class TestDeadPathDropInPacks:
             ts="2020-01-01T00:00:00Z",
             paths=["deleted/ghost.py"],
         )
-        result = build_context_pack(
+        result = build_pack(
             [], [ghost], 9999, 9999,
             keywords=["argon2"],
             path_exists=lambda p: False,
@@ -1139,7 +1168,7 @@ class TestDeadPathDropInPacks:
             id="c-ghost", description="argon2 again", ts="2020-01-01T00:00:00Z",
             paths=["deleted/ghost.py"],
         )
-        result = build_context_pack(
+        result = build_pack(
             [], [live, other, ghost], 9999, 9999,
             keywords=["argon2"],
             path_exists=lambda p: False,
@@ -1166,14 +1195,16 @@ class TestDefaultBudgets:
         assert total == 1000
 
     def test_max_tokens_override_splits_proportionally(self) -> None:
-        from mementic.cli import _split_token_budget
-        c_tokens, d_tokens = _split_token_budget(100)
+        from mementic.context import split_pack_budget
+
+        c_tokens, d_tokens = split_pack_budget(100)
         assert c_tokens == 50
         assert d_tokens == 50
 
     def test_max_tokens_none_returns_defaults(self) -> None:
-        from mementic.cli import _split_token_budget
-        assert _split_token_budget(None) == (
+        from mementic.context import split_pack_budget
+
+        assert split_pack_budget(None) == (
             CONTEXT_PACK_DEFAULT_MAX_CONSTRAINT_TOKENS,
             CONTEXT_PACK_DEFAULT_MAX_DECISION_TOKENS,
         )
@@ -1193,7 +1224,7 @@ class TestPackSurface:
         constraints.append(
             make_constraint(id="c-other", description="unrelated filler topic")
         )
-        return build_context_pack(
+        return build_pack(
             [], constraints,
             max_constraint_tokens=budget,
             max_decision_tokens=9999,
@@ -1226,13 +1257,13 @@ class TestPackSurface:
         constraints = [
             make_constraint(id="c-x", description="unrelated topic"),
         ]
-        result = build_context_pack(
+        result = build_pack(
             [], constraints, 9999, 9999, keywords=["argon2"],
         )
         assert "_0 of 1 constraints matched your keywords._" in result.text
 
     def test_empty_input_renders_none(self) -> None:
-        result = build_context_pack([], [], 9999, 9999, keywords=["argon2"])
+        result = build_pack([], [], 9999, 9999, keywords=["argon2"])
         assert "_None_" in result.text
 
     def test_every_rendered_line_carries_inline_id(self) -> None:
@@ -1247,7 +1278,7 @@ class TestPackSurface:
         ]
         distractor_c = make_constraint(id="c-other", description="filler topic")
         distractor_d = make_decision(id="d-other", rationale="filler topic")
-        result = build_context_pack(
+        result = build_pack(
             [*decisions, distractor_d], [*constraints, distractor_c],
             9999, 9999, keywords=["argon2"],
         )
@@ -1277,13 +1308,13 @@ class TestTruncateFloorAndBackfill:
         distractor = make_constraint(
             id="c-other", description="unrelated filler topic",
         )
-        return build_context_pack(
+        return build_pack(
             [], [*constraints, distractor], budget, 9999, keywords=["argon2"],
         )
 
     @staticmethod
     def _tok(entry: Constraint) -> int:
-        return count_tokens(_compact_constraint_line(entry))
+        return estimate_tokens(_compact_constraint_line(entry))
 
     def test_floor_shows_three_with_huge_lines_and_tiny_budget(self) -> None:
         """Dozens matched + one-line-per-item budget -> still >=3 shown,

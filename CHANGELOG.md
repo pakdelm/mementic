@@ -28,6 +28,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   terms or path).
 
 ### Changed
+- **CLI and context-pack refactor.** `cli.py` is now a `mementic/cli/`
+  package with one module per command group; decision and constraint writes
+  (including deterministic auto-resolve) live in `mementic/entries.py` as
+  `EntryWriter`; context-pack ranking and rendering moved to
+  `mementic/context/`; schema constants moved to `mementic/schema.py`.
+  `count_tokens` is now `estimate_tokens` to distinguish budget estimation
+  from the removed usage metrics. Auto-resolve and the successor write now run
+  in one SQLite transaction, so a failed re-add cannot orphan a tombstone.
+- **Output noise reduction.** `history` without an ID is capped at 20 records
+  (`-n`), passing `status` checks no longer print hints, list/log tables stop
+  wrapping into tall cells, and add/deprecate success is one line.
+- **Path liveness fix.** `query file` and `list entities --stale` resolve
+  repo-relative paths against the repo root instead of the process CWD.
+- **Dead code removed.** Legacy `audit.jsonl` fallback and path helpers,
+  `format_memory_context`, `resolve_repo_name`, `timestamp`, `inject.dry_run`,
+  and the `scripts/probe_packs.py` context-pack probe harness.
 - **Relational storage simplification (Spec 29, schema v5).** Replaced the
   GraphStore hybrid (in-memory NetworkX graph serialized into SQLite payloads,
   full-graph rewrite per mutation) with a pure relational schema accessed
