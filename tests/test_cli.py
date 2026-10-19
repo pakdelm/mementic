@@ -11,6 +11,7 @@ import pytest
 from typer.testing import CliRunner
 
 from mementic.cli import app
+from mementic.paths import ProjectPaths
 
 runner = CliRunner()
 
@@ -95,7 +96,7 @@ class TestListCommand:
         _seed_decision(store, "use-async", title="Use async I/O",
                        rationale="Performance")
 
-        with patch("mementic.cli._resolve_store", return_value=store):
+        with patch("mementic.cli.context.resolve_store", return_value=store):
             result = runner.invoke(app, ["list", "decisions"])
 
         assert result.exit_code == 0
@@ -112,7 +113,7 @@ class TestListCommand:
         _seed_decision(store, "d-dead", rationale="...")
         store.deprecate("decision", "d-dead")
 
-        with patch("mementic.cli._resolve_store", return_value=store):
+        with patch("mementic.cli.context.resolve_store", return_value=store):
             result = runner.invoke(app, ["list", "decisions", "--status", "deprecated"])
 
         assert result.exit_code == 0
@@ -128,7 +129,7 @@ class TestListCommand:
         _seed_decision(store, "new-way", created_at="2024-02-01T00:00:00Z")
         store.deprecate("decision", "old-way")  # retired: replaced_by NULL
 
-        with patch("mementic.cli._resolve_store", return_value=store):
+        with patch("mementic.cli.context.resolve_store", return_value=store):
             result = runner.invoke(app, ["list", "decisions", "--status", "deprecated"])
 
         output = _strip_ansi(result.stdout)
@@ -142,7 +143,7 @@ class TestListCommand:
         for i in range(1, 6):
             _seed_decision(store, f"d-{i}", created_at=f"2024-01-{i:02d}T00:00:00Z")
 
-        with patch("mementic.cli._resolve_store", return_value=store):
+        with patch("mementic.cli.context.resolve_store", return_value=store):
             result = runner.invoke(app, ["list", "decisions", "-n", "2"])
 
         assert result.exit_code == 0
@@ -160,7 +161,7 @@ class TestListCommand:
                          description="Services must be stateless",
                          enforced_by="use-jwt")
 
-        with patch("mementic.cli._resolve_store", return_value=store):
+        with patch("mementic.cli.context.resolve_store", return_value=store):
             result = runner.invoke(app, ["list", "constraints"])
 
         assert result.exit_code == 0
@@ -176,7 +177,7 @@ class TestListCommand:
         _seed_decision(store, "d-paths",
                        paths=["src/auth.py", "src/models/user.py"])
 
-        with patch("mementic.cli._resolve_store", return_value=store):
+        with patch("mementic.cli.context.resolve_store", return_value=store):
             result = runner.invoke(app, ["list", "entities"])
 
         assert result.exit_code == 0
@@ -192,7 +193,7 @@ class TestListCommand:
         store = _make_store()
         _seed_decision(store, "d-stale", paths=[stale_path])
 
-        with patch("mementic.cli._resolve_store", return_value=store):
+        with patch("mementic.cli.context.resolve_store", return_value=store):
             result = runner.invoke(app, ["list", "entities", "--stale"])
 
         assert result.exit_code == 0
@@ -209,7 +210,7 @@ class TestDeprecateCommand:
         store = _make_store()
         _seed_decision(store, "use-old-auth", rationale="Basic session auth")
 
-        with patch("mementic.cli._resolve_store", return_value=store):
+        with patch("mementic.cli.context.resolve_store", return_value=store):
             result = runner.invoke(app, ["deprecate", "use-old-auth"])
 
         assert result.exit_code == 0
@@ -224,7 +225,7 @@ class TestDeprecateCommand:
         store = _make_store()
         _seed_decision(store, "use-old-auth", rationale="Basic session auth")
 
-        with patch("mementic.cli._resolve_store", return_value=store):
+        with patch("mementic.cli.context.resolve_store", return_value=store):
             result = runner.invoke(
                 app, ["deprecate", "use-old-auth", "--reason", "Migrated to JWT"]
             )
@@ -244,7 +245,7 @@ class TestDeprecateCommand:
     ) -> None:
         store = _make_store()
 
-        with patch("mementic.cli._resolve_store", return_value=store):
+        with patch("mementic.cli.context.resolve_store", return_value=store):
             result = runner.invoke(app, ["deprecate", "nonexistent-id"])
 
         assert result.exit_code == 1
@@ -258,7 +259,7 @@ class TestDeprecateCommand:
         _seed_decision(store, "already-dep", rationale="Old stuff")
         store.deprecate("decision", "already-dep")
 
-        with patch("mementic.cli._resolve_store", return_value=store):
+        with patch("mementic.cli.context.resolve_store", return_value=store):
             result = runner.invoke(app, ["deprecate", "already-dep"])
 
         output = result.stdout + result.stderr
@@ -275,7 +276,7 @@ class TestHistoryCommand:
         _seed_decision(store, "old-auth", rationale="Basic auth everywhere")
         store.deprecate("decision", "old-auth", reason="insecure")
 
-        with patch("mementic.cli._resolve_store", return_value=store):
+        with patch("mementic.cli.context.resolve_store", return_value=store):
             result = runner.invoke(app, ["history", "old-auth"])
 
         assert result.exit_code == 0
@@ -292,7 +293,7 @@ class TestHistoryCommand:
         store.deprecate("decision", "d1", reason="first death")
         store.deprecate("constraint", "c1", reason="second death")
 
-        with patch("mementic.cli._resolve_store", return_value=store):
+        with patch("mementic.cli.context.resolve_store", return_value=store):
             result = runner.invoke(app, ["history"])
 
         assert result.exit_code == 0
@@ -310,7 +311,7 @@ class TestHistoryCommand:
         store.deprecate("decision", "x", reason="v1", replaced_by="y")
         store.deprecate("decision", "y", reason="v2", replaced_by="z")
 
-        with patch("mementic.cli._resolve_store", return_value=store):
+        with patch("mementic.cli.context.resolve_store", return_value=store):
             result = runner.invoke(app, ["history", "x"])
 
         assert result.exit_code == 0
@@ -323,7 +324,7 @@ class TestHistoryCommand:
     ) -> None:
         store = _make_store()
 
-        with patch("mementic.cli._resolve_store", return_value=store):
+        with patch("mementic.cli.context.resolve_store", return_value=store):
             result = runner.invoke(app, ["history"])
 
         assert result.exit_code == 0
@@ -389,7 +390,7 @@ class TestQueryCompactOutput:
     ) -> None:
         """An explicit --compact run emits exactly one [mementic: ...] line."""
         store = _seed_query_store(tmp_path, monkeypatch)
-        with patch("mementic.cli._resolve_store", return_value=store):
+        with patch("mementic.cli.context.resolve_store", return_value=store):
             result = runner.invoke(app, args)
         assert result.exit_code == 0, f"stderr: {result.stderr}"
         assert _strip_ansi(result.stdout).count("[mementic:") == 1
@@ -403,7 +404,7 @@ class TestQueryCompactOutput:
     ) -> None:
         """--compact still prints the pack body, not just the echo line."""
         store = _seed_query_store(tmp_path, monkeypatch)
-        with patch("mementic.cli._resolve_store", return_value=store):
+        with patch("mementic.cli.context.resolve_store", return_value=store):
             result = runner.invoke(app, args)
         assert result.exit_code == 0, f"stderr: {result.stderr}"
         assert "use-jwt" in _strip_ansi(result.stdout)
@@ -417,7 +418,7 @@ class TestQueryCompactOutput:
     ) -> None:
         """Undecorated output omits the rich panel entirely."""
         store = _seed_query_store(tmp_path, monkeypatch)
-        with patch("mementic.cli._resolve_store", return_value=store):
+        with patch("mementic.cli.context.resolve_store", return_value=store):
             result = runner.invoke(app, args)
         assert result.exit_code == 0, f"stderr: {result.stderr}"
         assert _panel_title(args) not in _strip_ansi(result.stdout)
@@ -431,7 +432,7 @@ class TestQueryCompactOutput:
     ) -> None:
         """Without --compact the rich panel is still rendered."""
         store = _seed_query_store(tmp_path, monkeypatch)
-        with patch("mementic.cli._resolve_store", return_value=store):
+        with patch("mementic.cli.context.resolve_store", return_value=store):
             result = runner.invoke(app, args)
         assert result.exit_code == 0, f"stderr: {result.stderr}"
         assert _panel_title(args) in _strip_ansi(result.stdout)
@@ -441,7 +442,7 @@ class TestQueryCompactOutput:
     ) -> None:
         """--compact with no matches keeps the zero-match body but no entities."""
         store = _seed_query_store(tmp_path, monkeypatch)
-        with patch("mementic.cli._resolve_store", return_value=store):
+        with patch("mementic.cli.context.resolve_store", return_value=store):
             result = runner.invoke(app, ["query", "keywords", "zzqxv", "--compact"])
         assert result.exit_code == 0, f"stderr: {result.stderr}"
         output = _strip_ansi(result.stdout)
@@ -457,7 +458,7 @@ class TestQueryCompactOutput:
     ) -> None:
         """query search (no --compact flag) still emits one echo line."""
         store = _seed_query_store(tmp_path, monkeypatch)
-        with patch("mementic.cli._resolve_store", return_value=store):
+        with patch("mementic.cli.context.resolve_store", return_value=store):
             result = runner.invoke(app, ["query", "search", "stateless"])
         assert result.exit_code == 0, f"stderr: {result.stderr}"
         assert _strip_ansi(result.stdout).count("[mementic:") == 1
@@ -469,33 +470,37 @@ class TestQueryKeywordsJson:
     def test_query_keywords_json_output(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """query keywords --json returns JSON with summary, constraints, decisions."""
+        """query keywords --json returns JSON with matched constraints and decisions."""
+        target = tmp_path / "src" / "auth.py"
+        target.parent.mkdir(parents=True)
+        target.write_text("x = 1", encoding="utf-8")
         store = _make_store()
         _seed_decision(store, "use-jwt", rationale="Token-based authentication "
                        "for API endpoints", paths=["src/auth.py"])
         _seed_constraint(store, "c-stateless",
                          description="Services must be stateless",
                          enforced_by="use-jwt", paths=["src/auth.py"])
+        paths = ProjectPaths(base_dir=tmp_path, store_root=tmp_path)
 
-        with patch("mementic.cli._resolve_store", return_value=store):
-            result = runner.invoke(app, ["query", "keywords", "auth", "--json"])
+        with (
+            patch("mementic.cli.context.resolve_paths", return_value=paths),
+            patch("mementic.cli.context.resolve_store", return_value=store),
+        ):
+            result = runner.invoke(
+                app, ["query", "keywords", "auth", "stateless", "--json"]
+            )
 
         assert result.exit_code == 0, f"stderr: {result.stderr}"
         data = json.loads(result.stdout)
 
-        assert "summary" in data
-        assert "constraints" in data
-        assert "decisions" in data
+        assert [item["id"] for item in data["decisions"]] == ["use-jwt"]
+        assert [item["id"] for item in data["constraints"]] == ["c-stateless"]
 
-        # Constraint fields
         for c_data in data["constraints"]:
-            assert "id" in c_data
             assert "description" in c_data
             assert "entities" in c_data
 
-        # Decision fields
         for d_data in data["decisions"]:
-            assert "id" in d_data
             assert "title" in d_data
             assert "rationale" in d_data
             assert "entities" in d_data
@@ -513,7 +518,7 @@ class TestQueryKeywordsJson:
                          description="All services must be stateless",
                          enforced_by="use-jwt")
 
-        with patch("mementic.cli._resolve_store", return_value=store):
+        with patch("mementic.cli.context.resolve_store", return_value=store):
             result = runner.invoke(app, ["query", "keywords", "auth", "--json"])
 
         assert result.exit_code == 0
@@ -534,7 +539,7 @@ class TestQueryKeywordsJson:
         _seed_decision(store, "dead-kw", rationale="Zebra authentication scheme")
         store.deprecate("decision", "dead-kw")
 
-        with patch("mementic.cli._resolve_store", return_value=store):
+        with patch("mementic.cli.context.resolve_store", return_value=store):
             result = runner.invoke(app, ["query", "keywords", "zebra", "--json"])
 
         assert result.exit_code == 0
@@ -549,26 +554,33 @@ class TestQueryFileJson:
     def test_query_file_json_output(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """query file --json returns JSON with summary, file, decisions, constraints."""
+        """query file --json returns matched decisions and constraints."""
+        target = tmp_path / "src" / "auth.py"
+        target.parent.mkdir(parents=True)
+        target.write_text("x = 1", encoding="utf-8")
         store = _make_store()
         _seed_decision(store, "use-jwt", rationale="Token-based authentication "
                        "for API endpoints", paths=["src/auth.py"])
         _seed_constraint(store, "c-stateless",
                          description="Services must be stateless",
                          enforced_by="use-jwt", paths=["src/auth.py"])
+        paths = ProjectPaths(base_dir=tmp_path, store_root=tmp_path)
 
-        with patch("mementic.cli._resolve_store", return_value=store):
+        with (
+            patch("mementic.cli.context.resolve_paths", return_value=paths),
+            patch("mementic.cli.context.resolve_store", return_value=store),
+        ):
             result = runner.invoke(app, ["query", "file", "src/auth.py", "--json"])
 
         assert result.exit_code == 0, f"stderr: {result.stderr}"
         data = json.loads(result.stdout)
 
-        assert "summary" in data
-        assert "file" in data
-        assert "decisions" in data
-        assert "constraints" in data
         assert data["file"] == "src/auth.py"
         assert isinstance(data["summary"], str)
+        assert [decision["id"] for decision in data["decisions"]] == ["use-jwt"]
+        assert [constraint["id"] for constraint in data["constraints"]] == [
+            "c-stateless"
+        ]
 
     def test_query_file_json_prefix_opt_in(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -585,7 +597,7 @@ class TestQueryFileJson:
         _seed_decision(store, "io-decision", rationale="Async I/O everywhere",
                        paths=["src/io/handlers.py"])
 
-        with patch("mementic.cli._resolve_store", return_value=store):
+        with patch("mementic.cli.context.resolve_store", return_value=store):
             exact = runner.invoke(app, ["query", "file", "src/io/", "--json"])
             prefixed = runner.invoke(
                 app, ["query", "file", "src/io/", "--prefix", "--json"]
@@ -597,6 +609,33 @@ class TestQueryFileJson:
         assert [d["id"] for d in json.loads(prefixed.stdout)["decisions"]] == [
             "io-decision"
         ]
+
+    def test_query_file_resolves_paths_against_base_dir_from_subdir(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Repo-relative bindings resolve against base_dir, not the CWD."""
+        target = tmp_path / "src" / "auth.py"
+        target.parent.mkdir(parents=True)
+        target.write_text("x = 1", encoding="utf-8")
+        nested = tmp_path / "nested"
+        nested.mkdir()
+        monkeypatch.chdir(nested)
+
+        store = _make_store()
+        _seed_decision(
+            store, "io-decision", rationale="Async I/O everywhere",
+            paths=["src/auth.py"],
+        )
+        paths = ProjectPaths(base_dir=tmp_path, store_root=tmp_path)
+        with (
+            patch("mementic.cli.context.resolve_paths", return_value=paths),
+            patch("mementic.cli.context.resolve_store", return_value=store),
+        ):
+            result = runner.invoke(app, ["query", "file", "src/auth.py", "--json"])
+
+        assert result.exit_code == 0, f"stderr: {result.stderr}"
+        data = json.loads(result.stdout)
+        assert [decision["id"] for decision in data["decisions"]] == ["io-decision"]
 
     def test_query_file_dead_paths_filtered_by_filesystem_check(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -614,7 +653,7 @@ class TestQueryFileJson:
                        created_at="2024-02-01T00:00:00Z",
                        paths=[ghost, str(alive)])
 
-        with patch("mementic.cli._resolve_store", return_value=store):
+        with patch("mementic.cli.context.resolve_store", return_value=store):
             result = runner.invoke(app, ["query", "file", ghost, "--json"])
             mixed = runner.invoke(app, ["query", "file", str(alive), "--json"])
 
@@ -637,7 +676,7 @@ class TestDeprecateMultiId:
         _seed_decision(store, "dec-1", rationale="First decision")
         _seed_decision(store, "dec-2", rationale="Second decision")
 
-        with patch("mementic.cli._resolve_store", return_value=store):
+        with patch("mementic.cli.context.resolve_store", return_value=store):
             result = runner.invoke(app, ["deprecate", "dec-1", "dec-2"])
 
         assert result.exit_code == 0
@@ -652,7 +691,7 @@ class TestDeprecateMultiId:
         store = _make_store()
         _seed_decision(store, "dec-valid", rationale="A valid decision")
 
-        with patch("mementic.cli._resolve_store", return_value=store):
+        with patch("mementic.cli.context.resolve_store", return_value=store):
             result = runner.invoke(app, ["deprecate", "dec-valid", "nonexistent"])
 
         assert result.exit_code == 1  # errors → exit code 1
@@ -671,7 +710,7 @@ class TestAddDecisionAutoResolve:
         monkeypatch.chdir(tmp_path)
 
         store = _make_store()
-        with patch("mementic.cli._resolve_store", return_value=store):
+        with patch("mementic.cli.context.resolve_store", return_value=store):
             result = runner.invoke(
                 app, ["add", "decision", "Use JWT Auth",
                       "--rationale", "Token-based auth for APIs"],
@@ -692,7 +731,7 @@ class TestAddDecisionAutoResolve:
         _seed_decision(store, "use-jwt-auth", title="Use JWT Auth",
                        rationale="Token-based authentication for APIs")
 
-        with patch("mementic.cli._resolve_store", return_value=store):
+        with patch("mementic.cli.context.resolve_store", return_value=store):
             result = runner.invoke(
                 app, ["add", "decision", "Use JWT Auth",
                       "--rationale", "Token-based authentication for APIs"],
@@ -715,7 +754,7 @@ class TestAddDecisionAutoResolve:
         _seed_decision(store, "use-jwt-auth", title="Use JWT Auth",
                        rationale="Token-based auth for APIs")
 
-        with patch("mementic.cli._resolve_store", return_value=store):
+        with patch("mementic.cli.context.resolve_store", return_value=store):
             result = runner.invoke(
                 app, ["add", "decision", "Use JWT Auth",
                       "--rationale",
@@ -742,7 +781,7 @@ class TestAddDecisionAutoResolve:
         monkeypatch.chdir(tmp_path)
 
         store = _make_store()
-        with patch("mementic.cli._resolve_store", return_value=store):
+        with patch("mementic.cli.context.resolve_store", return_value=store):
             result = runner.invoke(
                 app, ["add", "decision", "Track Auth Flow",
                       "-r", "Central middleware owns the handshake",
@@ -761,7 +800,7 @@ class TestAddDecisionAutoResolve:
         monkeypatch.chdir(tmp_path)
 
         store = _make_store()
-        with patch("mementic.cli._resolve_store", return_value=store):
+        with patch("mementic.cli.context.resolve_store", return_value=store):
             result = runner.invoke(
                 app, ["add", "decision", "Some Title",
                       "-r", "Because of tradeoffs",
@@ -770,23 +809,21 @@ class TestAddDecisionAutoResolve:
 
         assert result.exit_code != 0
 
-    def test_output_reports_counts(
+    def test_output_reports_accepted(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Add output reports accepted/skipped/deprecated counts."""
+        """Add output is one line naming the entry and its outcome."""
         monkeypatch.chdir(tmp_path)
 
         store = _make_store()
-        with patch("mementic.cli._resolve_store", return_value=store):
+        with patch("mementic.cli.context.resolve_store", return_value=store):
             result = runner.invoke(
                 app, ["add", "decision", "Some Decision", "--rationale", "Because"],
             )
 
         output = _strip_ansi(result.stdout + result.stderr)
-        assert "Counts:" in output
-        assert "1 accepted" in output
-        assert "0 skipped" in output
-        assert "0 deprecated" in output
+        assert "some-decision" in output
+        assert "accepted" in output.lower()
 
 
 class TestAddConstraintAutoResolve:
@@ -799,7 +836,7 @@ class TestAddConstraintAutoResolve:
         monkeypatch.chdir(tmp_path)
 
         store = _make_store()
-        with patch("mementic.cli._resolve_store", return_value=store):
+        with patch("mementic.cli.context.resolve_store", return_value=store):
             result = runner.invoke(
                 app, ["add", "constraint", "Services must be stateless",
                       "-e", "src/services.py"],
@@ -820,7 +857,7 @@ class TestAddConstraintAutoResolve:
                          description="Services must be stateless",
                          paths=["src/a.py"])
 
-        with patch("mementic.cli._resolve_store", return_value=store):
+        with patch("mementic.cli.context.resolve_store", return_value=store):
             result = runner.invoke(
                 app, ["add", "constraint", "Services must be stateless",
                       "-e", "src/services.py"],
@@ -841,7 +878,7 @@ class TestAddConstraintAutoResolve:
                          description="All endpoints must use HTTPS",
                          paths=["src/a.py"])
 
-        with patch("mementic.cli._resolve_store", return_value=store):
+        with patch("mementic.cli.context.resolve_store", return_value=store):
             result = runner.invoke(
                 app, ["add", "constraint", "All network calls must use TLS 1.3",
                       "-e", "src/net.py", "--id", "use-https"],
@@ -855,23 +892,21 @@ class TestAddConstraintAutoResolve:
         assert "TLS 1.3" in c.description
         assert {x.id for x in store.get_live_constraints()} == {"use-https"}
 
-    def test_output_reports_counts(
+    def test_output_reports_active(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Add-constraint output reports accepted/skipped/deprecated counts."""
+        """Add-constraint output is one line naming the entry and its outcome."""
         monkeypatch.chdir(tmp_path)
 
         store = _make_store()
-        with patch("mementic.cli._resolve_store", return_value=store):
+        with patch("mementic.cli.context.resolve_store", return_value=store):
             result = runner.invoke(
                 app, ["add", "constraint", "No raw SQL in handlers", "-e", "src/db.py"],
             )
 
         output = _strip_ansi(result.stdout + result.stderr)
-        assert "Counts:" in output
-        assert "1 accepted" in output
-        assert "0 skipped" in output
-        assert "0 deprecated" in output
+        assert "no-raw-sql-in-handlers" in output
+        assert "active" in output.lower()
 
 
 class TestInitStub:

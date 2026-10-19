@@ -19,108 +19,21 @@ from __future__ import annotations
 import json
 import sqlite3
 from collections import deque
-from collections.abc import Callable
-from datetime import datetime, timedelta, timezone
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from urllib.parse import quote
 
 from mementic.models import Constraint, Decision
-
-SCHEMA_VERSION = 5
-
-# Schema v5 DDL. audit_log carried forward unchanged from v2.
-SCHEMA_DDL = """
-CREATE TABLE decisions (
-    id         TEXT PRIMARY KEY,
-    title      TEXT NOT NULL,
-    rationale  TEXT NOT NULL,
-    created_at TEXT NOT NULL
-);
-
-CREATE TABLE constraints (
-    id          TEXT PRIMARY KEY,
-    description TEXT NOT NULL,
-    enforced_by TEXT DEFAULT '' REFERENCES decisions(id),
-    created_at  TEXT NOT NULL
-);
-
-CREATE TABLE entry_paths (
-    entry_type TEXT NOT NULL CHECK (entry_type IN ('decision','constraint')),
-    entry_id   TEXT NOT NULL,
-    path       TEXT NOT NULL,
-    PRIMARY KEY (entry_type, entry_id, path)
-);
-CREATE INDEX idx_entry_paths_path ON entry_paths(path);
-
-CREATE TABLE deprecations (
-    entry_type  TEXT NOT NULL CHECK (entry_type IN ('decision','constraint')),
-    entry_id    TEXT NOT NULL,
-    replaced_by TEXT,               -- NULL = retired without successor
-    reason      TEXT DEFAULT '',
-    at          TEXT NOT NULL,
-    PRIMARY KEY (entry_type, entry_id, at)
-);
-
-CREATE TABLE IF NOT EXISTS audit_log (
-    id            INTEGER PRIMARY KEY AUTOINCREMENT,
-    entity_type   TEXT NOT NULL,
-    entity_id     TEXT NOT NULL,
-    action        TEXT NOT NULL,
-    details       TEXT DEFAULT '{}',
-    source        TEXT DEFAULT '',
-    timestamp     TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_audit_log_entity
-    ON audit_log(entity_type, entity_id);
-CREATE INDEX IF NOT EXISTS idx_audit_log_time
-    ON audit_log(timestamp);
-"""
-
-# Stamped separately (after successful DDL/data writes) so a failed
-# migration never leaves a database mis-marked as current.
-SET_USER_VERSION_SQL = f"PRAGMA user_version = {SCHEMA_VERSION}"
-
-# Derived-liveness predicate shared by every live-set query. A deprecations
-# row kills the incarnation it postdates; rows older than the current
-# ``created_at`` belong to a previous (since replaced) incarnation.
-_LIVE_WHERE = (
-    "NOT EXISTS ("
-    "  SELECT 1 FROM deprecations dp"
-    "  WHERE dp.entry_type = :etype"
-    "    AND dp.entry_id = {alias}.id"
-    "    AND dp.at > {alias}.created_at)"
+from mementic.schema import (
+    DEFAULT_AUDIT_LIMIT,
+    LIVE_WHERE,
+    SCHEMA_DDL,
+    SCHEMA_VERSION,
+    SET_USER_VERSION_SQL,
+    successor_timestamp,
+    utc_now,
 )
-
-
-def utc_now() -> str:
-    """Return the current UTC time as an ISO 8601 string.
-
-    The single canonical clock for every stored timestamp, so timestamp
-    comparisons stay lexicographically safe (one format everywhere).
-    """
-    return datetime.now(timezone.utc).isoformat()
-
-
-def successor_timestamp(tombstone_at: str) -> str:
-    """Return ``tombstone_at`` advanced by one microsecond.
-
-    A successor incarnation's ``created_at`` must compare greater than the
-    tombstone stamping its predecessor even when two consecutive wall-clock
-    reads return identical strings (coarse OS clocks — notably on Windows).
-    Deriving the successor's stamp from the tombstone's own stamp makes that
-    ordering structural instead of probabilistic.
-
-    Args:
-        tombstone_at: ISO 8601 stamp returned by :meth:`deprecate` /
-            :meth:`record_succession`.
-
-    Returns:
-        ISO 8601 stamp strictly newer than ``tombstone_at``, formatted with
-        the same canonical formatter.
-    """
-    moment = datetime.fromisoformat(tombstone_at)
-    return (moment + timedelta(microseconds=1)).isoformat()
-
 
 _MAX_STAMP_RETRIES = 10
 
@@ -177,6 +90,7 @@ class MementicStore:
     def __init__(self, db_path: str | Path, *, read_only: bool = False) -> None:
         self._db_path = Path(db_path)
         self._read_only = read_only
+        self._in_transaction = False
         self._conn: sqlite3.Connection | None = None
         if str(db_path) != ":memory:":
             if read_only:
@@ -208,6 +122,38 @@ class MementicStore:
         if self._conn is None:
             raise RuntimeError("store connection is closed")
         return self._conn
+
+    @contextmanager
+    def _write_scope(self) -> Iterator[None]:
+        """Commit a write immediately unless an outer transaction owns it."""
+        if self._in_transaction:
+            yield
+            return
+        with self._conn_or_raise():
+            yield
+
+    @contextmanager
+    def transaction(self) -> Iterator[None]:
+        """Group multiple writes into one atomic transaction.
+
+        Nested calls join the outer transaction. Any exception rolls back
+        every write performed since the outer transaction began.
+        """
+        conn = self._conn_or_raise()
+        if self._in_transaction:
+            yield
+            return
+        self._in_transaction = True
+        try:
+            conn.execute("BEGIN")
+            yield
+        except BaseException:
+            conn.rollback()
+            raise
+        else:
+            conn.commit()
+        finally:
+            self._in_transaction = False
 
     def _ensure_schema(self) -> None:
         """Create the schema on fresh databases; reject foreign versions."""
@@ -282,7 +228,7 @@ class MementicStore:
                 f"refusing to overwrite as a decision"
             )
         action = "modify" if existing_type == "decision" else "add"
-        with conn:
+        with self._write_scope():
             conn.execute(
                 "INSERT INTO decisions (id, title, rationale, created_at) "
                 "VALUES (?, ?, ?, ?) "
@@ -336,7 +282,7 @@ class MementicStore:
                 f"refusing to overwrite as a constraint"
             )
         action = "modify" if existing_type == "constraint" else "add"
-        with conn:
+        with self._write_scope():
             conn.execute(
                 "INSERT INTO constraints "
                 "(id, description, enforced_by, created_at) VALUES (?, ?, ?, ?) "
@@ -363,7 +309,7 @@ class MementicStore:
             "DELETE FROM entry_paths WHERE entry_type = ? AND entry_id = ?",
             (entry_type, entry_id),
         )
-        for path in dict.fromkeys(paths):  # dedupe, keep order
+        for path in dict.fromkeys(paths):
             conn.execute(
                 "INSERT OR IGNORE INTO entry_paths (entry_type, entry_id, path) "
                 "VALUES (?, ?, ?)",
@@ -426,7 +372,7 @@ class MementicStore:
                 ),
             }
         now = utc_now()
-        with conn:
+        with self._write_scope():
             inserted_at = _insert_deprecation(
                 conn, (entry_type, entry_id, replaced_by, reason, now)
             )
@@ -479,7 +425,7 @@ class MementicStore:
             )
         conn = self._conn_or_raise()
         now = utc_now()
-        with conn:
+        with self._write_scope():
             inserted_at = _insert_deprecation(
                 conn, (entry_type, entry_id, replaced_by, reason, now)
             )
@@ -589,8 +535,8 @@ class MementicStore:
     ) -> list[sqlite3.Row]:
         """Query the decisions/constraints table with derived liveness."""
         conn = self._conn_or_raise()
-        etype = table[:-1]  # 'decisions' -> 'decision'
-        alias = table[0]  # 'd' or 'c'
+        etype = table[:-1]
+        alias = table[0]
         superseded_col = ""
         if with_superseded:
             superseded_col = (
@@ -600,7 +546,7 @@ class MementicStore:
                 f"AND dp.at > {alias}.created_at "
                 f"ORDER BY dp.at DESC LIMIT 1) AS superseded_by"
             )
-        where = f"WHERE {_LIVE_WHERE.format(alias=alias)}" if live_only else ""
+        where = f"WHERE {LIVE_WHERE.format(alias=alias)}" if live_only else ""
         sql = (
             f"SELECT {alias}.*{superseded_col} FROM {table} {alias} {where} "
             f"ORDER BY {alias}.created_at, {alias}.id"
@@ -803,25 +749,6 @@ class MementicStore:
         ).fetchone()
         return row is not None
 
-    def find_deprecation(
-        self, entry_type: str, entry_id: str,
-    ) -> sqlite3.Row | None:
-        """Return the newest tombstone row for the current incarnation, if any.
-
-        Only rows stamped after the entry's ``created_at`` count — earlier
-        rows belong to replaced prior incarnations.
-        """
-        conn = self._conn_or_raise()
-        table = entry_type + "s"
-        return conn.execute(
-            f"SELECT dp.* FROM deprecations dp JOIN {table} e "
-            f"ON dp.entry_id = e.id "
-            f"WHERE dp.entry_type = ? AND dp.entry_id = ? "
-            f"AND dp.at > e.created_at "
-            f"ORDER BY dp.at DESC LIMIT 1",
-            (entry_type, entry_id),
-        ).fetchone()
-
     def get_deprecations_for_entry(
         self, entry_type: str, entry_id: str,
     ) -> list[sqlite3.Row]:
@@ -846,7 +773,7 @@ class MementicStore:
         returns every visited deprecations row ordered by timestamp —
         the record trail behind chains like ``x -> y -> z``.
         """
-        self._conn_or_raise()  # fail fast on a closed store
+        self._conn_or_raise()
         collected: list[sqlite3.Row] = []
         visited: set[str] = {entry_id}
         frontier: deque[tuple[str, str]] = deque([(entry_type, entry_id)])
@@ -899,11 +826,13 @@ class MementicStore:
         alias = table[0]
         sql = (
             f"SELECT COUNT(*) FROM {table} {alias} "
-            f"WHERE NOT ({_LIVE_WHERE.format(alias=alias)})"
+            f"WHERE NOT ({LIVE_WHERE.format(alias=alias)})"
         )
         return conn.execute(sql, {"etype": table[:-1]}).fetchone()[0]
 
-    def get_audit_entries(self, limit: int = 20) -> list[sqlite3.Row]:
+    def get_audit_entries(
+        self, limit: int = DEFAULT_AUDIT_LIMIT
+    ) -> list[sqlite3.Row]:
         """Return recent audit log entries, newest first.
 
         Args:

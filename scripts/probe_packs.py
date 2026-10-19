@@ -2,7 +2,7 @@
 
 Runs ~10 realistic keyword query sets against a mementic graph database and
 renders packs at candidate TOTAL token budgets {400, 600, 800, 1200} (split
-by the production formula :func:`mementic.format.split_pack_budget`, so the
+by the production formula :func:`mementic.context.split_pack_budget`, so the
 probe cannot drift from CLI budget behavior). For every query and budget it
 reports pack size (chars / approx tokens), items shown vs cut, and a
 precision proxy:
@@ -29,15 +29,15 @@ import statistics
 from pathlib import Path
 from typing import TypedDict
 
-from mementic.format import (
-    _rank_keyword_section,
+from mementic.context import (
     build_context_pack,
-    count_tokens,
     document_frequencies,
     drop_dead_path_entries,
     idf_weights,
+    rank_keyword_section,
     split_pack_budget,
 )
+from mementic.text import estimate_tokens
 from mementic.models import Constraint, Decision
 from mementic.paths import graph_db_path, resolve_base_dir
 from mementic.store import MementicStore
@@ -88,13 +88,13 @@ def _probe_query(
     c_tokens, d_tokens = split_pack_budget(total_budget)
 
     # Recompute the post-gate matched set with scores for the precision proxy.
-    live_c = drop_dead_path_entries(constraints)
-    live_d = drop_dead_path_entries(decisions)
+    live_c = drop_dead_path_entries(constraints, base_dir=resolve_base_dir())
+    live_d = drop_dead_path_entries(decisions, base_dir=resolve_base_dir())
     n_docs = len(live_c) + len(live_d)
     doc_freq = document_frequencies([*live_c, *live_d], keywords)
     idf = idf_weights(n_docs, doc_freq)
-    ranked_c = _rank_keyword_section(live_c, keywords, idf)
-    ranked_d = _rank_keyword_section(live_d, keywords, idf)
+    ranked_c = rank_keyword_section(live_c, keywords, idf)
+    ranked_d = rank_keyword_section(live_d, keywords, idf)
     matched_scores = sorted(score for _, score in [*ranked_c, *ranked_d])
 
     result = build_context_pack(
@@ -133,7 +133,7 @@ def _probe_query(
         "query": name,
         "budget": total_budget,
         "chars": len(text),
-        "tokens": count_tokens(text),
+        "tokens": estimate_tokens(text),
         "shown": shown,
         "cut": matched - shown,
         "mean_pct": round(mean_pct, 1),

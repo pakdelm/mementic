@@ -9,7 +9,8 @@ from pathlib import Path
 
 import pytest
 
-from mementic.store import SCHEMA_VERSION, MementicStore, successor_timestamp
+from mementic.schema import SCHEMA_VERSION, successor_timestamp, utc_now
+from mementic.store import MementicStore
 
 
 @pytest.fixture
@@ -332,7 +333,6 @@ class TestDerivedLiveness:
         are stamped at call time (as the CLI does), so they postdate the
         tombstone.
         """
-        from mementic.format import timestamp
 
         _add_decision(store, "d1", rationale="old truth",
                       created_at="2024-01-01T00:00:00Z")
@@ -341,7 +341,7 @@ class TestDerivedLiveness:
         # Re-add with a current timestamp: new incarnation, tombstone
         # predates it.
         _add_decision(store, "d1", rationale="new truth",
-                      created_at=timestamp())
+                      created_at=utc_now())
         live = store.get_live_decisions()
         assert [d.id for d in live] == ["d1"]
         assert live[0].rationale == "new truth"
@@ -612,7 +612,6 @@ class TestHistoryQueries:
         self, store: MementicStore,
     ) -> None:
         """Replace-path succession rows precede the new incarnation."""
-        from mementic.format import timestamp
 
         _add_decision(store, "d1", rationale="v1",
                       created_at="2024-01-01T00:00:00Z")
@@ -622,7 +621,7 @@ class TestHistoryQueries:
             reason="superseded by re-added entry",
         )
         # New incarnation stamped after the succession row derives live.
-        _add_decision(store, "d1", rationale="v2", created_at=timestamp())
+        _add_decision(store, "d1", rationale="v2", created_at=utc_now())
         assert [d.id for d in store.get_live_decisions()] == ["d1"]
         records = store.get_deprecations_for_entry("decision", "d1")
         reasons = [r["reason"] for r in records]
@@ -636,17 +635,17 @@ class TestHistoryQueries:
         rows = store.get_all_deprecations()
         assert [r["entry_id"] for r in rows] == ["c1", "d1"]
 
-    def test_find_deprecation_ignores_prior_incarnations(
+    def test_prior_incarnation_tombstone_does_not_kill_re_add(
         self, store: MementicStore,
     ) -> None:
-        from mementic.format import timestamp
-
         _add_decision(store, "d1", created_at="2024-01-01T00:00:00Z")
         store.deprecate("decision", "d1", reason="old death")
         # Re-add at call time (as the CLI does): the prior tombstone now
         # belongs to a replaced incarnation.
-        _add_decision(store, "d1", created_at=timestamp())
-        assert store.find_deprecation("decision", "d1") is None
+        _add_decision(store, "d1", created_at=utc_now())
+        records = store.get_deprecations_for_entry("decision", "d1")
+        assert len(records) == 1
+        assert records[0]["reason"] == "old death"
         assert store.is_deprecated("decision", "d1") is False
 
 

@@ -11,6 +11,8 @@ from typing import Any
 
 from rich.box import SIMPLE_HEAD
 from rich.console import Console, Group as _Group
+from rich.markdown import Markdown as _Markdown
+from rich.markup import escape as _escape
 from rich.panel import Panel as _Panel
 from rich.rule import Rule as _Rule
 from rich.table import Table as _Table
@@ -89,7 +91,6 @@ TABLE_KWARGS: dict[str, Any] = {
     "show_header": True,
 }
 
-# Table for key-value data (no header row, two columns)
 KV_TABLE_KWARGS: dict[str, Any] = {
     "box": SIMPLE_HEAD,
     "show_header": False,
@@ -143,6 +144,16 @@ def rule(style: str = C_BORDER) -> _Rule:
 def text(markup: str, **kwargs: Any) -> _Text:
     """Build a Rich Text object from markup string."""
     return _Text.from_markup(markup, **kwargs)
+
+
+def markdown(source: str) -> _Markdown:
+    """Build a sanitized Markdown renderable."""
+    return _Markdown(sanitize(source))
+
+
+def escape(value: str) -> str:
+    """Escape Rich markup in user-supplied text."""
+    return _escape(value)
 
 
 STATUS_OK: str = "[OK]"

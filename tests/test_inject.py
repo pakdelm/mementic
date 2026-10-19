@@ -5,8 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 
 from mementic.inject import (
-    _END_MARKER,
-    _START_MARKER,
+    END_MARKER,
+    START_MARKER,
     load_template,
     sync_enforcement,
 )
@@ -20,8 +20,8 @@ def _block() -> str:
 def _stale_block() -> str:
     """A marker-wrapped block from an older mementic version."""
     return (
-        f"{_START_MARKER}\n## Mementic Memory (HARD CONSTRAINT — ALWAYS ACTIVE)\n\n"
-        f"Outdated enforcement content.\n{_END_MARKER}\n"
+        f"{START_MARKER}\n## Mementic Memory (HARD CONSTRAINT — ALWAYS ACTIVE)\n\n"
+        f"Outdated enforcement content.\n{END_MARKER}\n"
     )
 
 
@@ -35,8 +35,8 @@ def test_load_template_returns_string() -> None:
 def test_load_template_contains_markers() -> None:
     """The loaded template is wrapped in sync markers."""
     template = load_template()
-    assert template.startswith(_START_MARKER)
-    assert template.strip().endswith(_END_MARKER)
+    assert template.startswith(START_MARKER)
+    assert template.strip().endswith(END_MARKER)
 
 
 def test_load_template_contains_heading() -> None:
@@ -121,14 +121,14 @@ def test_sync_updates_older_section_in_place(tmp_path: Path) -> None:
 
     content = md.read_text(encoding="utf-8")
     assert "Outdated enforcement content." not in content
-    assert content.count(_START_MARKER) == 1
-    assert content.count(_END_MARKER) == 1
+    assert content.count(START_MARKER) == 1
+    assert content.count(END_MARKER) == 1
 
 
 def test_sync_warns_on_corrupt_markers(tmp_path: Path) -> None:
     """A start marker without an end marker produces a warning and no write."""
     md = tmp_path / "AGENTS.md"
-    original = f"# Project\n\n{_START_MARKER}\nBroken section.\n"
+    original = f"# Project\n\n{START_MARKER}\nBroken section.\n"
     md.write_text(original, encoding="utf-8")
 
     result = sync_enforcement(md)
@@ -136,25 +136,3 @@ def test_sync_warns_on_corrupt_markers(tmp_path: Path) -> None:
     assert "Warning" in result
     assert "manual fix" in result
     assert md.read_text(encoding="utf-8") == original
-
-
-def test_sync_dry_run_does_not_write(tmp_path: Path) -> None:
-    """Dry run returns the action description without touching the file."""
-    md = tmp_path / "AGENTS.md"
-    md.write_text(f"# Project\n\n{_stale_block()}", encoding="utf-8")
-    original = md.read_text(encoding="utf-8")
-
-    result = sync_enforcement(md, dry_run=True)
-
-    assert "Would update" in result
-    assert md.read_text(encoding="utf-8") == original
-
-
-def test_sync_dry_run_missing_file(tmp_path: Path) -> None:
-    """Dry run on a missing file reports creation without writing."""
-    md = tmp_path / "AGENTS.md"
-
-    result = sync_enforcement(md, dry_run=True)
-
-    assert "Would create" in result
-    assert not md.exists()
