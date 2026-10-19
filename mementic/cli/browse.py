@@ -297,9 +297,3 @@ def history(
             title=f"History: {escape(entry_id)}",
         )
     )
-
-
-def register(app: typer.Typer) -> None:
-    """Register the list command group and history command."""
-    app.add_typer(list_app, name="list")
-    app.command()(history)

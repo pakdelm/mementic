@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import typer
-
 from mementic.cli import context
 from mementic.console import (
     COLOR_DIM,
@@ -64,8 +62,3 @@ def init() -> None:
             title="Mementic initialized",
         )
     )
-
-
-def register(app: typer.Typer) -> None:
-    """Register the init command."""
-    app.command()(init)

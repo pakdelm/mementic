@@ -73,8 +73,3 @@ def deprecate(
 
     if errors:
         raise typer.Exit(code=1)
-
-
-def register(app: typer.Typer) -> None:
-    """Register the deprecate command."""
-    app.command()(deprecate)

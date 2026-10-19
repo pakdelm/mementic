@@ -11,20 +11,6 @@ import json
 import typer
 
 from mementic.cli import context
-from mementic.console import (
-    COLOR_DIM,
-    COLOR_HEADER,
-    COLOR_ID,
-    console,
-    escape,
-    kv_table,
-    markdown,
-    panel,
-    rule,
-    sanitize,
-    table,
-    text,
-)
 from mementic.context import (
     DEFAULT_EVOLUTION_MAX_TOKENS,
     build_context_pack,
@@ -33,6 +19,7 @@ from mementic.context import (
     format_file_history_json,
     split_pack_budget,
 )
+from mementic.text import sanitize
 
 query_app = typer.Typer(help="Search and retrieve from the knowledge graph")
 
@@ -100,6 +87,16 @@ def keywords(
     if compact:
         typer.echo(sanitize(result.text))
         return
+
+    from mementic.console import (
+        COLOR_DIM,
+        console,
+        escape,
+        markdown,
+        panel,
+        rule,
+        text,
+    )
 
     summary = text(
         f"[{COLOR_DIM}]{stats.shown_constraints} of {stats.matched_constraints} constraints, "
@@ -169,6 +166,9 @@ def file(
     if compact:
         typer.echo(sanitize(evolution_text))
         return
+
+    from mementic.console import console, escape, markdown, panel
+
     console.print(
         panel(markdown(evolution_text), title=f"File history: {escape(path)}")
     )
@@ -184,6 +184,16 @@ def search(
 
     Deprecated entries are included so retired rules remain findable.
     """
+    from mementic.console import (
+        COLOR_HEADER,
+        COLOR_ID,
+        console,
+        escape,
+        panel,
+        table,
+        text,
+    )
+
     with context.resolve_store() as store:
         all_decisions = store.get_all_decisions()
         all_constraints = store.get_all_constraints()
@@ -235,6 +245,8 @@ def search(
 @query_app.command()
 def stats() -> None:
     """Show graph statistics."""
+    from mementic.console import console, kv_table, panel
+
     with context.resolve_store() as store:
         graph_stats = store.stats()
     stats_table = kv_table()
@@ -249,8 +261,3 @@ def stats() -> None:
     for key, value in graph_stats.items():
         stats_table.add_row(labels.get(key, key.title()), str(value))
     console.print(panel(stats_table, title="Graph statistics"))
-
-
-def register(app: typer.Typer) -> None:
-    """Register the query command group."""
-    app.add_typer(query_app, name="query")
