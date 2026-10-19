@@ -94,8 +94,9 @@ def word_overlap(text_a: str, text_b: str) -> float:
 def clean_entity_path(raw: str) -> str:
     """Strip trailing ``::symbol`` or ``:symbol`` qualifiers from a path.
 
-    Qualified symbols may contain dots (``Handler.handle``). A Windows drive
-    prefix such as ``C:\\path`` is not a qualifier and is preserved.
+    Qualified symbols may contain dots (``Handler.handle``). A leading
+    ``C:`` is a Windows drive reference, not a qualifier, so a drive-relative
+    path such as ``C:src`` is preserved.
 
     Args:
         raw: Stored entity path, optionally suffixed with a symbol.
@@ -104,9 +105,12 @@ def clean_entity_path(raw: str) -> str:
         The path without its symbol qualifier.
     """
     clean = re.sub(r"::[A-Za-z_][\w.]*$", "", raw)
-    if re.match(r"^[A-Za-z]:[\\/]", clean):
+    match = re.search(r":[A-Za-z_][\w.]*$", clean)
+    if match is None:
         return clean
-    return re.sub(r":[A-Za-z_][\w.]*$", "", clean)
+    if match.start() == 1 and clean[0].isalpha():
+        return clean
+    return clean[: match.start()]
 
 
 class EntryWriter:

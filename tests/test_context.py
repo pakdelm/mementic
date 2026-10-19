@@ -19,6 +19,7 @@ from mementic.context import (
     document_frequencies,
     drop_dead_path_entries,
     format_evolution,
+    format_file_history_json,
     idf_weights,
     keyword_idf_score,
     rank_and_truncate,
@@ -437,6 +438,20 @@ class TestFormatEvolution:
         output = format_evolution("test.py", decisions, max_tokens=9999)
 
         assert "more decisions omitted" not in output
+
+
+class TestFormatFileHistoryJson:
+    def test_preserves_caller_decision_order(self) -> None:
+        """Decisions serialize in the order the store returned them."""
+        decisions = [
+            d(make_decision(id="d-old", ts="2023-01-01T00:00:00Z"), 3),
+            d(make_decision(id="d-new", ts="2025-01-01T00:00:00Z"), 1),
+        ]
+
+        data = format_file_history_json("src/foo.py", decisions, [])
+
+        assert [entry["id"] for entry in data["decisions"]] == ["d-old", "d-new"]
+        assert data["file"] == "src/foo.py"
 
 
 class TestCompactConstraintLine:

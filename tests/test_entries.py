@@ -65,6 +65,9 @@ def test_word_overlap_partial_sets() -> None:
         ("src/foo.py:handler", "src/foo.py"),
         ("C:\\src\\foo.py", "C:\\src\\foo.py"),
         ("C:/src/foo.py", "C:/src/foo.py"),
+        ("C:\\src\\foo.py:handler", "C:\\src\\foo.py"),
+        ("C:\\src\\foo.py::Handler.handle", "C:\\src\\foo.py"),
+        ("C:relative.py", "C:relative.py"),
     ],
 )
 def test_clean_entity_path_strips_symbol_qualifiers(

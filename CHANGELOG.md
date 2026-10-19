@@ -42,8 +42,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Path liveness fix.** `query file` and `list entities --stale` resolve
   repo-relative paths against the repo root instead of the process CWD.
 - **Dead code removed.** Legacy `audit.jsonl` fallback and path helpers,
-  `format_memory_context`, `resolve_repo_name`, `timestamp`, and
-  `inject.dry_run`.
+  `format_memory_context`, `resolve_repo_name`, `timestamp`, `inject.dry_run`,
+  and the `scripts/probe_packs.py` context-pack probe harness.
 - **Relational storage simplification (Spec 29, schema v5).** Replaced the
   GraphStore hybrid (in-memory NetworkX graph serialized into SQLite payloads,
   full-graph rewrite per mutation) with a pure relational schema accessed

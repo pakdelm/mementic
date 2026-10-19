@@ -146,6 +146,9 @@ def format_file_history_json(
 ) -> dict:
     """Produce a JSON-serializable file-history view.
 
+    Decisions and constraints are emitted in the order given, which for the
+    CLI is the store's chronological order.
+
     Args:
         entity_path: Path being traced.
         decisions: ``(decision, overlap)`` tuples.
@@ -154,12 +157,8 @@ def format_file_history_json(
     Returns:
         Dict with ``summary``, ``file``, ``decisions``, and ``constraints``.
     """
-    ordered = sorted(
-        decisions, key=lambda pair: pair[0].created_at, reverse=True
-    )
-    ordered = sorted(ordered, key=lambda pair: pair[1], reverse=True)
     decisions_json: list[dict] = []
-    for decision, _ in ordered:
+    for decision, _ in decisions:
         rationale = decision.rationale
         if len(rationale) > _RATIONALE_MAX_CHARS:
             rationale = rationale[:_RATIONALE_MAX_CHARS] + "..."

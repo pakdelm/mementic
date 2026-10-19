@@ -84,8 +84,8 @@ class MementicStore:
 
     With ``read_only=True`` the store opens the file through a SQLite
     ``mode=ro`` URI: it never creates directories or database files and any
-    write attempt fails at the driver level, so read-only tooling (e.g. the
-    probe harness) structurally cannot mutate a database.
+    write attempt fails at the driver level, so read-only tooling
+    structurally cannot mutate a database.
     """
 
     def __init__(self, db_path: str | Path, *, read_only: bool = False) -> None:
