@@ -24,7 +24,11 @@ def status() -> None:
     """Show health checklist for mementic."""
     paths = context.resolve_paths()
     store = context.try_open_store(paths)
-    items = check_health(store, repo_path=paths.base_dir)
+    try:
+        items = check_health(store, repo_path=paths.base_dir)
+    finally:
+        if store is not None:
+            store.close()
 
     health_table = table(show_header=False, show_edge=False, padding=(0, 1))
     health_table.add_column("Status", width=7)

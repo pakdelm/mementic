@@ -445,6 +445,21 @@ def test_query_stats_runs_clean_on_seeded_graph(project_dir: Path) -> None:
     assert "Graph statistics" in _text(result)
 
 
+def test_cli_command_closes_its_store(
+    project_dir: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    closed: list[MementicStore] = []
+    original_close = MementicStore.close
+
+    def tracking_close(self: MementicStore) -> None:
+        closed.append(self)
+        original_close(self)
+
+    monkeypatch.setattr(MementicStore, "close", tracking_close)
+    _ok("query", "stats")
+    assert closed
+
+
 def test_list_decisions_shows_seeded_entry(project_dir: Path) -> None:
     _ok("add", "decision", "Use Jwt Auth",
         "-r", "Jwt authentication guards every endpoint")

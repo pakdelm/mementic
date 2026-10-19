@@ -34,12 +34,12 @@ def deprecate(
     deprecated entries remain listed for history but are excluded from
     mementic memory queries.
     """
-    store = context.resolve_store()
-    try:
-        results = EntryWriter(store).deprecate_many(ids, reason)
-    except (sqlite3.Error, OSError) as exc:
-        typer.echo(f"Error: {exc}", err=True)
-        raise typer.Exit(code=1) from exc
+    with context.resolve_store() as store:
+        try:
+            results = EntryWriter(store).deprecate_many(ids, reason)
+        except (sqlite3.Error, OSError) as exc:
+            typer.echo(f"Error: {exc}", err=True)
+            raise typer.Exit(code=1) from exc
 
     deprecated = sum(
         1 for result in results if result.outcome is DeprecateOutcome.DEPRECATED

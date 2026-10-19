@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Generator
 
 import pytest
 
@@ -19,9 +20,11 @@ from mementic.store import MementicStore
 
 
 @pytest.fixture
-def store() -> MementicStore:
+def store() -> Generator[MementicStore, None, None]:
     """Fresh in-memory store."""
-    return MementicStore(db_path=":memory:")
+    s = MementicStore(db_path=":memory:")
+    yield s
+    s.close()
 
 
 def _seed_decision(

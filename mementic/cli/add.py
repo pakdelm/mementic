@@ -30,16 +30,16 @@ def decision(
     accepted, near-identical content is skipped as a duplicate, and different
     content deprecates the existing entry before accepting the new one.
     """
-    store = context.resolve_store()
-    try:
-        result = EntryWriter(store).add_decision(
-            title=title,
-            rationale=rationale,
-            paths=entities or [],
-        )
-    except (ValueError, sqlite3.Error, OSError) as exc:
-        typer.echo(f"Error: {exc}", err=True)
-        raise typer.Exit(code=1) from exc
+    with context.resolve_store() as store:
+        try:
+            result = EntryWriter(store).add_decision(
+                title=title,
+                rationale=rationale,
+                paths=entities or [],
+            )
+        except (ValueError, sqlite3.Error, OSError) as exc:
+            typer.echo(f"Error: {exc}", err=True)
+            raise typer.Exit(code=1) from exc
     console.print(text(add_summary(result.kind, result.entry_id, result.outcome)))
 
 
@@ -62,20 +62,20 @@ def constraint(
     accepted, near-identical content is skipped as a duplicate, and different
     content deprecates the existing entry before accepting the new one.
     """
-    store = context.resolve_store()
-    try:
-        result = EntryWriter(store).add_constraint(
-            description=description,
-            paths=entities,
-            enforced_by=decision_id or "",
-            rule_id=rule_id,
-        )
-    except MissingDecisionError as exc:
-        typer.echo(f"Error: {exc}.", err=True)
-        raise typer.Exit(code=1) from exc
-    except (ValueError, sqlite3.Error, OSError) as exc:
-        typer.echo(f"Error: {exc}", err=True)
-        raise typer.Exit(code=1) from exc
+    with context.resolve_store() as store:
+        try:
+            result = EntryWriter(store).add_constraint(
+                description=description,
+                paths=entities,
+                enforced_by=decision_id or "",
+                rule_id=rule_id,
+            )
+        except MissingDecisionError as exc:
+            typer.echo(f"Error: {exc}.", err=True)
+            raise typer.Exit(code=1) from exc
+        except (ValueError, sqlite3.Error, OSError) as exc:
+            typer.echo(f"Error: {exc}", err=True)
+            raise typer.Exit(code=1) from exc
     console.print(text(add_summary(result.kind, result.entry_id, result.outcome)))
 
 

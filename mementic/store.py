@@ -22,6 +22,7 @@ from collections import deque
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
+from types import TracebackType
 from urllib.parse import quote
 
 from mementic.models import Constraint, Decision
@@ -92,30 +93,47 @@ class MementicStore:
         self._read_only = read_only
         self._in_transaction = False
         self._conn: sqlite3.Connection | None = None
-        if str(db_path) != ":memory:":
-            if read_only:
-                uri = (
-                    "file:"
-                    + quote(self._db_path.resolve().as_posix(), safe="/:")
-                    + "?mode=ro"
-                )
-                self._conn = sqlite3.connect(uri, uri=True)
+        try:
+            if str(db_path) != ":memory:":
+                if read_only:
+                    uri = (
+                        "file:"
+                        + quote(self._db_path.resolve().as_posix(), safe="/:")
+                        + "?mode=ro"
+                    )
+                    self._conn = sqlite3.connect(uri, uri=True)
+                else:
+                    self._db_path.parent.mkdir(parents=True, exist_ok=True)
+                    self._conn = sqlite3.connect(str(self._db_path))
             else:
-                self._db_path.parent.mkdir(parents=True, exist_ok=True)
-                self._conn = sqlite3.connect(str(self._db_path))
-        else:
-            if read_only:
-                raise ValueError("read_only=True requires a file-backed database")
-            self._conn = sqlite3.connect(":memory:")
-        self._conn.row_factory = sqlite3.Row
-        self._conn.execute("PRAGMA foreign_keys=ON")
-        self._ensure_schema()
+                if read_only:
+                    raise ValueError("read_only=True requires a file-backed database")
+                self._conn = sqlite3.connect(":memory:")
+            self._conn.row_factory = sqlite3.Row
+            self._conn.execute("PRAGMA foreign_keys=ON")
+            self._ensure_schema()
+        except BaseException:
+            self.close()
+            raise
 
     def close(self) -> None:
         """Close the SQLite connection. Safe to call multiple times."""
         if self._conn is not None:
             self._conn.close()
             self._conn = None
+
+    def __enter__(self) -> MementicStore:
+        """Return this store for use as a context manager."""
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
+        """Close the connection when the ``with`` block exits."""
+        self.close()
 
     def _conn_or_raise(self) -> sqlite3.Connection:
         """Return the open connection, or raise if the store is closed."""

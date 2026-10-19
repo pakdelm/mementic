@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import warnings
 from collections.abc import Generator
 from pathlib import Path
 
@@ -118,19 +119,19 @@ def _raw_conn(store: MementicStore) -> sqlite3.Connection:
 class TestSchema:
     def test_fresh_database_gets_schema_v5(self, tmp_path: Path) -> None:
         db = tmp_path / "graph.db"
-        store = MementicStore(db_path=db)
-        version = _raw_conn(store).execute("PRAGMA user_version").fetchone()[0]
-        assert version == SCHEMA_VERSION == 5
-        tables = {
-            r["name"]
-            for r in _raw_conn(store).execute(
-                "SELECT name FROM sqlite_master WHERE type='table'"
-            )
-        }
-        assert {"decisions", "constraints", "entry_paths", "deprecations",
-                "audit_log"}.issubset(tables)
-        # Legacy v4 tables are gone.
-        assert "entities" not in tables and "edges" not in tables
+        with MementicStore(db_path=db) as store:
+            version = _raw_conn(store).execute("PRAGMA user_version").fetchone()[0]
+            assert version == SCHEMA_VERSION == 5
+            tables = {
+                r["name"]
+                for r in _raw_conn(store).execute(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                )
+            }
+            assert {"decisions", "constraints", "entry_paths", "deprecations",
+                    "audit_log"}.issubset(tables)
+            # Legacy v4 tables are gone.
+            assert "entities" not in tables and "edges" not in tables
 
     def test_no_status_column_anywhere(self, store: MementicStore) -> None:
         for table in ("decisions", "constraints"):
@@ -155,6 +156,36 @@ class TestSchema:
         conn.close()
         with pytest.raises(RuntimeError, match="not auto-upgraded"):
             MementicStore(db_path=db)
+
+
+class TestConnectionLifecycle:
+    def test_context_manager_closes_connection(self, tmp_path: Path) -> None:
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            with MementicStore(db_path=tmp_path / "graph.db") as store:
+                assert store._conn is not None
+        assert store._conn is None
+        assert [w for w in caught if issubclass(w.category, ResourceWarning)] == []
+
+    def test_context_manager_closes_on_exception(self, tmp_path: Path) -> None:
+        store = MementicStore(db_path=tmp_path / "graph.db")
+        with pytest.raises(RuntimeError, match="boom"):
+            with store:
+                raise RuntimeError("boom")
+        assert store._conn is None
+
+    def test_failed_open_closes_connection(self, tmp_path: Path) -> None:
+        db = tmp_path / "old.db"
+        conn = sqlite3.connect(str(db))
+        conn.execute("CREATE TABLE decisions (id TEXT PRIMARY KEY)")
+        conn.execute("PRAGMA user_version = 4")
+        conn.commit()
+        conn.close()
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            with pytest.raises(RuntimeError, match="not auto-upgraded"):
+                MementicStore(db_path=db)
+        assert [w for w in caught if issubclass(w.category, ResourceWarning)] == []
 
 
 class TestEntryCrud:

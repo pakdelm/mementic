@@ -66,9 +66,9 @@ def keywords(
         raise typer.Exit(code=2)
 
     paths = context.resolve_paths()
-    store = context.resolve_store(paths)
-    constraints = store.get_live_constraints()
-    decisions = store.get_live_decisions()
+    with context.resolve_store(paths) as store:
+        constraints = store.get_live_constraints()
+        decisions = store.get_live_decisions()
     max_constraint_tokens, max_decision_tokens = split_pack_budget(max_tokens)
 
     if json_output:
@@ -141,13 +141,13 @@ def file(
         )
         raise typer.Exit(code=2)
     paths = context.resolve_paths()
-    store = context.resolve_store(paths)
-    constraints = store.get_constraints_for_path(
-        path, prefix=prefix, path_exists=paths.entity_exists
-    )
-    decisions = store.get_decisions_for_path(
-        path, prefix=prefix, path_exists=paths.entity_exists
-    )
+    with context.resolve_store(paths) as store:
+        constraints = store.get_constraints_for_path(
+            path, prefix=prefix, path_exists=paths.entity_exists
+        )
+        decisions = store.get_decisions_for_path(
+            path, prefix=prefix, path_exists=paths.entity_exists
+        )
 
     if json_output:
         result = format_file_history_json(path, decisions, constraints)
@@ -184,9 +184,9 @@ def search(
 
     Deprecated entries are included so retired rules remain findable.
     """
-    store = context.resolve_store()
-    all_decisions = store.get_all_decisions()
-    all_constraints = store.get_all_constraints()
+    with context.resolve_store() as store:
+        all_decisions = store.get_all_decisions()
+        all_constraints = store.get_all_constraints()
     needle = term.lower()
     matching_decisions = [
         decision
@@ -235,8 +235,8 @@ def search(
 @query_app.command()
 def stats() -> None:
     """Show graph statistics."""
-    store = context.resolve_store()
-    graph_stats = store.stats()
+    with context.resolve_store() as store:
+        graph_stats = store.stats()
     stats_table = kv_table()
     stats_table.add_column("Metric", style="bold", width=20)
     stats_table.add_column("Value", justify="right")

@@ -54,9 +54,8 @@ def decisions(
 ) -> None:
     """List architectural decisions in a scannable table."""
     _validate_status(status)
-    store = context.resolve_store()
-
-    pairs = store.get_decisions_with_liveness()
+    with context.resolve_store() as store:
+        pairs = store.get_decisions_with_liveness()
     total = len(pairs)
     if status == "deprecated":
         pairs = [pair for pair in pairs if pair[1] is not None]
@@ -115,9 +114,8 @@ def constraints(
 ) -> None:
     """List constraints in a scannable table."""
     _validate_status(status)
-    store = context.resolve_store()
-
-    pairs = store.get_constraints_with_liveness()
+    with context.resolve_store() as store:
+        pairs = store.get_constraints_with_liveness()
     total = len(pairs)
     if status == "deprecated":
         pairs = [pair for pair in pairs if pair[1] is not None]
@@ -183,9 +181,8 @@ def entities(
 ) -> None:
     """List referenced file paths in a scannable table."""
     paths = context.resolve_paths()
-    store = context.resolve_store(paths)
-
-    all_paths = store.get_all_paths()
+    with context.resolve_store(paths) as store:
+        all_paths = store.get_all_paths()
     total = len(all_paths)
     if stale:
         all_paths = [path for path in all_paths if not paths.entity_exists(path)]
@@ -214,10 +211,21 @@ def history(
     ),
 ) -> None:
     """Show deprecation records: one entry's lifecycle chain or recent records."""
-    store = context.resolve_store()
+    rows: list = []
+    records: list = []
+    with context.resolve_store() as store:
+        if entry_id is None:
+            rows = store.get_all_deprecations()
+        else:
+            entry_type = store.get_entry_type(entry_id)
+            for candidate in ([entry_type] if entry_type else []) + (
+                ["decision", "constraint"] if not entry_type else []
+            ):
+                records = store.get_replacement_chain(candidate, entry_id)
+                if records:
+                    break
 
     if entry_id is None:
-        rows = store.get_all_deprecations()
         if not rows:
             console.print(text("No deprecation history recorded yet."))
             return
@@ -240,15 +248,6 @@ def history(
             panel(dep_table, title=f"Deprecation history ({len(rows)} of {total})")
         )
         return
-
-    entry_type = store.get_entry_type(entry_id)
-    records: list = []
-    for candidate in ([entry_type] if entry_type else []) + (
-        ["decision", "constraint"] if not entry_type else []
-    ):
-        records = store.get_replacement_chain(candidate, entry_id)
-        if records:
-            break
 
     if not records:
         console.print(text(f"No deprecation history for '{escape(entry_id)}'."))
