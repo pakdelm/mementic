@@ -21,6 +21,7 @@ from typing import NoReturn
 ROOT = Path(__file__).resolve().parent.parent
 PYPROJECT = ROOT / "pyproject.toml"
 CHANGELOG = ROOT / "CHANGELOG.md"
+LOCKFILE = ROOT / "uv.lock"
 
 SEMVER_RE = re.compile(r"^\d+\.\d+\.\d+$")
 VERSION_RE = re.compile(r'^version\s*=\s*"([^"]+)"', re.MULTILINE)
@@ -46,9 +47,7 @@ def dry(msg: str) -> None:
 def run(*args: str, capture: bool = False) -> subprocess.CompletedProcess[str]:
     """Run a command from the repo root. Exits on failure."""
     try:
-        return subprocess.run(
-            args, cwd=ROOT, check=True, capture_output=capture, text=True
-        )
+        return subprocess.run(args, cwd=ROOT, check=True, capture_output=capture, text=True)
     except subprocess.CalledProcessError as e:
         die(f"Command failed: {' '.join(args)}\n{e.stderr.strip()}")
 
@@ -118,6 +117,18 @@ def bump_pyproject(version: str, dry_run: bool) -> None:
     ok(f'pyproject.toml -> version = "{version}"')
 
 
+def refresh_lockfile(dry_run: bool) -> None:
+    """Regenerate uv.lock so the workspace package records the new version."""
+    if not LOCKFILE.exists():
+        warn("uv.lock not found; skipping lockfile refresh.")
+        return
+    if dry_run:
+        dry("Would run 'uv lock' to refresh uv.lock")
+        return
+    run("uv", "lock")
+    ok("uv.lock -> refreshed")
+
+
 def get_last_version_tag() -> str | None:
     """Return the most recent v* tag reachable from main, or None."""
     result = run("git", "tag", "--sort=-creatordate", "--merged", "main", capture=True)
@@ -171,7 +182,9 @@ def update_changelog(version: str, dry_run: bool) -> None:
 
     first_version = re.search(r"^## \[", content, re.MULTILINE)
     if first_version:
-        new_content = content[: first_version.start()] + new_section + content[first_version.start() :]
+        new_content = (
+            content[: first_version.start()] + new_section + content[first_version.start() :]
+        )
     else:
         new_content = content.rstrip() + "\n\n" + new_section
 
@@ -217,6 +230,7 @@ def main() -> None:
 
     # -- Bump & changelog --
     bump_pyproject(version, dry_run)
+    refresh_lockfile(dry_run)
     update_changelog(version, dry_run)
 
     if dry_run:
@@ -226,7 +240,9 @@ def main() -> None:
         return
 
     # -- Commit & tag --
-    run("git", "add", "pyproject.toml", "CHANGELOG.md")
+    release_paths = ("pyproject.toml", "uv.lock", "CHANGELOG.md")
+    staged = [path for path in release_paths if (ROOT / path).exists()]
+    run("git", "add", *staged)
     run("git", "commit", "--signoff", "-m", f"Release {tag}")
     ok(f"Committed: Release {tag}")
     run("git", "tag", tag)
