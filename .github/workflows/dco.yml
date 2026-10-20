@@ -24,8 +24,18 @@ jobs:
           # out) have no author sign-off and would fail every PR whose
           # branch needs a real merge with base.
           for commit in $(git rev-list --no-merges "$base..HEAD"); do
-            if ! git show -s --format=%B "$commit" | grep -q '^Signed-off-by:'; then
-              echo "::error::Commit $commit is missing a Signed-off-by line: $(git show -s --format=%s "$commit")"
+            subject=$(git show -s --format=%s "$commit")
+            author_email=$(git show -s --format=%ae "$commit")
+            body=$(git show -s --format=%B "$commit")
+
+            if ! printf '%s\n' "$body" | grep -qi '^Signed-off-by:'; then
+              echo "::error::Commit $commit is missing a Signed-off-by line: $subject"
+              rc=1
+              continue
+            fi
+
+            if ! printf '%s\n' "$body" | grep -i '^Signed-off-by:' | grep -Fqi "<$author_email>"; then
+              echo "::error::Commit $commit has no Signed-off-by matching its author ($author_email): $subject"
               rc=1
             fi
           done
