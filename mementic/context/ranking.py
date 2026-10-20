@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 import re
 from collections.abc import Callable, Sequence
+from functools import lru_cache
 from typing import Any, TypeVar
 
 from mementic.models import Constraint, Decision
@@ -19,19 +20,46 @@ EntryT = TypeVar("EntryT", bound="Constraint | Decision")
 ItemT = TypeVar("ItemT", bound="Constraint | Decision")
 
 
-def _matches_keyword(field_text: str, keyword: str) -> bool:
-    """Return True when ``keyword`` occurs at a word boundary in ``field_text``."""
-    return re.search(rf"\b{re.escape(keyword.lower())}", field_text.lower()) is not None
+@lru_cache(maxsize=256)
+def _keyword_pattern(keyword: str) -> re.Pattern[str]:
+    """Compile and cache the case-insensitive word-boundary pattern."""
+    return re.compile(rf"\b{re.escape(keyword.lower())}")
+
+
+def _matches_keyword_lower(lower_text: str, keyword: str) -> bool:
+    """Return True when ``keyword`` occurs at a word boundary in lowercase text."""
+    return _keyword_pattern(keyword).search(lower_text) is not None
 
 
 def _searchable_fields(entry: Constraint | Decision) -> list[tuple[str, float]]:
-    """Return ``(field_text, field_weight)`` pairs for one entry."""
+    """Return lowercase ``(field_text, field_weight)`` pairs for one entry."""
     if isinstance(entry, Constraint):
-        return [(entry.description, FIELD_WEIGHT_DESCRIPTION)]
+        return [(entry.description.lower(), FIELD_WEIGHT_DESCRIPTION)]
     return [
-        (entry.title, FIELD_WEIGHT_TITLE),
-        (entry.rationale, FIELD_WEIGHT_RATIONALE),
+        (entry.title.lower(), FIELD_WEIGHT_TITLE),
+        (entry.rationale.lower(), FIELD_WEIGHT_RATIONALE),
     ]
+
+
+def _keyword_field_weights(
+    entry: Constraint | Decision,
+    keywords: list[str],
+) -> dict[str, float]:
+    """Return the strongest matching field weight per keyword for one entry."""
+    fields = _searchable_fields(entry)
+    weights: dict[str, float] = {}
+    for keyword in keywords:
+        weight = max(
+            (
+                field_weight
+                for field_text, field_weight in fields
+                if _matches_keyword_lower(field_text, keyword)
+            ),
+            default=0.0,
+        )
+        if weight > 0.0:
+            weights[keyword] = weight
+    return weights
 
 
 def document_frequencies(
@@ -49,11 +77,9 @@ def document_frequencies(
     """
     counts: dict[str, int] = dict.fromkeys(keywords, 0)
     for entry in entries:
+        matched = _keyword_field_weights(entry, keywords)
         for keyword in keywords:
-            if any(
-                _matches_keyword(field_text, keyword)
-                for field_text, _ in _searchable_fields(entry)
-            ):
+            if keyword in matched:
                 counts[keyword] += 1
     return counts
 
@@ -94,17 +120,8 @@ def keyword_idf_score(
     if not keywords:
         return 0.0
     total = 0.0
-    for keyword in keywords:
-        weight = max(
-            (
-                field_weight
-                for field_text, field_weight in _searchable_fields(entry)
-                if _matches_keyword(field_text, keyword)
-            ),
-            default=0.0,
-        )
-        if weight > 0.0:
-            total += idf.get(keyword, 0.0) * weight
+    for keyword, weight in _keyword_field_weights(entry, keywords).items():
+        total += idf.get(keyword, 0.0) * weight
     return total / len(keywords)
 
 

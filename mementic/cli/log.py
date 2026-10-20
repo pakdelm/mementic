@@ -88,8 +88,3 @@ def log(
             ),
         )
     console.print(panel(audit_table, title=f"Audit log (last {n})"))
-
-
-def register(app: typer.Typer) -> None:
-    """Register the log command."""
-    app.command()(log)

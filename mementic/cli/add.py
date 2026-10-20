@@ -77,8 +77,3 @@ def constraint(
             typer.echo(f"Error: {exc}", err=True)
             raise typer.Exit(code=1) from exc
     console.print(text(add_summary(result.kind, result.entry_id, result.outcome)))
-
-
-def register(app: typer.Typer) -> None:
-    """Register the add command group."""
-    app.add_typer(add_app, name="add")

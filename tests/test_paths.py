@@ -52,6 +52,46 @@ def test_resolve_base_dir_uses_git_toplevel_from_subdir(
     assert graph_db_path(resolved) == tmp_path / ".mementic" / "graph.db"
 
 
+def test_resolve_base_dir_uses_memory_marker_from_subdir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A project memory database anchors the project even outside Git."""
+    (tmp_path / MEMORY_DIR_NAME).mkdir()
+    (tmp_path / MEMORY_DIR_NAME / GRAPH_DB_NAME).write_text("", encoding="utf-8")
+    nested = tmp_path / "src" / "deep"
+    nested.mkdir(parents=True)
+    monkeypatch.chdir(nested)
+
+    assert resolve_base_dir() == tmp_path.resolve()
+
+
+def test_resolve_base_dir_uses_git_file_marker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A .git file (worktree or submodule) counts as a repository root."""
+    (tmp_path / ".git").write_text("gitdir: /elsewhere\n", encoding="utf-8")
+    nested = tmp_path / "src"
+    nested.mkdir()
+    monkeypatch.chdir(nested)
+
+    assert resolve_base_dir() == tmp_path.resolve()
+
+
+def test_resolve_base_dir_stops_at_nearest_marker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A nested repository wins over an outer marker."""
+    outer = tmp_path / "outer"
+    inner = outer / "inner"
+    nested = inner / "src"
+    nested.mkdir(parents=True)
+    (outer / ".git").mkdir()
+    (inner / ".git").mkdir()
+    monkeypatch.chdir(nested)
+
+    assert resolve_base_dir() == inner.resolve()
+
+
 def test_project_paths_resolves_store_paths_against_store_root(
     tmp_path: Path,
 ) -> None:
@@ -84,3 +124,15 @@ def test_project_paths_returns_absolute_entities_unchanged(tmp_path: Path) -> No
     paths = ProjectPaths(base_dir=tmp_path / "repo", store_root=tmp_path / "repo")
 
     assert paths.entity_path(str(absolute)) == absolute
+
+
+def test_project_paths_caches_entity_exists(tmp_path: Path) -> None:
+    """Liveness checks are cached for the lifetime of one invocation."""
+    paths = ProjectPaths(base_dir=tmp_path, store_root=tmp_path)
+
+    assert paths.entity_exists("late.py") is False
+    (tmp_path / "late.py").write_text("", encoding="utf-8")
+    assert paths.entity_exists("late.py") is False
+
+    fresh = ProjectPaths(base_dir=tmp_path, store_root=tmp_path)
+    assert fresh.entity_exists("late.py") is True

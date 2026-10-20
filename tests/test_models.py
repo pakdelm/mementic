@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import fields
+
 from mementic.models import Constraint, Decision
 
 
@@ -19,10 +21,16 @@ def test_constraint_defaults_and_enforced_by() -> None:
     assert c.paths == []
 
 
-def test_decision_rejects_unknown_fields() -> None:
-    """Legacy v4 columns (status/source/modified_at) are gone from the model."""
+def test_models_have_only_v5_fields() -> None:
+    """Legacy v4 columns (status/source/modified_at) are gone from the models."""
     d = Decision(id="d-1", title="T", rationale="R",
                  created_at="2024-01-01T00:00:00Z")
-    assert "status" not in Decision.model_fields
+    assert "status" not in {field.name for field in fields(Decision)}
     assert not hasattr(d, "status")
-    assert "status" not in Constraint.model_fields
+    assert {field.name for field in fields(Constraint)} == {
+        "id",
+        "description",
+        "enforced_by",
+        "created_at",
+        "paths",
+    }

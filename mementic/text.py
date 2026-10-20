@@ -3,9 +3,60 @@
 from __future__ import annotations
 
 import re
+import sys
 from datetime import datetime
 
 _MAX_ENTITY_LIST_CHARS: int = 80
+
+UNICODE_FALLBACKS: dict[str, str] = {
+    "\u2014": "--",    # em dash
+    "\u2013": "-",     # en dash
+    "\u2018": "'",     # left single quote
+    "\u2019": "'",     # right single quote
+    "\u201c": '"',     # left double quote
+    "\u201d": '"',     # right double quote
+    "\u2022": "*",     # bullet
+    "\u2026": "...",   # ellipsis
+    "\u00a0": " ",     # non-breaking space
+    "\u2192": "->",    # right arrow
+    "\u2190": "<-",    # left arrow
+    "\u2264": "<=",    # less-than-or-equal
+    "\u2265": ">=",    # greater-than-or-equal
+    "\u00d7": "x",     # multiplication sign
+    "\u2020": "+",     # dagger
+    "\u2122": "(TM)",  # trademark
+}
+
+
+def sanitize(text: str) -> str:
+    """Replace Unicode characters with ASCII equivalents for terminal safety.
+
+    Graph data (descriptions, rationales from ADRs) can contain Unicode that
+    crashes legacy Windows codepages (cp1252). This function replaces known
+    problematic characters with ASCII fallbacks before the text is printed.
+
+    Args:
+        text: Potentially-Unicode input from graph data.
+
+    Returns:
+        ASCII-safe string with fallback substitutions.
+    """
+    for uni, ascii_fb in UNICODE_FALLBACKS.items():
+        text = text.replace(uni, ascii_fb)
+    return text
+
+
+def configure_utf8_streams() -> None:
+    """Force UTF-8 output on streams that support reconfiguration.
+
+    Rich output can carry graph-sourced text outside legacy Windows codepages
+    (cp1252). ``errors="replace"`` degrades truly unencodable characters to
+    ``?`` instead of raising ``UnicodeEncodeError``.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is not None:
+            reconfigure(encoding="utf-8", errors="replace")
 
 
 def format_timestamp(value: str) -> str:

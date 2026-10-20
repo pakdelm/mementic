@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import typer
-
 from mementic.cli import context
 from mementic.console import (
     COLOR_DIM,
@@ -51,8 +49,3 @@ def status() -> None:
             title="Status",
         )
     )
-
-
-def register(app: typer.Typer) -> None:
-    """Register the status command."""
-    app.command()(status)

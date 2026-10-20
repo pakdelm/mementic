@@ -7,10 +7,8 @@ directory it was invoked from.
 
 from __future__ import annotations
 
-import subprocess
+from dataclasses import dataclass, field
 from pathlib import Path
-
-from pydantic import BaseModel, ConfigDict
 
 MEMORY_DIR_NAME: str = ".mementic"
 GRAPH_DB_NAME: str = "graph.db"
@@ -19,23 +17,37 @@ GRAPH_DB_NAME: str = "graph.db"
 def resolve_base_dir() -> Path:
     """Return the stable repo root that owns this project's memory directory.
 
-    Uses ``git rev-parse --show-toplevel`` when available and falls back to
-    the resolved process CWD outside Git repositories or when Git is not
-    installed. Callers thread the returned root downward as ``base_dir``
-    so downstream consumers never depend on the process CWD.
+    Walks up from the process CWD to the nearest Git or mementic marker.
+    Falling back to ``git rev-parse --show-toplevel`` keeps environment
+    overrides (for example ``GIT_WORK_TREE``) working when no marker exists.
+    Callers thread the returned root downward as ``base_dir`` so downstream
+    consumers never depend on the process CWD.
     """
+    cwd = Path.cwd().resolve()
+    for candidate in (cwd, *cwd.parents):
+        memory_db = candidate / MEMORY_DIR_NAME / GRAPH_DB_NAME
+        if (candidate / ".git").exists() or memory_db.exists():
+            return candidate
+
+    return _git_toplevel() or cwd
+
+
+def _git_toplevel() -> Path | None:
+    """Return the Git toplevel for the current directory when Git knows one."""
+    import subprocess
+
     try:
         result = subprocess.run(
             ["git", "rev-parse", "--show-toplevel"],
             capture_output=True,
             text=True,
         )
-        if result.returncode == 0:
-            return Path(result.stdout.strip()).resolve()
     except FileNotFoundError:
-        pass
+        return None
 
-    return Path.cwd().resolve()
+    if result.returncode != 0:
+        return None
+    return Path(result.stdout.strip()).resolve()
 
 
 def memory_dir(base_dir: Path) -> Path:
@@ -62,7 +74,8 @@ def graph_db_path(base_dir: Path) -> Path:
     return memory_dir(base_dir) / GRAPH_DB_NAME
 
 
-class ProjectPaths(BaseModel):
+@dataclass(frozen=True, kw_only=True)
+class ProjectPaths:
     """Resolved paths for one CLI invocation.
 
     ``base_dir`` anchors repo-relative entity paths. ``store_root`` owns the
@@ -70,10 +83,11 @@ class ProjectPaths(BaseModel):
     separate lets a store live outside the work tree.
     """
 
-    model_config = ConfigDict(frozen=True)
-
     base_dir: Path
     store_root: Path
+    _exists_cache: dict[str, bool] = field(
+        default_factory=dict, init=False, repr=False, compare=False
+    )
 
     @classmethod
     def from_cwd(cls) -> ProjectPaths:
@@ -105,5 +119,14 @@ class ProjectPaths(BaseModel):
         return path if path.is_absolute() else self.base_dir / path
 
     def entity_exists(self, stored: str) -> bool:
-        """Return True when a stored entity path exists on disk."""
-        return self.entity_path(stored).exists()
+        """Return True when a stored entity path exists on disk.
+
+        Results are cached for the lifetime of one invocation; the CLI never
+        mutates the work tree mid-command, and context packs check the same
+        paths across decisions and constraints.
+        """
+        if stored in self._exists_cache:
+            return self._exists_cache[stored]
+        exists = self.entity_path(stored).exists()
+        self._exists_cache[stored] = exists
+        return exists
