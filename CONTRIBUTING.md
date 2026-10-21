@@ -65,6 +65,21 @@ Before submitting a pull request, ensure:
 5. Tests cover new functionality
 6. Follow existing code style (PEP 8, 100-char line limit, Google-style docstrings)
 7. Docker tests pass if the change touches the kit or container path (`uv run pytest -m docker -n 0`)
+8. CLA signed on your first contribution (see below)
+
+## CLA (Contributor License Agreement)
+
+Every contributor signs the [CLA](CLA.md) before their first pull request is
+merged. The CLA keeps your copyright but grants the Project Owner the
+relicensing rights the project needs to offer different licensing terms later.
+It is in addition to the DCO sign-off required on every commit.
+
+Sign by commenting on your first pull request:
+
+> I have read the CLA and I sign it.
+
+Corporate contributors must have an authorized representative sign on the
+entity's behalf. The Project Owner records the signature on the pull request.
 
 ## DCO (Developer Certificate of Origin)
 
