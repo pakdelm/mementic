@@ -26,6 +26,7 @@ RECIPE = KIT_DIR / "mementic.dockerfile"
 WRAPPER = KIT_DIR / "mementic"
 PACKAGE = ROOT / "mementic"
 PYPROJECT = ROOT / "pyproject.toml"
+LICENSE = ROOT / "LICENSE"
 
 
 def _ignore_build_context(directory: str, names: list[str]) -> set[str]:
@@ -46,6 +47,7 @@ def stage(dest: Path) -> Path:
     for source in (DESCRIPTOR, RECIPE, WRAPPER):
         shutil.copy2(source, dest / source.name)
     shutil.copy2(PYPROJECT, dest / "pyproject.toml")
+    shutil.copy2(LICENSE, dest / "LICENSE")
     package_dest = dest / "src" / "mementic"
     if package_dest.exists():
         shutil.rmtree(package_dest)

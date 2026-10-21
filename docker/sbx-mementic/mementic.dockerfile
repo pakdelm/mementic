@@ -3,6 +3,7 @@ FROM python:3.13-slim AS build
 ARG MEMENTIC_VERSION
 
 COPY pyproject.toml /src/pyproject.toml
+COPY LICENSE /src/LICENSE
 COPY src/mementic /src/mementic
 RUN pip install --no-cache-dir --target /opt/mementic /src
 RUN test -d "/opt/mementic/mementic-${MEMENTIC_VERSION}.dist-info"

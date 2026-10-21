@@ -70,6 +70,7 @@ def test_recipe_installs_from_the_staged_context() -> None:
 
     assert "ARG MEMENTIC_VERSION" in recipe
     assert "COPY pyproject.toml /src/pyproject.toml" in recipe
+    assert "COPY LICENSE /src/LICENSE" in recipe
     assert "COPY src/mementic /src/mementic" in recipe
     assert "pip install --no-cache-dir --target /opt/mementic /src" in recipe
     assert 'test -d "/opt/mementic/mementic-${MEMENTIC_VERSION}.dist-info"' in recipe
@@ -91,6 +92,7 @@ def test_stage_produces_the_recipe_sources(tmp_path: Path) -> None:
     assert (dest / "mementic.dockerfile").is_file()
     assert (dest / "mementic").is_file()
     assert (dest / "pyproject.toml").is_file()
+    assert (dest / "LICENSE").is_file()
     assert (dest / "src" / "mementic" / "__init__.py").is_file()
     assert not (dest / "src" / "mementic" / ".venv").exists()
     assert not (dest / "src" / "mementic" / "__pycache__").exists()
