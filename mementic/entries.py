@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import StrEnum
@@ -88,28 +87,6 @@ def word_overlap(text_a: str, text_b: str) -> float:
     return len(words_a & words_b) / len(words_a | words_b)
 
 
-def clean_entity_path(raw: str) -> str:
-    """Strip trailing ``::symbol`` or ``:symbol`` qualifiers from a path.
-
-    Qualified symbols may contain dots (``Handler.handle``). A leading
-    ``C:`` is a Windows drive reference, not a qualifier, so a drive-relative
-    path such as ``C:src`` is preserved.
-
-    Args:
-        raw: Stored entity path, optionally suffixed with a symbol.
-
-    Returns:
-        The path without its symbol qualifier.
-    """
-    clean = re.sub(r"::[A-Za-z_][\w.]*$", "", raw)
-    match = re.search(r":[A-Za-z_][\w.]*$", clean)
-    if match is None:
-        return clean
-    if match.start() == 1 and clean[0].isalpha():
-        return clean
-    return clean[: match.start()]
-
-
 class EntryWriter:
     """Record decisions, constraints, and deprecations against a store.
 
@@ -148,16 +125,14 @@ class EntryWriter:
         if not entry_id:
             raise ValueError("title must contain at least one letter or digit")
         with self._store.transaction():
-            outcome, tombstone_at = self._auto_resolve(
-                EntryKind.DECISION, entry_id, rationale
-            )
+            outcome, tombstone_at = self._auto_resolve(EntryKind.DECISION, entry_id, rationale)
             if outcome is not AddOutcome.DUPLICATE:
                 self._store.add_decision(
                     entry_id=entry_id,
                     title=title,
                     rationale=rationale,
                     created_at=self._successor_created_at(tombstone_at),
-                    paths=[clean_entity_path(path) for path in paths],
+                    paths=list(paths),
                 )
         return AddResult(
             kind=EntryKind.DECISION,
@@ -202,16 +177,14 @@ class EntryWriter:
             raise MissingDecisionError(enforced_by)
 
         with self._store.transaction():
-            outcome, tombstone_at = self._auto_resolve(
-                EntryKind.CONSTRAINT, entry_id, description
-            )
+            outcome, tombstone_at = self._auto_resolve(EntryKind.CONSTRAINT, entry_id, description)
             if outcome is not AddOutcome.DUPLICATE:
                 self._store.add_constraint(
                     entry_id=entry_id,
                     description=description,
                     enforced_by=enforced_by,
                     created_at=self._successor_created_at(tombstone_at),
-                    paths=[clean_entity_path(path) for path in paths],
+                    paths=list(paths),
                 )
         return AddResult(
             kind=EntryKind.CONSTRAINT,
@@ -287,9 +260,7 @@ class EntryWriter:
             return AddOutcome.REVIVED, stamp
 
         stored_content = (
-            existing.rationale
-            if isinstance(existing, Decision)
-            else existing.description
+            existing.rationale if isinstance(existing, Decision) else existing.description
         )
         if word_overlap(content, stored_content) >= DUPLICATE_OVERLAP_THRESHOLD:
             return AddOutcome.DUPLICATE, None

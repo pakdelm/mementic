@@ -20,6 +20,23 @@
    uv run mypy .
    ```
 
+### Docker and sbx tests
+
+The default test run excludes Docker tests. Run the docker marker explicitly:
+
+```sh
+uv run pytest -m docker -n 0
+```
+
+`scripts/sbx_smoke.py` is the manual Docker Sandboxes (sbx) smoke test:
+
+```sh
+uv run python scripts/sbx_smoke.py --layout both
+```
+
+It requires the `sbx` CLI and Docker with Buildx. Pass `--keep` to retain the
+sandbox and temporary workspace for inspection.
+
 ## Pull Request Checklist
 
 Before submitting a pull request, ensure:
@@ -30,6 +47,7 @@ Before submitting a pull request, ensure:
 4. No new dependencies without discussion
 5. Tests cover new functionality
 6. Follow existing code style (PEP 8, 100-char line limit, Google-style docstrings)
+7. Docker tests pass if the change touches the kit or container path (`uv run pytest -m docker -n 0`)
 
 ## DCO (Developer Certificate of Origin)
 

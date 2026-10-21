@@ -32,8 +32,7 @@ def keywords(
     max_tokens: int | None = typer.Option(
         None,
         "--max-tokens",
-        help="Total token budget for the pack; overrides both section "
-        "budgets proportionally",
+        help="Total token budget for the pack; overrides both section budgets proportionally",
     ),
     json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
     compact: bool = typer.Option(
@@ -115,9 +114,7 @@ def keywords(
 @query_app.command()
 def file(
     path: str = typer.Argument(..., help="File path to trace evolution for"),
-    prefix: bool = typer.Option(
-        False, "--prefix", help="Use prefix matching for entity paths"
-    ),
+    prefix: bool = typer.Option(False, "--prefix", help="Use prefix matching for entity paths"),
     max_tokens: int = typer.Option(
         DEFAULT_EVOLUTION_MAX_TOKENS,
         "--max-tokens",
@@ -138,30 +135,32 @@ def file(
         )
         raise typer.Exit(code=2)
     paths = context.resolve_paths()
+    try:
+        canonical_path = paths.canonical_entity_path(path)
+    except ValueError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
     with context.resolve_store(paths) as store:
         constraints = store.get_constraints_for_path(
-            path, prefix=prefix, path_exists=paths.entity_exists
+            canonical_path, prefix=prefix, path_exists=paths.entity_exists
         )
         decisions = store.get_decisions_for_path(
-            path, prefix=prefix, path_exists=paths.entity_exists
+            canonical_path, prefix=prefix, path_exists=paths.entity_exists
         )
 
     if json_output:
-        result = format_file_history_json(path, decisions, constraints)
+        result = format_file_history_json(canonical_path, decisions, constraints)
         typer.echo(json.dumps(result, indent=2, default=str))
         return
 
-    evolution_text = format_evolution(path, decisions, max_tokens=max_tokens)
+    evolution_text = format_evolution(canonical_path, decisions, max_tokens=max_tokens)
     if constraints:
         evolution_text += "\n\n### Constraints\n"
         for constraint in constraints:
             entities = ", ".join(constraint.paths) if constraint.paths else "none"
-            evolution_text += (
-                f"- {constraint.description} "
-                f"(#{constraint.id}, bound: {entities})\n"
-            )
+            evolution_text += f"- {constraint.description} (#{constraint.id}, bound: {entities})\n"
     typer.echo(
-        f"[mementic: {len(constraints)} constraints, {len(decisions)} decisions | {path}]"
+        f"[mementic: {len(constraints)} constraints, {len(decisions)} decisions | {canonical_path}]"
     )
     if compact:
         typer.echo(sanitize(evolution_text))
@@ -169,16 +168,12 @@ def file(
 
     from mementic.console import console, escape, markdown, panel
 
-    console.print(
-        panel(markdown(evolution_text), title=f"File history: {escape(path)}")
-    )
+    console.print(panel(markdown(evolution_text), title=f"File history: {escape(canonical_path)}"))
 
 
 @query_app.command()
 def search(
-    term: str = typer.Argument(
-        ..., help="Search term for titles, rationales, and descriptions"
-    ),
+    term: str = typer.Argument(..., help="Search term for titles, rationales, and descriptions"),
 ) -> None:
     """Full-text search across decisions and constraints.
 
@@ -204,9 +199,7 @@ def search(
         if needle in decision.title.lower() or needle in decision.rationale.lower()
     ]
     matching_constraints = [
-        constraint
-        for constraint in all_constraints
-        if needle in constraint.description.lower()
+        constraint for constraint in all_constraints if needle in constraint.description.lower()
     ]
 
     panel_lines: list = []
@@ -216,9 +209,7 @@ def search(
         decisions_table.add_column("Title")
         for decision in matching_decisions:
             decisions_table.add_row(escape(decision.id), escape(decision.title))
-        panel_lines.append(
-            text(f"[{COLOR_HEADER} bold]Decisions ({len(matching_decisions)})[/]")
-        )
+        panel_lines.append(text(f"[{COLOR_HEADER} bold]Decisions ({len(matching_decisions)})[/]"))
         panel_lines.append(decisions_table)
     if matching_constraints:
         if panel_lines:
@@ -227,9 +218,7 @@ def search(
         constraints_table.add_column("ID", style=COLOR_ID)
         constraints_table.add_column("Description")
         for constraint in matching_constraints:
-            constraints_table.add_row(
-                escape(constraint.id), escape(constraint.description)
-            )
+            constraints_table.add_row(escape(constraint.id), escape(constraint.description))
         panel_lines.append(
             text(f"[{COLOR_HEADER} bold]Constraints ({len(matching_constraints)})[/]")
         )

@@ -17,9 +17,7 @@ add_app = typer.Typer(help="Add decisions and constraints to the graph")
 @add_app.command()
 def decision(
     title: str = typer.Argument(..., help="Short title for the decision"),
-    rationale: str = typer.Option(
-        ..., "--rationale", "-r", help="Justification for the decision"
-    ),
+    rationale: str = typer.Option(..., "--rationale", "-r", help="Justification for the decision"),
     entities: list[str] | None = typer.Option(
         None, "--entity", "-e", help="Affected file paths (repeatable)"
     ),
@@ -30,12 +28,13 @@ def decision(
     accepted, near-identical content is skipped as a duplicate, and different
     content deprecates the existing entry before accepting the new one.
     """
-    with context.resolve_store() as store:
+    paths = context.resolve_paths()
+    with context.resolve_store(paths) as store:
         try:
             result = EntryWriter(store).add_decision(
                 title=title,
                 rationale=rationale,
-                paths=entities or [],
+                paths=[paths.canonical_entity_path(p) for p in (entities or [])],
             )
         except (ValueError, sqlite3.Error, OSError) as exc:
             typer.echo(f"Error: {exc}", err=True)
@@ -62,11 +61,12 @@ def constraint(
     accepted, near-identical content is skipped as a duplicate, and different
     content deprecates the existing entry before accepting the new one.
     """
-    with context.resolve_store() as store:
+    paths = context.resolve_paths()
+    with context.resolve_store(paths) as store:
         try:
             result = EntryWriter(store).add_constraint(
                 description=description,
-                paths=entities,
+                paths=[paths.canonical_entity_path(p) for p in entities],
                 enforced_by=decision_id or "",
                 rule_id=rule_id,
             )

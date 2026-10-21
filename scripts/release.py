@@ -22,6 +22,7 @@ ROOT = Path(__file__).resolve().parent.parent
 PYPROJECT = ROOT / "pyproject.toml"
 CHANGELOG = ROOT / "CHANGELOG.md"
 LOCKFILE = ROOT / "uv.lock"
+KIT_DESCRIPTOR = ROOT / "docker" / "sbx-mementic" / "mementic.yaml"
 
 SEMVER_RE = re.compile(r"^\d+\.\d+\.\d+$")
 VERSION_RE = re.compile(r'^version\s*=\s*"([^"]+)"', re.MULTILINE)
@@ -129,6 +130,27 @@ def refresh_lockfile(dry_run: bool) -> None:
     ok("uv.lock -> refreshed")
 
 
+def update_kit_pin(version: str, dry_run: bool) -> None:
+    """Keep the sbx mixin's pinned release in sync with pyproject.toml."""
+    if not KIT_DESCRIPTOR.exists():
+        warn("sbx kit descriptor not found; skipping kit version pin.")
+        return
+    content = KIT_DESCRIPTOR.read_text(encoding="utf-8")
+    new_content = re.sub(
+        r'(default:\s*")[^"]+(")',
+        rf"\g<1>{version}\g<2>",
+        content,
+        count=1,
+    )
+    if new_content == content:
+        die("Failed to replace the kit version pin.")
+    if dry_run:
+        dry(f"Would update sbx kit pin: {version}")
+        return
+    KIT_DESCRIPTOR.write_text(new_content, encoding="utf-8")
+    ok(f"sbx kit -> version {version}")
+
+
 def get_last_version_tag() -> str | None:
     """Return the most recent v* tag reachable from main, or None."""
     result = run("git", "tag", "--sort=-creatordate", "--merged", "main", capture=True)
@@ -231,6 +253,7 @@ def main() -> None:
     # -- Bump & changelog --
     bump_pyproject(version, dry_run)
     refresh_lockfile(dry_run)
+    update_kit_pin(version, dry_run)
     update_changelog(version, dry_run)
 
     if dry_run:
@@ -240,7 +263,12 @@ def main() -> None:
         return
 
     # -- Commit & tag --
-    release_paths = ("pyproject.toml", "uv.lock", "CHANGELOG.md")
+    release_paths = (
+        "pyproject.toml",
+        "uv.lock",
+        "CHANGELOG.md",
+        "docker/sbx-mementic/mementic.yaml",
+    )
     staged = [path for path in release_paths if (ROOT / path).exists()]
     run("git", "add", *staged)
     run("git", "commit", "--signoff", "-m", f"Release {tag}")

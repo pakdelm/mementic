@@ -60,14 +60,12 @@ def _run(*args: str) -> Result:
 def _ok(*args: str) -> Result:
     """Invoke the CLI app, asserting a zero exit code."""
     result = _run(*args)
-    assert result.exit_code == 0, (
-        f"command {list(args)} failed:\n{_text(result)}"
-    )
+    assert result.exit_code == 0, f"command {list(args)} failed:\n{_text(result)}"
     return result
 
 
 def _store() -> MementicStore:
-    """Open the project store at the repo-root graph database."""
+    """Open the project store at the CWD graph database."""
     return MementicStore(db_path=graph_db_path(resolve_base_dir()))
 
 
@@ -167,8 +165,7 @@ def test_init_second_run_updates_section_in_place(bare_dir: Path) -> None:
 
 
 def test_add_decision_new_slug_is_accepted(project_dir: Path) -> None:
-    result = _ok("add", "decision", "Use Jwt Auth",
-                 "-r", "Jwt tokens carry authentication claims")
+    result = _ok("add", "decision", "Use Jwt Auth", "-r", "Jwt tokens carry authentication claims")
     assert "accepted" in _text(result)
     d = _decision("use-jwt-auth")
     assert d is not None
@@ -183,10 +180,8 @@ def test_add_decision_new_slug_is_accepted(project_dir: Path) -> None:
 def test_add_decision_identical_readd_is_skipped_as_duplicate(
     project_dir: Path,
 ) -> None:
-    _ok("add", "decision", "Use Jwt Auth",
-        "-r", "Jwt tokens carry authentication claims")
-    result = _ok("add", "decision", "Use Jwt Auth",
-                 "-r", "Jwt tokens carry authentication claims")
+    _ok("add", "decision", "Use Jwt Auth", "-r", "Jwt tokens carry authentication claims")
+    result = _ok("add", "decision", "Use Jwt Auth", "-r", "Jwt tokens carry authentication claims")
     output = _text(result)
     assert "skipped" in output.lower()
     assert "duplicate" in output.lower()
@@ -200,10 +195,14 @@ def test_add_decision_identical_readd_is_skipped_as_duplicate(
 def test_add_decision_same_title_new_rationale_deprecates_and_accepts(
     project_dir: Path,
 ) -> None:
-    _ok("add", "decision", "Use Jwt Auth",
-        "-r", "Jwt tokens carry authentication claims")
-    result = _ok("add", "decision", "Use Jwt Auth",
-                 "-r", "Rotated keys replace tokens with signed certificates")
+    _ok("add", "decision", "Use Jwt Auth", "-r", "Jwt tokens carry authentication claims")
+    result = _ok(
+        "add",
+        "decision",
+        "Use Jwt Auth",
+        "-r",
+        "Rotated keys replace tokens with signed certificates",
+    )
     output = _text(result)
     assert "deprecated" in output.lower()
     d = _decision("use-jwt-auth")
@@ -224,30 +223,33 @@ def test_add_decision_same_title_new_rationale_deprecates_and_accepts(
     ("second_rationale", "expected_outcome"),
     [
         # Identical text: 100% overlap >= threshold -> duplicate skip.
-        ("Jwt tokens carry authentication claims across every service boundary",
-         "skipped"),
+        ("Jwt tokens carry authentication claims across every service boundary", "skipped"),
         # One word changed out of ten: ~82% Jaccard overlap >= threshold
         # -> still a duplicate skip.
-        ("Jwt tokens carry authentication claims across every service nightly",
-         "skipped"),
+        ("Jwt tokens carry authentication claims across every service nightly", "skipped"),
         # Wholly different content -> deprecate old + accept new.
-        ("Signed certificates replace bearer tokens entirely",
-         "previous entry deprecated"),
+        ("Signed certificates replace bearer tokens entirely", "previous entry deprecated"),
     ],
     ids=["identical-duplicate", "near-duplicate", "changed-content"],
 )
 def test_add_decision_reports_outcome_per_disposition(
-    project_dir: Path, second_rationale: str, expected_outcome: str,
+    project_dir: Path,
+    second_rationale: str,
+    expected_outcome: str,
 ) -> None:
-    _ok("add", "decision", "Use Jwt Auth",
-        "-r", "Jwt tokens carry authentication claims across every service boundary")
+    _ok(
+        "add",
+        "decision",
+        "Use Jwt Auth",
+        "-r",
+        "Jwt tokens carry authentication claims across every service boundary",
+    )
     result = _ok("add", "decision", "Use Jwt Auth", "-r", second_rationale)
     assert expected_outcome in _text(result).lower()
 
 
 def test_add_constraint_new_description_is_accepted(project_dir: Path) -> None:
-    result = _ok("add", "constraint", "Handlers must remain stateless",
-                 "-e", "src/api.py")
+    result = _ok("add", "constraint", "Handlers must remain stateless", "-e", "src/api.py")
     assert "active" in _text(result)
     c = _constraint("handlers-must-remain-stateless")
     assert c is not None
@@ -265,10 +267,18 @@ def test_add_constraint_duplicate_description_is_skipped(project_dir: Path) -> N
 def test_add_constraint_decision_id_links_constraint_to_decision(
     project_dir: Path,
 ) -> None:
-    _ok("add", "decision", "Adopt Postgres",
-        "-r", "Relational integrity beats document stores here")
-    _ok("add", "constraint", "Schema migrations are mandatory",
-        "-e", "src/db.py", "-d", "adopt-postgres")
+    _ok(
+        "add", "decision", "Adopt Postgres", "-r", "Relational integrity beats document stores here"
+    )
+    _ok(
+        "add",
+        "constraint",
+        "Schema migrations are mandatory",
+        "-e",
+        "src/db.py",
+        "-d",
+        "adopt-postgres",
+    )
     c = _constraint("schema-migrations-are-mandatory")
     assert c is not None
     assert c.enforced_by == "adopt-postgres"
@@ -278,8 +288,9 @@ def test_add_constraint_dangling_decision_id_fails_cleanly(
     project_dir: Path,
 ) -> None:
     """FK integrity: a -d referencing no decision errors without traceback."""
-    result = _run("add", "constraint", "Orphan rule here",
-                  "-e", "src/x.py", "-d", "no-such-decision")
+    result = _run(
+        "add", "constraint", "Orphan rule here", "-e", "src/x.py", "-d", "no-such-decision"
+    )
     output = _text(result)
     assert result.exit_code == 1
     assert "Error" in output
@@ -293,12 +304,17 @@ def test_failed_readd_does_not_orphan_tombstone(project_dir: Path) -> None:
     insert, so a typo'd --decision-id on a re-add killed the original
     entry with no replacement and no revive command.
     """
-    _ok("add", "constraint", "Schema migrations are mandatory",
-        "-e", "src/db.py")
+    _ok("add", "constraint", "Schema migrations are mandatory", "-e", "src/db.py")
     result = _run(
-        "add", "constraint", "Schema migrations must run before deploys",
-        "--id", "schema-migrations-are-mandatory",
-        "-e", "src/db.py", "-d", "no-such-decision",
+        "add",
+        "constraint",
+        "Schema migrations must run before deploys",
+        "--id",
+        "schema-migrations-are-mandatory",
+        "-e",
+        "src/db.py",
+        "-d",
+        "no-such-decision",
     )
     output = _text(result)
     assert result.exit_code == 1
@@ -306,9 +322,7 @@ def test_failed_readd_does_not_orphan_tombstone(project_dir: Path) -> None:
     # Original entry is untouched: live, not a tombstone.
     store = _store()
     try:
-        assert store.is_deprecated(
-            "constraint", "schema-migrations-are-mandatory"
-        ) is False
+        assert store.is_deprecated("constraint", "schema-migrations-are-mandatory") is False
         surviving = store.get_constraint("schema-migrations-are-mandatory")
         assert surviving is not None
         assert surviving.description == "Schema migrations are mandatory"
@@ -319,8 +333,13 @@ def test_failed_readd_does_not_orphan_tombstone(project_dir: Path) -> None:
 
 
 def test_deprecate_decision_by_slug_marks_it_deprecated(project_dir: Path) -> None:
-    _ok("add", "decision", "Use Monolith",
-        "-r", "Single deployable keeps operations simple early on")
+    _ok(
+        "add",
+        "decision",
+        "Use Monolith",
+        "-r",
+        "Single deployable keeps operations simple early on",
+    )
     result = _ok("deprecate", "use-monolith", "-r", "Moved to services")
     assert "1 deprecated" in _text(result)
     listing = _ok("list", "decisions", "--status", "deprecated")
@@ -334,8 +353,13 @@ def test_deprecate_nonexistent_id_fails_cleanly(project_dir: Path) -> None:
 
 
 def test_deprecate_already_deprecated_is_graceful(project_dir: Path) -> None:
-    _ok("add", "decision", "Use Monolith",
-        "-r", "Single deployable keeps operations simple early on")
+    _ok(
+        "add",
+        "decision",
+        "Use Monolith",
+        "-r",
+        "Single deployable keeps operations simple early on",
+    )
     _ok("deprecate", "use-monolith")
     result = _ok("deprecate", "use-monolith")
     assert "already deprecated" in _text(result).lower()
@@ -343,10 +367,8 @@ def test_deprecate_already_deprecated_is_graceful(project_dir: Path) -> None:
 
 
 def test_query_keywords_returns_matching_seeded_entries(project_dir: Path) -> None:
-    _ok("add", "decision", "Use Jwt Auth",
-        "-r", "Jwt authentication guards every endpoint")
-    _ok("add", "constraint", "Sessions must stay stateless",
-        "-e", "src/session.py")
+    _ok("add", "decision", "Use Jwt Auth", "-r", "Jwt authentication guards every endpoint")
+    _ok("add", "constraint", "Sessions must stay stateless", "-e", "src/session.py")
     result = _ok("query", "keywords", "jwt", "authentication", "stateless")
     output = _text(result)
     assert "use-jwt-auth" in output
@@ -356,8 +378,7 @@ def test_query_keywords_returns_matching_seeded_entries(project_dir: Path) -> No
 def test_query_keywords_nonsense_returns_no_matches_without_crash(
     project_dir: Path,
 ) -> None:
-    _ok("add", "decision", "Use Jwt Auth",
-        "-r", "Jwt authentication guards every endpoint")
+    _ok("add", "decision", "Use Jwt Auth", "-r", "Jwt authentication guards every endpoint")
     result = _ok("query", "keywords", "zzqxv", "wblrmp")
     output = _text(result)
     assert "use-jwt-auth" not in output
@@ -365,18 +386,36 @@ def test_query_keywords_nonsense_returns_no_matches_without_crash(
 
 def test_query_keywords_max_tokens_override_truncates(project_dir: Path) -> None:
     """--max-tokens overrides both section budgets proportionally (Spec 30)."""
-    _ok("add", "decision", "Use Jwt Auth",
-        "-r", "Jwt tokens carry authentication claims")
-    _ok("add", "decision", "Jwt Refresh Flow",
-        "-r", "Refresh tokens rotate jwt sessions nightly")
-    _ok("add", "decision", "Jwt Clock Skew",
-        "-r", "Jwt token validation tolerates minor clock skew only")
-    _ok("add", "decision", "Jwt Key Rotation",
-        "-r", "Rotate jwt signing tokens before the quarterly audit window")
-    _ok("add", "decision", "Jwt Audience Binding",
-        "-r", "Every jwt token must pin its audience claim to one service")
-    _ok("add", "decision", "Unrelated Note",
-        "-r", "Completely different filler topic for corpus diversity")
+    _ok("add", "decision", "Use Jwt Auth", "-r", "Jwt tokens carry authentication claims")
+    _ok("add", "decision", "Jwt Refresh Flow", "-r", "Refresh tokens rotate jwt sessions nightly")
+    _ok(
+        "add",
+        "decision",
+        "Jwt Clock Skew",
+        "-r",
+        "Jwt token validation tolerates minor clock skew only",
+    )
+    _ok(
+        "add",
+        "decision",
+        "Jwt Key Rotation",
+        "-r",
+        "Rotate jwt signing tokens before the quarterly audit window",
+    )
+    _ok(
+        "add",
+        "decision",
+        "Jwt Audience Binding",
+        "-r",
+        "Every jwt token must pin its audience claim to one service",
+    )
+    _ok(
+        "add",
+        "decision",
+        "Unrelated Note",
+        "-r",
+        "Completely different filler topic for corpus diversity",
+    )
     full = _ok("query", "keywords", "jwt", "tokens")
     tiny = _ok("query", "keywords", "jwt", "tokens", "--max-tokens", "50")
     full_text = _text(full)
@@ -414,23 +453,36 @@ def test_query_file_finds_seeded_entry_by_path(project_dir: Path) -> None:
     source = project_dir / "src" / "foo.py"
     source.parent.mkdir(parents=True)
     source.write_text("x = 1", encoding="utf-8")
-    _ok("add", "decision", "Track Auth Flow",
-        "-r", "Central middleware owns the auth handshake", "-e", "src/foo.py")
+    _ok(
+        "add",
+        "decision",
+        "Track Auth Flow",
+        "-r",
+        "Central middleware owns the auth handshake",
+        "-e",
+        "src/foo.py",
+    )
     result = _ok("query", "file", "src/foo.py")
     assert "track-auth-flow" in _text(result)
 
 
 def test_query_file_unrelated_path_returns_empty(project_dir: Path) -> None:
-    _ok("add", "decision", "Track Auth Flow",
-        "-r", "Central middleware owns the auth handshake", "-e", "src/foo.py")
+    _ok(
+        "add",
+        "decision",
+        "Track Auth Flow",
+        "-r",
+        "Central middleware owns the auth handshake",
+        "-e",
+        "src/foo.py",
+    )
     result = _ok("query", "file", "src/unrelated.py")
     assert result.exit_code == 0
     assert "track-auth-flow" not in _text(result)
 
 
 def test_query_search_finds_seeded_content_substring(project_dir: Path) -> None:
-    _ok("add", "constraint", "Handlers must remain stateless",
-        "-e", "src/api.py")
+    _ok("add", "constraint", "Handlers must remain stateless", "-e", "src/api.py")
     result = _ok("query", "search", "stateless")
     output = _text(result)
     assert "handlers-must-remain-stateless" in output
@@ -439,14 +491,14 @@ def test_query_search_finds_seeded_content_substring(project_dir: Path) -> None:
 
 
 def test_query_stats_runs_clean_on_seeded_graph(project_dir: Path) -> None:
-    _ok("add", "decision", "Use Jwt Auth",
-        "-r", "Jwt authentication guards every endpoint")
+    _ok("add", "decision", "Use Jwt Auth", "-r", "Jwt authentication guards every endpoint")
     result = _ok("query", "stats")
     assert "Graph statistics" in _text(result)
 
 
 def test_cli_command_closes_its_store(
-    project_dir: Path, monkeypatch: pytest.MonkeyPatch,
+    project_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     closed: list[MementicStore] = []
     original_close = MementicStore.close
@@ -461,22 +513,27 @@ def test_cli_command_closes_its_store(
 
 
 def test_list_decisions_shows_seeded_entry(project_dir: Path) -> None:
-    _ok("add", "decision", "Use Jwt Auth",
-        "-r", "Jwt authentication guards every endpoint")
+    _ok("add", "decision", "Use Jwt Auth", "-r", "Jwt authentication guards every endpoint")
     result = _ok("list", "decisions")
     assert "use-jwt-auth" in _text(result)
 
 
 def test_list_constraints_shows_seeded_entry(project_dir: Path) -> None:
-    _ok("add", "constraint", "Handlers must remain stateless",
-        "-e", "src/api.py")
+    _ok("add", "constraint", "Handlers must remain stateless", "-e", "src/api.py")
     result = _ok("list", "constraints")
     assert "handlers-must-remain-stateless" in _text(result)
 
 
 def test_list_entities_shows_entity_created_via_add(project_dir: Path) -> None:
-    _ok("add", "decision", "Track Auth Flow",
-        "-r", "Central middleware owns the auth handshake", "-e", "src/foo.py")
+    _ok(
+        "add",
+        "decision",
+        "Track Auth Flow",
+        "-r",
+        "Central middleware owns the auth handshake",
+        "-e",
+        "src/foo.py",
+    )
     result = _ok("list", "entities")
     assert "src/foo.py" in _text(result)
 
@@ -488,10 +545,20 @@ def test_list_rejects_invalid_status(project_dir: Path) -> None:
 
 
 def test_list_decisions_status_filter_excludes_deprecated(project_dir: Path) -> None:
-    _ok("add", "decision", "Keep Api Stable",
-        "-r", "Public contract changes require a major version bump")
-    _ok("add", "decision", "Drop Legacy Auth",
-        "-r", "Legacy basic auth is replaced by token sessions")
+    _ok(
+        "add",
+        "decision",
+        "Keep Api Stable",
+        "-r",
+        "Public contract changes require a major version bump",
+    )
+    _ok(
+        "add",
+        "decision",
+        "Drop Legacy Auth",
+        "-r",
+        "Legacy basic auth is replaced by token sessions",
+    )
     _ok("deprecate", "drop-legacy-auth")
     result = _ok("list", "decisions", "--status", "accepted")
     output = _text(result)
@@ -519,10 +586,8 @@ def test_status_corrupt_store_reports_failure(project_dir: Path) -> None:
 
 
 def test_log_lists_mutations_newest_first(project_dir: Path) -> None:
-    _ok("add", "decision", "Alpha Decision",
-        "-r", "First recorded architectural choice")
-    _ok("add", "decision", "Beta Decision",
-        "-r", "Second recorded architectural choice")
+    _ok("add", "decision", "Alpha Decision", "-r", "First recorded architectural choice")
+    _ok("add", "decision", "Beta Decision", "-r", "Second recorded architectural choice")
     result = _ok("log")
     output = _text(result)
     assert "beta-decision" in output
@@ -560,7 +625,8 @@ def test_unknown_command_exits_nonzero() -> None:
     ],
 )
 def test_missing_required_arguments_exit_nonzero(
-    project_dir: Path, args: tuple[str, ...],
+    project_dir: Path,
+    args: tuple[str, ...],
 ) -> None:
     result = _run(*args)
     assert result.exit_code != 0
@@ -578,11 +644,9 @@ def test_cross_type_slug_collision_exits_cleanly(project_dir: Path) -> None:
 
 def test_readd_after_deprecate_replaces_tombstone(project_dir: Path) -> None:
     """Deprecated entries never block re-adding; the add replaces them."""
-    _ok("add", "decision", "Use Monolith",
-        "-r", "Single deployable simplifies operations")
+    _ok("add", "decision", "Use Monolith", "-r", "Single deployable simplifies operations")
     _ok("deprecate", "use-monolith")
-    result = _ok("add", "decision", "Use Monolith",
-                 "-r", "Single deployable simplifies operations")
+    result = _ok("add", "decision", "Use Monolith", "-r", "Single deployable simplifies operations")
     output = _text(result)
     assert "accepted" in output.lower()
     assert "replaced deprecated" in output.lower()
@@ -602,12 +666,16 @@ def test_empty_rationale_readd_is_skipped_as_duplicate(project_dir: Path) -> Non
     assert "skipped" in _text(result).lower()
 
 
-@pytest.mark.parametrize("rationale", [
-    "使用 JWT 进行身份验证 claims 🎫",
-    "Ünïcödé rätionäle with accented characters",
-])
+@pytest.mark.parametrize(
+    "rationale",
+    [
+        "使用 JWT 进行身份验证 claims 🎫",
+        "Ünïcödé rätionäle with accented characters",
+    ],
+)
 def test_unicode_rationale_round_trips_through_add_and_search(
-    project_dir: Path, rationale: str,
+    project_dir: Path,
+    rationale: str,
 ) -> None:
     """Non-ASCII rationales survive add and are findable via search."""
     _ok("add", "decision", "Unicode Auth", "-r", rationale)
@@ -616,12 +684,16 @@ def test_unicode_rationale_round_trips_through_add_and_search(
 
 
 def test_query_keywords_prints_mementic_summary_line(project_dir: Path) -> None:
-    _ok("add", "decision", "Use Jwt Auth",
-        "-r", "Jwt tokens carry authentication claims")
+    _ok("add", "decision", "Use Jwt Auth", "-r", "Jwt tokens carry authentication claims")
     # A second unrelated entry keeps the query keyword rare, so its IDF is
     # positive and the pack has a real match to report (Spec 30 Phase 1).
-    _ok("add", "decision", "Unrelated Note",
-        "-r", "Completely different filler topic for corpus diversity")
+    _ok(
+        "add",
+        "decision",
+        "Unrelated Note",
+        "-r",
+        "Completely different filler topic for corpus diversity",
+    )
     result = _ok("query", "keywords", "jwt", "auth")
     text = _text(result)
     line = next((ln for ln in text.splitlines() if "[mementic:" in ln), None)
@@ -636,15 +708,22 @@ def test_query_keywords_prints_mementic_summary_line(project_dir: Path) -> None:
 def test_query_file_prints_mementic_summary_line(project_dir: Path) -> None:
     (project_dir / "src").mkdir()
     (project_dir / "src" / "auth.py").write_text("# auth module\n")
-    _ok("add", "decision", "Guard Auth Module",
-        "-r", "All requests pass through the auth module", "-e", "src/auth.py")
+    _ok(
+        "add",
+        "decision",
+        "Guard Auth Module",
+        "-r",
+        "All requests pass through the auth module",
+        "-e",
+        "src/auth.py",
+    )
     result = _ok("query", "file", "src/auth.py")
     text = _text(result)
     line = next((ln for ln in text.splitlines() if "[mementic:" in ln), None)
     assert line is not None, f"no [mementic: ...] summary line in:\n{text}"
-    assert re.search(
-        r"\d+ constraints, \d+ decisions \| src/auth\.py\]", line
-    ), f"file summary line lacks compact format: {line}"
+    assert re.search(r"\d+ constraints, \d+ decisions \| src/auth\.py\]", line), (
+        f"file summary line lacks compact format: {line}"
+    )
 
 
 def test_query_search_prints_mementic_summary_line(project_dir: Path) -> None:
@@ -653,18 +732,16 @@ def test_query_search_prints_mementic_summary_line(project_dir: Path) -> None:
     text = _text(result)
     line = next((ln for ln in text.splitlines() if "[mementic:" in ln), None)
     assert line is not None, f"no [mementic: ...] summary line in:\n{text}"
-    assert re.search(
-        r"\d+ constraints, \d+ decisions \| stateless\]", line
-    ), f"search summary line lacks compact format: {line}"
+    assert re.search(r"\d+ constraints, \d+ decisions \| stateless\]", line), (
+        f"search summary line lacks compact format: {line}"
+    )
 
 
 def test_history_without_id_lists_full_table_newest_first(
     project_dir: Path,
 ) -> None:
-    _ok("add", "decision", "First Entry",
-        "-r", "Alpha rationale for history")
-    _ok("add", "decision", "Second Entry",
-        "-r", "Beta rationale for history")
+    _ok("add", "decision", "First Entry", "-r", "Alpha rationale for history")
+    _ok("add", "decision", "Second Entry", "-r", "Beta rationale for history")
     _ok("deprecate", "first-entry", "-r", "obsolete now")
     _ok("deprecate", "second-entry", "-r", "also obsolete")
     output = _text(_ok("history"))
@@ -677,10 +754,8 @@ def test_history_without_id_lists_full_table_newest_first(
 def test_history_with_id_shows_reason_and_successor_chain(
     project_dir: Path,
 ) -> None:
-    _ok("add", "decision", "Legacy Auth",
-        "-r", "Basic auth guards every endpoint")
-    _ok("add", "decision", "Token Auth",
-        "-r", "Signed tokens replace basic auth entirely")
+    _ok("add", "decision", "Legacy Auth", "-r", "Basic auth guards every endpoint")
+    _ok("add", "decision", "Token Auth", "-r", "Signed tokens replace basic auth entirely")
     _ok("deprecate", "legacy-auth", "-r", "insecure scheme")
     output = _text(_ok("history", "legacy-auth"))
     assert "legacy-auth" in output
@@ -690,12 +765,10 @@ def test_history_with_id_shows_reason_and_successor_chain(
 
 def test_history_transitive_chain_prints_arrows(project_dir: Path) -> None:
     """Re-add cycles accumulate tombstone rows; history lists them all."""
-    _ok("add", "decision", "Cache Layer",
-        "-r", "In-process caching serves reads")
+    _ok("add", "decision", "Cache Layer", "-r", "In-process caching serves reads")
     _ok("deprecate", "cache-layer", "-r", "v1 out")
     # Re-add same slug: replace-path succession tombstone.
-    _ok("add", "decision", "Cache Layer",
-        "-r", "Distributed cache tier replaces process memory")
+    _ok("add", "decision", "Cache Layer", "-r", "Distributed cache tier replaces process memory")
     output = _text(_ok("history", "cache-layer"))
     assert "cache-layer" in output
     assert "v1 out" in output  # prior incarnation's reason still visible
@@ -709,8 +782,7 @@ def test_history_unknown_id_exits_zero_with_message(project_dir: Path) -> None:
 
 def test_deprecated_entry_excluded_from_context_pack(project_dir: Path) -> None:
     """Derived liveness: tombstoned entries never reach keyword packs."""
-    _ok("add", "decision", "Zebra Protocol",
-        "-r", "Zebra routing handles every packet flow")
+    _ok("add", "decision", "Zebra Protocol", "-r", "Zebra routing handles every packet flow")
     _ok("deprecate", "zebra-protocol", "-r", "superseded")
     result = _ok("query", "keywords", "zebra")
     output = _text(result)

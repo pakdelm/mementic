@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 from mementic.cli import context
 from mementic.console import (
     COLOR_DIM,
@@ -19,20 +17,12 @@ from mementic.inject import sync_enforcement
 from mementic.store import MementicStore
 
 
-def _display_path(path: Path, base: Path) -> str:
-    """Render a path relative to the base directory when possible."""
-    try:
-        return str(path.relative_to(base))
-    except ValueError:
-        return str(path)
-
-
 def init() -> None:
-    """Initialize mementic for this repository.
+    """Initialize mementic in the current directory.
 
     Creates the graph database when missing (idempotent) and syncs the
-    enforcement section in AGENTS.md (created, updated, or left unchanged).
-    Deterministic: no prompts, no interactivity branching.
+    enforcement section in AGENTS.md. The graph is CWD-local: subdirectories
+    do not see it.
     """
     paths = context.resolve_paths()
     created = False
@@ -48,16 +38,17 @@ def init() -> None:
         panel(
             text(
                 f"[{COLOR_HEADER} bold]Graph[/]: "
-                f"[{COLOR_PATH}]{escape(_display_path(paths.graph_db, paths.base_dir))}[/] "
+                f"[{COLOR_PATH}]{escape(str(paths.graph_db))}[/] "
                 f"[{COLOR_DIM}]({graph_state})[/]"
             ),
             rule(),
             text(escape(enforcement_note)),
             rule(),
             text(
-                f"[{COLOR_DIM} italic]Next: agents record rules inline via "
-                f"'mementic add decision|constraint', then query with "
-                f"'mementic query keywords <kw1> <kw2> ...'[/]"
+                f"[{COLOR_DIM} italic]Run mementic from this directory; "
+                f"subdirectories do not see this graph. Next: agents record "
+                f"rules inline via 'mementic add decision|constraint', then "
+                f"query with 'mementic query keywords <kw1> <kw2> ...'[/]"
             ),
             title="Mementic initialized",
         )
