@@ -16,9 +16,10 @@ fixes this:
 
 It works with OpenCode, Claude Code, Cursor, and Windsurf.
 
-This is a personal project, not a product. I use it daily, but it is not
-recommended for production use. This project is my experiment in agentic
-development. I build it with AI agents and improve it through feedback cycles.
+This is a beta: the core loop — init, query, inline add — works end to end and
+is used daily by the maintainer, but the surface is small and tested mainly
+with one agent. Not recommended for production use. I build it with AI agents
+and improve it through feedback cycles.
 
 ## How mementic differs
 
@@ -57,7 +58,6 @@ mementic is zero-config by design.
 
 ```bash
 cd ~/dev/my-project
-
 # 1. Create an empty graph at .mementic/graph.db (idempotent)
 mementic init
 
@@ -192,7 +192,6 @@ writes.
 I ran two real implementation tasks in OpenCode — same tasks, same quality bar
 (tests + lint + typecheck), with and without mementic. The graph at the time had
 330 decisions, 215 constraints.
-
 Without mementic, the agent kept re-reading the same ADRs and instruction files,
 spawning subagents that each did the same discovery work independently. With
 mementic, the context pack answered "what rules apply here?" before the agent
@@ -223,24 +222,18 @@ vary depending on how dense your project's architectural rules are. But the
 pattern held — the agent spent way less time doing discovery and more time
 doing the actual work.
 
-## What's missing (honest answer)
+## Limitations
 
-This is not production software. It's a personal tool that I open-sourced because
-it might be useful to someone else. Here's what you should know before trying it:
+A few things to know before trying it:
 
-- **Tested on one setup.** I've only actually tested this daily with
-  **OpenCode**. Other agents that read `AGENTS.md` should work, but they
-  haven't been through the same use. If you hit issues, open an issue — I'll
-  fix it.
+- **Tested daily with OpenCode.** Other agents that read `AGENTS.md` should
+  work, but they haven't been through the same use. If you hit issues, open an
+  issue — I'll fix it.
 - **Cold start is empty.** `init` creates an empty graph and scans nothing.
   The graph fills up as you (or your agent) record decisions and constraints
   inline while working.
-- **Edge cases exist.** It handles the happy paths well. Weird repo structures
-  or corrupted graphs may break.
 - **Single user, local-only.** The graph lives on your machine. It is not built
   for team sharing and has no sync feature.
-- **No PyPI package yet.** It installs directly from the GitHub repo. It works,
-  but it's not polished.
 
 If any of this sounds like fun to fix, [contributions are welcome](CONTRIBUTING.md).
 
@@ -282,13 +275,10 @@ cleanup scans.
 
 ## Project status & roadmap
 
-Active development, used daily by the maintainer. The core loop — init,
-query, inline add — works end to end. Next milestones:
+Active development, used daily by the maintainer. Next milestones:
 
-- **First PyPI release.** Install is currently from the GitHub repo only.
-- **Pack quality.** File-overlap signals via `entry_paths` for better
-  context-pack precision.
-- **Polish.** Good-first-issue-sized work: docs, error messages, examples.
+- **Publish the sbx kit image** (`docker.io/pakdelm/sbx-kit-mementic`).
+- **Team sharing** via an always-on mutation log.
 
 Contributions in any of those areas are welcome — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
@@ -296,8 +286,8 @@ Contributions in any of those areas are welcome — see
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). The short version: PRs welcome, DCO
-sign-off required (`git commit -s`), tests must pass, lint and typecheck must
-be clean.
+sign-off required (`git commit -s`), CLA on your first contribution
+([CLA.md](CLA.md)), tests must pass, lint and typecheck must be clean.
 
 ## License
 
