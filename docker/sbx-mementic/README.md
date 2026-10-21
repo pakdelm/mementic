@@ -12,12 +12,13 @@ only adds mementic.
 
 ## Use
 
-Each release publishes `docker.io/pakdelm/sbx-kit-mementic:<version>`. Run it
-from the workspace root — the directory that should own `.mementic/`:
+A published image follows the next release. Until then, stage the kit from the
+checkout and run it from the workspace root — the directory that should own
+`.mementic/` (Docker with Buildx required):
 
 ```sh
-sbx run docker.io/docker/sbx-kit-shell:1.0.0 \
-  --kit docker.io/pakdelm/sbx-kit-mementic:0.4.1 --name mementic
+uv run python scripts/kit.py stage .sbx-kit
+sbx run docker.io/docker/sbx-kit-shell:1.0.0 --kit .sbx-kit --name mementic
 ```
 
 Inside the sandbox, initialize the graph once:
@@ -44,28 +45,23 @@ by the descriptor's filename stem, so keep the two names in sync. A mixin with
 no discoverable companion builds successfully but is declaration-only and
 installs nothing.
 
-The recipe installs mementic from its build context, so the context must also
-carry `pyproject.toml` and the package source. Stage it before building (Docker
-with Buildx required):
-
-```sh
-uv run python scripts/kit.py stage .sbx-kit
-sbx run docker.io/docker/sbx-kit-shell:1.0.0 \
-  --kit .sbx-kit --name mementic-dev
-```
-
-`sbx` builds the staged directory on demand and caches it by source hash.
-Create a new sandbox after editing the kit; an existing sandbox keeps its
-recorded kits.
+The recipe installs mementic from its build context, so the committed directory
+alone is not a buildable kit: `scripts/kit.py stage` adds `pyproject.toml`, the
+package source, and the license to the context. `sbx` builds the staged
+directory on demand and caches it by source hash; create a new sandbox after
+editing the kit, because an existing one keeps its recorded kits.
 
 ## Version pin and publishing
 
 `mementic.yaml` pins `args.version`, which the published descriptor exposes as
 `provides: mementic@<version>`. The recipe verifies the staged source reports
 that exact distribution version, so a pin that drifts from `pyproject.toml`
-fails the build. `scripts/release.py` bumps the pin in the release commit and,
-after pushing the tag, stages the checkout and publishes a multi-arch image
-(`linux/amd64,linux/arm64`) to `docker.io/pakdelm/sbx-kit-mementic:<version>`.
+fails the build.
+
+`scripts/release.py` bumps the pin in the release commit and, after pushing the
+tag, publishes a multi-arch image (`linux/amd64,linux/arm64`) to
+`docker.io/pakdelm/sbx-kit-mementic:<version>`. The first published image ships
+with the next release.
 
 Publishing needs a buildx builder backed by the `docker-container` driver; the
 default `docker` driver refuses multi-platform pushes. Create one once with:
