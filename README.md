@@ -16,8 +16,7 @@ fixes this:
 
 This is a beta: the core loop — init, query, inline add — works end to end and
 is used daily by the maintainer, but the surface is small and tested mainly
-with one agent. Not recommended for production use. I build it with AI agents
-and improve it through feedback cycles.
+with one agent. Not recommended for production use.
 
 ## How mementic differs
 
@@ -78,7 +77,7 @@ automatically; changed content under the same title deprecates the old entry
 and accepts the new one.
 
 Everything lives in `.mementic/` — no global config, no registration,
-no API keys.
+no API keys. The install is from the GitHub repo; there is no PyPI package.
 
 ## Working directory
 
@@ -189,6 +188,7 @@ writes.
 I ran two real implementation tasks in OpenCode — same tasks, same quality bar
 (tests + lint + typecheck), with and without mementic. The graph at the time had
 330 decisions, 215 constraints.
+
 Without mementic, the agent kept re-reading the same ADRs and instruction files,
 spawning subagents that each did the same discovery work independently. With
 mementic, the context pack answered "what rules apply here?" before the agent
