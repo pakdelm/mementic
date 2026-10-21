@@ -114,17 +114,33 @@ def clean_entity_path(raw: str) -> str:
     """Strip symbol and position qualifiers from a path reference.
 
     Accepted suffixes are ``::symbol``, ``:line``, ``:line:column``, and
-    ``:symbol`` when the prefix ends in a known source-file extension. The
-    extension guard preserves legitimate POSIX filenames containing a colon.
-    Windows drive prefixes (``C:\\``, ``C:/``, ``C:relative``) are preserved.
+    ``:symbol`` when the prefix ends in a known source-file extension. A
+    reference may carry a position and a symbol together, so these suffixes
+    are stripped in either order. The extension guard preserves legitimate
+    POSIX filenames containing a colon. Windows drive prefixes (``C:\\``,
+    ``C:/``, ``C:relative``) are preserved.
 
     Args:
         raw: Path reference supplied by a user or agent.
 
     Returns:
-        The path without its symbol or position suffix.
+        The path without its symbol and position suffixes.
     """
     path = raw.strip()
+    while True:
+        stripped = _strip_qualifiers_once(path)
+        if stripped == path:
+            return path
+        path = stripped
+
+
+def _strip_qualifiers_once(path: str) -> str:
+    """Strip at most one position and one symbol suffix from ``path``.
+
+    One pass is not enough for every ordering: ``a.py:42::handler`` only
+    exposes its position once the symbol is gone, so the caller repeats the
+    pass until the reference stops shrinking.
+    """
     path = _LINE_SUFFIX.sub("", path)
     path = _DOUBLE_COLON_SYMBOL.sub("", path)
     match = _SINGLE_COLON_SYMBOL.search(path)

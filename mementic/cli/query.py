@@ -140,6 +140,14 @@ def file(
     except ValueError as exc:
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(code=1) from exc
+    # Canonicalizing runs the path through Path, which drops a trailing
+    # separator. Stored entity paths never end with one, so the separator is
+    # what bounds a prefix match to a directory rather than a sibling name
+    # (``repo-a/src`` vs ``repo-a/src-legacy``); restore it for directory
+    # prefixes.
+    if prefix and path.strip().endswith(("/", "\\")) and canonical_path:
+        if not canonical_path.endswith("/"):
+            canonical_path += "/"
     with context.resolve_store(paths) as store:
         constraints = store.get_constraints_for_path(
             canonical_path, prefix=prefix, path_exists=paths.entity_exists

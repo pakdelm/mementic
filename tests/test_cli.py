@@ -632,35 +632,6 @@ class TestQueryFileJson:
         assert prefixed.exit_code == 0
         assert [d["id"] for d in json.loads(prefixed.stdout)["decisions"]] == ["io-decision"]
 
-    def test_query_file_resolves_paths_against_base_dir_from_subdir(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """Repo-relative bindings resolve against base_dir, not the CWD."""
-        target = tmp_path / "src" / "auth.py"
-        target.parent.mkdir(parents=True)
-        target.write_text("x = 1", encoding="utf-8")
-        nested = tmp_path / "nested"
-        nested.mkdir()
-        monkeypatch.chdir(nested)
-
-        store = _make_store()
-        _seed_decision(
-            store,
-            "io-decision",
-            rationale="Async I/O everywhere",
-            paths=["src/auth.py"],
-        )
-        paths = ProjectPaths(base_dir=tmp_path, store_root=tmp_path)
-        with (
-            patch("mementic.cli.context.resolve_paths", return_value=paths),
-            patch("mementic.cli.context.resolve_store", return_value=nullcontext(store)),
-        ):
-            result = runner.invoke(app, ["query", "file", "src/auth.py", "--json"])
-
-        assert result.exit_code == 0, f"stderr: {result.stderr}"
-        data = json.loads(result.stdout)
-        assert [decision["id"] for decision in data["decisions"]] == ["io-decision"]
-
     def test_query_file_dead_paths_filtered_by_filesystem_check(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:

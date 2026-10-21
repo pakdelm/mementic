@@ -8,7 +8,8 @@ This is a Python project.
 This project keeps its architectural rules in a local graph (`.mementic/`).
 Run every mementic command from the directory that contains `.mementic`; if
 your CWD is a subdirectory, `cd` to that directory first. Entity paths are
-relative to it (`repo-a/src/auth.py`, not `src/auth.py`).
+relative to it: `src/auth.py` in a single-repo project,
+or `repo-a/src/auth.py` from a multi-repo workspace root.
 
 These steps apply to code work — reading, searching, editing, or making
 architectural claims. Messages that trigger none of those (acknowledgements,

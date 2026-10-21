@@ -133,10 +133,26 @@ def test_project_paths_caches_entity_exists(tmp_path: Path) -> None:
         ("C:\\src\\foo.py:handler", "C:\\src\\foo.py"),
         ("C:\\src\\foo.py::Handler.handle", "C:\\src\\foo.py"),
         ("C:\\src\\foo.py:42", "C:\\src\\foo.py"),
+        ("C:\\src\\foo.py:handler:42", "C:\\src\\foo.py"),
         ("C:relative.py", "C:relative.py"),
     ],
 )
 def test_clean_entity_path_strips_qualifiers(raw: str, expected: str) -> None:
+    assert clean_entity_path(raw) == expected
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("src/auth.py", "src/auth.py"),
+        ("src/auth.py:42::handler", "src/auth.py"),
+        ("src/auth.py::handler:42", "src/auth.py"),
+        ("src/auth.py:42:7", "src/auth.py"),
+        ("src/auth.py:handler", "src/auth.py"),
+    ],
+)
+def test_clean_entity_path_strips_qualifiers_in_either_order(raw: str, expected: str) -> None:
+    """A position and a symbol suffix are removed regardless of their order."""
     assert clean_entity_path(raw) == expected
 
 
@@ -178,6 +194,8 @@ def test_canonical_entity_path_strips_symbol_and_line_suffixes(
     assert canonical_entity_path(tmp_path, "src/auth.py:handler") == "src/auth.py"
     assert canonical_entity_path(tmp_path, "src/auth.py:42") == "src/auth.py"
     assert canonical_entity_path(tmp_path, "src/auth.py:42:7") == "src/auth.py"
+    assert canonical_entity_path(tmp_path, "src/auth.py:42::handler") == "src/auth.py"
+    assert canonical_entity_path(tmp_path, "src/auth.py::handler:42") == "src/auth.py"
 
 
 def test_canonical_entity_path_preserves_posix_colon_filename(

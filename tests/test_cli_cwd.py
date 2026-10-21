@@ -43,6 +43,11 @@ def _init(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     assert result.exit_code == 0, _text(result)
 
 
+def _add_decision(title: str, entity: str) -> None:
+    result = _run("add", "decision", title, "-r", "Reason", "-e", entity)
+    assert result.exit_code == 0, _text(result)
+
+
 def test_init_creates_graph_and_agents_at_cwd(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -179,3 +184,49 @@ def test_query_file_prefix_matches_cwd_relative_paths(
     assert [decision["id"] for decision in json.loads(prefixed.stdout)["decisions"]] == [
         "repo-a-auth"
     ]
+
+
+def test_query_file_prefix_with_trailing_separator_stays_within_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _init(tmp_path, monkeypatch)
+    for relative in ("repo-a/src/auth.py", "repo-a/src-legacy/x.py"):
+        target = tmp_path / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("x = 1", encoding="utf-8")
+    _add_decision("Repo A Auth", "repo-a/src/auth.py")
+    _add_decision("Repo A Legacy", "repo-a/src-legacy/x.py")
+
+    directory = _run("query", "file", "repo-a/src/", "--prefix", "--json")
+    bare = _run("query", "file", "repo-a/src", "--prefix", "--json")
+
+    assert directory.exit_code == 0, _text(directory)
+    assert [decision["id"] for decision in json.loads(directory.stdout)["decisions"]] == [
+        "repo-a-auth"
+    ]
+    assert bare.exit_code == 0, _text(bare)
+    assert {decision["id"] for decision in json.loads(bare.stdout)["decisions"]} == {
+        "repo-a-auth",
+        "repo-a-legacy",
+    }
+
+
+@pytest.mark.parametrize(
+    "query",
+    ["repo-a/src/auth.py:handler", "repo-a/src/auth.py:42", "repo-a/src/auth.py:42:7"],
+)
+def test_query_file_prefix_keeps_symbol_and_line_suffixes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, query: str
+) -> None:
+    _init(tmp_path, monkeypatch)
+    target = tmp_path / "repo-a" / "src" / "auth.py"
+    target.parent.mkdir(parents=True)
+    target.write_text("x = 1", encoding="utf-8")
+    _add_decision("Repo A Auth", "repo-a/src/auth.py")
+
+    result = _run("query", "file", query, "--prefix", "--json")
+
+    assert result.exit_code == 0, _text(result)
+    data = json.loads(result.stdout)
+    assert data["file"] == "repo-a/src/auth.py"
+    assert [decision["id"] for decision in data["decisions"]] == ["repo-a-auth"]

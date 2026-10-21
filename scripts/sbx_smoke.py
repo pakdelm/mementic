@@ -7,7 +7,8 @@ Run from the repository root:
 Requires the ``sbx`` CLI and Docker with Buildx. The script creates a temporary
 workspace, starts a sandbox with the local mixin, initializes the graph, writes
 one decision, and checks that the root graph persists on the host while a child
-repository reports no graph. It removes the sandbox unless ``--keep`` is given.
+repository reports no graph. It removes the sandbox and temporary workspace unless
+``--keep`` is given.
 """
 
 from __future__ import annotations
@@ -180,8 +181,8 @@ def main() -> None:
         raise SystemExit(f"mixin directory not found: {args.kit}")
 
     layouts = ("single", "multi") if args.layout == "both" else (args.layout,)
-    with tempfile.TemporaryDirectory(prefix="mementic-sbx-") as temp:
-        root = Path(temp)
+    root = Path(tempfile.mkdtemp(prefix="mementic-sbx-"))
+    try:
         for layout in layouts:
             _smoke_one(
                 root=root,
@@ -192,6 +193,9 @@ def main() -> None:
             )
         if args.keep:
             print(f"workspace kept at {root}")
+    finally:
+        if not args.keep:
+            shutil.rmtree(root, ignore_errors=True)
 
 
 if __name__ == "__main__":
