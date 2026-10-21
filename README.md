@@ -14,8 +14,6 @@ fixes this:
   that apply.
 - Everything stays local.
 
-It works with OpenCode, Claude Code, Cursor, and Windsurf.
-
 This is a beta: the core loop — init, query, inline add — works end to end and
 is used daily by the maintainer, but the surface is small and tested mainly
 with one agent. Not recommended for production use. I build it with AI agents
@@ -125,10 +123,9 @@ guest path appears under `/c/...`.
 
 ## Agent setup
 
-`mementic init` syncs an enforcement section into `AGENTS.md`; agents that
-read `AGENTS.md` — OpenCode and Claude Code — pick the instructions up
-automatically. For Cursor and Windsurf, copy the enforcement block from
-`AGENTS.md` into your agent's own instruction file.
+`mementic init` syncs an enforcement section into `AGENTS.md`. Agents that read
+`AGENTS.md` pick the instructions up automatically; for others, copy the
+enforcement block from `AGENTS.md` into the agent's own instruction file.
 
 Agents use these CLI commands:
 
