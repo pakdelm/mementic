@@ -104,15 +104,17 @@ prefix. `--prefix` is start-anchored, not a substring or glob query.
 
 ## Docker Sandboxes (sbx)
 
-`docker/sbx-mementic/` is a v3 mixin that installs the CLI into a workload.
-Use it from a local checkout or a pinned Git source; there is no registry
-publishing.
+A published v3 mixin installs the CLI into a workload. Run it from the
+workspace root that should own `.mementic/`:
 
 ```sh
-# From the workspace root that should own .mementic/
-sbx run docker.io/docker/sbx-kit-shell:1.0.0 --kit ./docker/sbx-mementic --name mementic
+sbx run docker.io/docker/sbx-kit-shell:1.0.0 \
+  --kit docker.io/pakdelm/sbx-kit-mementic:0.4.1 --name mementic
 mementic init
 ```
+
+Version tags follow mementic releases. The kit source lives in
+`docker/sbx-mementic/`; see its README to build or change the kit locally.
 
 Use direct mode, not `--clone`. The graph lives in the mounted workspace at
 `.mementic/graph.db` and persists on the host. The mixin does not set a scope

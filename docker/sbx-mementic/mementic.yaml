@@ -2,8 +2,11 @@
 schemaVersion: "3"
 kind: mixin
 displayName: mementic
+
 args:
   version:
     default: "0.4.1"
     pattern: '^[0-9]+\.[0-9]+\.[0-9]+$'
     buildArg: MEMENTIC_VERSION
+
+provides: ["mementic@${{ kit.args.version }}"]

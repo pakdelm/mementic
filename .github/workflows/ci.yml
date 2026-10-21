@@ -53,3 +53,9 @@ jobs:
 
       - name: Docker contract tests
         run: uv run pytest -m docker -n 0
+
+      - name: Build the sbx kit artifact
+        run: >
+          docker buildx build docker/sbx-mementic
+          -f docker/sbx-mementic/mementic.yaml
+          --output type=cacheonly

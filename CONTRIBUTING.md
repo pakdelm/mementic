@@ -37,6 +37,16 @@ uv run python scripts/sbx_smoke.py --layout both
 It requires the `sbx` CLI and Docker with Buildx. Pass `--keep` to retain the
 sandbox and temporary workspace for inspection.
 
+The kit lives in `docker/sbx-mementic/`: `mementic.yaml` is the descriptor and
+`mementic.dockerfile` is its content recipe. The Kit frontend resolves the
+recipe by the descriptor's filename stem, so keep the two names in sync; a
+recipe under any other name is ignored and the kit builds without content. The
+CI `docker` job builds the descriptor.
+
+Releases publish the kit image. `scripts/release.py` needs Docker with a
+multi-platform buildx builder (the `docker-container` driver) and a registry
+login for `docker.io/pakdelm`.
+
 ## Pull Request Checklist
 
 Before submitting a pull request, ensure:

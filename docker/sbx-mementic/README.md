@@ -7,16 +7,17 @@ only adds mementic.
 ## Requirements
 
 - `sbx` with v3 kit support (v0.45 or later).
-- Docker with Buildx.
 - A workload that provides `python3`. Docker's default agent templates do; the
   `*-minimal` variants may not.
 
 ## Use
 
-Run from the workspace root — the directory that should own `.mementic/`:
+Each release publishes `docker.io/pakdelm/sbx-kit-mementic:<version>`. Run it
+from the workspace root — the directory that should own `.mementic/`:
 
 ```sh
-sbx run docker.io/docker/sbx-kit-shell:1.0.0 --kit ./docker/sbx-mementic --name mementic
+sbx run docker.io/docker/sbx-kit-shell:1.0.0 \
+  --kit docker.io/pakdelm/sbx-kit-mementic:0.4.1 --name mementic
 ```
 
 Inside the sandbox, initialize the graph once:
@@ -35,8 +36,34 @@ directory. The primary workspace is the scope: run mementic from the directory
 that owns `.mementic`. If the agent starts in a child repository, that child
 has no graph until it is initialized there.
 
-## Version pin
+## Working on the kit
 
-`mementic.yaml` pins `args.version` to the current release, and the Dockerfile
-installs the matching GitHub tag archive. There is no registry publishing,
-multi-arch build, or release-script integration in this repository.
+The kit is a companion pair: `mementic.yaml` declares it and
+`mementic.dockerfile` builds its content. The Kit frontend resolves the recipe
+by the descriptor's filename stem, so keep the two names in sync. A mixin with
+no discoverable companion builds successfully but is declaration-only and
+installs nothing.
+
+Build the local directory while iterating (Docker with Buildx required):
+
+```sh
+sbx run docker.io/docker/sbx-kit-shell:1.0.0 \
+  --kit ./docker/sbx-mementic --name mementic-dev
+```
+
+`sbx` builds the directory on demand and caches it by source hash. Create a new
+sandbox after editing the kit; an existing sandbox keeps its recorded kits.
+
+## Version pin and publishing
+
+`mementic.yaml` pins `args.version` to the current release; the recipe installs
+the matching GitHub tag archive. `scripts/release.py` bumps the pin in the
+release commit and, after pushing the tag, publishes a multi-arch image
+(`linux/amd64,linux/arm64`) to `docker.io/pakdelm/sbx-kit-mementic:<version>`.
+
+Publishing needs a buildx builder backed by the `docker-container` driver; the
+default `docker` driver refuses multi-platform pushes. Create one once with:
+
+```sh
+docker buildx create --name mementic-kit --driver docker-container --use
+```
