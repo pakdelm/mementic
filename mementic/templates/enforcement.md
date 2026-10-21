@@ -2,6 +2,11 @@
 ## Mementic Memory (HARD CONSTRAINT — ALWAYS ACTIVE)
 
 This project keeps its architectural rules in a local graph (`.mementic/`).
+Run every mementic command from the directory that contains `.mementic`; if
+your CWD is a subdirectory, `cd` to that directory first. Entity paths are
+relative to it: `src/auth.py` in a single-repo project,
+or `repo-a/src/auth.py` from a multi-repo workspace root.
+
 These steps apply to code work — reading, searching, editing, or making
 architectural claims. Messages that trigger none of those (acknowledgements,
 ops commands, meta discussion) need no query.
@@ -17,7 +22,8 @@ ops commands, meta discussion) need no query.
 2. **File gate.** Before opening ANY file, run
    `mementic query file <path> --compact` for every path. Locating files with
    grep/glob is fine; reading content without a query is not. This covers
-   exploration reads too. No read-only exceptions.
+   exploration reads too. No read-only exceptions. Pass file paths; `:line` and
+   `:symbol` suffixes are accepted but discarded.
 3. **Validate.** Do not write code that violates an active constraint. Cite
    every entity you apply or reject as `[mementic: <id>]`.
 4. **Record inline.** When you make a decision or establish a rule, run

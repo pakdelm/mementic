@@ -39,7 +39,10 @@ dev = [
 ]
 
 [tool.pytest.ini_options]
-addopts = "-n logical"
+addopts = "-n logical -m 'not docker'"
+markers = [
+    "docker: requires a Docker daemon",
+]
 
 [tool.ruff]
 line-length = 100

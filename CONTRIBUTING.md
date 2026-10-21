@@ -20,6 +20,40 @@
    uv run mypy .
    ```
 
+### Docker and sbx tests
+
+The default test run excludes Docker tests. Run the docker marker explicitly:
+
+```sh
+uv run pytest -m docker -n 0
+```
+
+`scripts/sbx_smoke.py` is the manual Docker Sandboxes (sbx) smoke test:
+
+```sh
+uv run python scripts/sbx_smoke.py --layout both
+```
+
+It requires the `sbx` CLI and Docker with Buildx. Pass `--keep` to retain the
+sandbox and temporary workspace for inspection.
+
+The kit lives in `docker/sbx-mementic/`: `mementic.yaml` is the descriptor and
+`mementic.dockerfile` is its content recipe. The recipe installs mementic from
+the build context, so `scripts/kit.py` stages the kit files plus
+`pyproject.toml` and the package source before building:
+
+```sh
+uv run python scripts/kit.py stage .sbx-kit
+```
+
+The Kit frontend resolves the recipe by the descriptor's filename stem, so keep
+the two names in sync; a recipe under any other name is ignored and the kit
+builds without content. The CI `docker` job stages and builds the kit.
+
+Releases publish the kit image from the checkout. `scripts/release.py` needs
+Docker with a multi-platform buildx builder (the `docker-container` driver) and
+a registry login for `docker.io/pakdelm`.
+
 ## Pull Request Checklist
 
 Before submitting a pull request, ensure:
@@ -30,6 +64,22 @@ Before submitting a pull request, ensure:
 4. No new dependencies without discussion
 5. Tests cover new functionality
 6. Follow existing code style (PEP 8, 100-char line limit, Google-style docstrings)
+7. Docker tests pass if the change touches the kit or container path (`uv run pytest -m docker -n 0`)
+8. CLA signed on your first contribution (see below)
+
+## CLA (Contributor License Agreement)
+
+Every contributor signs the [CLA](CLA.md) before their first pull request is
+merged. The CLA keeps your copyright but grants the Project Owner the
+relicensing rights the project needs to offer different licensing terms later.
+It is in addition to the DCO sign-off required on every commit.
+
+Sign by commenting on your first pull request:
+
+> I have read the CLA and I sign it.
+
+Corporate contributors must have an authorized representative sign on the
+entity's behalf. The Project Owner records the signature on the pull request.
 
 ## DCO (Developer Certificate of Origin)
 

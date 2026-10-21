@@ -82,6 +82,47 @@ and accepts the new one.
 Everything lives in `.mementic/` — no global config, no registration,
 no API keys.
 
+## Working directory
+
+The graph is local to the directory where you run `mementic init`. Run mementic
+from that directory; a subdirectory or child repository reports no graph until
+it is initialized there. There is no `MEMENTIC_WORKSPACE_ROOT` or
+`MEMENTIC_ROOT` override — the CWD is the scope.
+
+For a multi-repo workspace, initialize once at the workspace root, start the
+agent there, and use workspace-relative paths:
+
+```sh
+cd ~/dev/workspace
+mementic init
+mementic add constraint "Services must be stateless" -e repo-a/src/services.py
+mementic query file repo-a/src/services.py
+```
+
+`mementic query file --prefix repo-a/src` returns every rule bound under that
+prefix. `--prefix` is start-anchored, not a substring or glob query.
+
+## Docker Sandboxes (sbx)
+
+The v3 mixin in `docker/sbx-mementic/` installs the CLI into a workload. A
+published image follows the next release; until then, stage the kit from the
+checkout and run it from the workspace root that should own `.mementic/`:
+
+```sh
+uv run python scripts/kit.py stage .sbx-kit
+sbx run docker.io/docker/sbx-kit-shell:1.0.0 --kit .sbx-kit --name mementic
+mementic init
+```
+
+See `docker/sbx-mementic/README.md` for details.
+
+Use direct mode, not `--clone`. The graph lives in the mounted workspace at
+`.mementic/graph.db` and persists on the host. The mixin does not set a scope
+environment variable or change the working directory: run mementic from the
+directory that owns `.mementic`. The workload must provide `python3`; Docker's
+default agent templates do, the `*-minimal` variants may not. On Windows, the
+guest path appears under `/c/...`.
+
 ## Agent setup
 
 `mementic init` syncs an enforcement section into `AGENTS.md`; agents that
@@ -115,6 +156,11 @@ file. Your agent follows these rules to keep the graph current:
 ## Mementic Memory (HARD CONSTRAINT)
 
 This project keeps its architectural rules in a local graph (`.mementic/`).
+Run every mementic command from the directory that contains `.mementic`; if
+your CWD is a subdirectory, `cd` to that directory first. Entity paths are
+relative to it: `src/auth.py` in a single-repo project,
+or `repo-a/src/auth.py` from a multi-repo workspace root.
+
 These steps apply to code work — reading, searching, editing, or making
 architectural claims. Messages that trigger none of those (acknowledgements,
 ops commands, meta discussion) need no query.
@@ -127,7 +173,8 @@ ops commands, meta discussion) need no query.
 2. **File gate.** Before opening ANY file, run
    `mementic query file <path> --compact` for every path. Locating files with
    grep/glob is fine; reading content without a query is not. No read-only
-   exceptions.
+   exceptions. Pass file paths; `:line` and `:symbol` suffixes are accepted but
+   discarded.
 3. **Validate.** Do not write code that violates an active constraint; cite
    every entity you apply or reject as `[mementic: <id>]`.
 4. **Record inline.** Run `mementic add decision TITLE -r "..."` or

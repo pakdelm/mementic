@@ -1,9 +1,8 @@
-"""Tests for mementic.paths — constants and repo-root resolution."""
+"""Tests for mementic.paths — constants, CWD resolution, and path references."""
 
 from __future__ import annotations
 
-import shutil
-import subprocess
+import os
 from pathlib import Path
 
 import pytest
@@ -12,12 +11,12 @@ from mementic.paths import (
     GRAPH_DB_NAME,
     MEMORY_DIR_NAME,
     ProjectPaths,
+    canonical_entity_path,
+    clean_entity_path,
     graph_db_path,
     memory_dir,
     resolve_base_dir,
 )
-
-_GIT_AVAILABLE = shutil.which("git") is not None
 
 
 def test_name_constants_match_layout() -> None:
@@ -27,69 +26,48 @@ def test_name_constants_match_layout() -> None:
     assert graph_db_path(base) == base / ".mementic" / GRAPH_DB_NAME
 
 
-def test_resolve_base_dir_outside_git_falls_back_to_cwd(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Without Git, resolution anchors at the resolved process CWD."""
+def test_resolve_base_dir_is_cwd(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The graph is anchored at the process CWD."""
     monkeypatch.chdir(tmp_path)
+
     assert resolve_base_dir() == tmp_path.resolve()
 
 
-@pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not available")
-def test_resolve_base_dir_uses_git_toplevel_from_subdir(
+def test_resolve_base_dir_ignores_ancestor_markers(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Invoking from a subdirectory still resolves the repository root."""
-    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
-    nested = tmp_path / "src" / "deep"
-    nested.mkdir(parents=True)
-    monkeypatch.chdir(nested)
-
-    resolved = resolve_base_dir()
-
-    assert resolved.is_absolute()
-    assert resolved == tmp_path.resolve()
-    assert graph_db_path(resolved) == tmp_path / ".mementic" / "graph.db"
-
-
-def test_resolve_base_dir_uses_memory_marker_from_subdir(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A project memory database anchors the project even outside Git."""
+    """An ancestor .git or .mementic/graph.db does not move the anchor."""
+    (tmp_path / ".git").mkdir()
     (tmp_path / MEMORY_DIR_NAME).mkdir()
     (tmp_path / MEMORY_DIR_NAME / GRAPH_DB_NAME).write_text("", encoding="utf-8")
-    nested = tmp_path / "src" / "deep"
+    nested = tmp_path / "repo-a" / "src"
     nested.mkdir(parents=True)
     monkeypatch.chdir(nested)
+
+    assert resolve_base_dir() == nested.resolve()
+
+
+def test_resolve_base_dir_ignores_scope_env_vars(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The deprecated scope environment variables have no effect."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("MEMENTIC_WORKSPACE_ROOT", str(tmp_path.parent))
+    monkeypatch.setenv("MEMENTIC_ROOT", str(tmp_path.parent))
 
     assert resolve_base_dir() == tmp_path.resolve()
 
 
-def test_resolve_base_dir_uses_git_file_marker(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A .git file (worktree or submodule) counts as a repository root."""
-    (tmp_path / ".git").write_text("gitdir: /elsewhere\n", encoding="utf-8")
-    nested = tmp_path / "src"
-    nested.mkdir()
-    monkeypatch.chdir(nested)
+def test_project_paths_from_cwd_uses_cwd(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """ProjectPaths anchors both the store and entity paths at CWD."""
+    monkeypatch.chdir(tmp_path)
 
-    assert resolve_base_dir() == tmp_path.resolve()
+    paths = ProjectPaths.from_cwd()
 
-
-def test_resolve_base_dir_stops_at_nearest_marker(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A nested repository wins over an outer marker."""
-    outer = tmp_path / "outer"
-    inner = outer / "inner"
-    nested = inner / "src"
-    nested.mkdir(parents=True)
-    (outer / ".git").mkdir()
-    (inner / ".git").mkdir()
-    monkeypatch.chdir(nested)
-
-    assert resolve_base_dir() == inner.resolve()
+    assert paths.base_dir == tmp_path.resolve()
+    assert paths.store_root == tmp_path.resolve()
+    assert paths.graph_db == tmp_path / ".mementic" / "graph.db"
+    assert paths.agents_md == tmp_path / "AGENTS.md"
 
 
 def test_project_paths_resolves_store_paths_against_store_root(
@@ -136,3 +114,118 @@ def test_project_paths_caches_entity_exists(tmp_path: Path) -> None:
 
     fresh = ProjectPaths(base_dir=tmp_path, store_root=tmp_path)
     assert fresh.entity_exists("late.py") is True
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("src/foo.py", "src/foo.py"),
+        ("src/foo.py::handler", "src/foo.py"),
+        ("src/foo.py::Handler.handle", "src/foo.py"),
+        ("src/foo.py:handler", "src/foo.py"),
+        ("src/foo.py:42", "src/foo.py"),
+        ("src/foo.py:42:7", "src/foo.py"),
+        ("src/foo:bar.py", "src/foo:bar.py"),
+        ("Makefile:build", "Makefile:build"),
+        ("https://example.com/a.py", "https://example.com/a.py"),
+        ("C:\\src\\foo.py", "C:\\src\\foo.py"),
+        ("C:/src/foo.py", "C:/src/foo.py"),
+        ("C:\\src\\foo.py:handler", "C:\\src\\foo.py"),
+        ("C:\\src\\foo.py::Handler.handle", "C:\\src\\foo.py"),
+        ("C:\\src\\foo.py:42", "C:\\src\\foo.py"),
+        ("C:\\src\\foo.py:handler:42", "C:\\src\\foo.py"),
+        ("C:relative.py", "C:relative.py"),
+    ],
+)
+def test_clean_entity_path_strips_qualifiers(raw: str, expected: str) -> None:
+    assert clean_entity_path(raw) == expected
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("src/auth.py", "src/auth.py"),
+        ("src/auth.py:42::handler", "src/auth.py"),
+        ("src/auth.py::handler:42", "src/auth.py"),
+        ("src/auth.py:42:7", "src/auth.py"),
+        ("src/auth.py:handler", "src/auth.py"),
+    ],
+)
+def test_clean_entity_path_strips_qualifiers_in_either_order(raw: str, expected: str) -> None:
+    """A position and a symbol suffix are removed regardless of their order."""
+    assert clean_entity_path(raw) == expected
+
+
+def test_canonical_entity_path_keeps_relative_paths(tmp_path: Path) -> None:
+    assert canonical_entity_path(tmp_path, "src/auth.py") == "src/auth.py"
+
+
+def test_canonical_entity_path_normalizes_dot_segments(tmp_path: Path) -> None:
+    assert canonical_entity_path(tmp_path, "./src/../src/auth.py") == "src/auth.py"
+
+
+def test_canonical_entity_path_rebases_absolute_paths_under_base(
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "src" / "auth.py"
+
+    assert canonical_entity_path(tmp_path, str(target)) == "src/auth.py"
+
+
+def test_canonical_entity_path_keeps_absolute_paths_outside_base(
+    tmp_path: Path,
+) -> None:
+    outside = tmp_path.parent / "outside.py"
+
+    assert canonical_entity_path(tmp_path, str(outside)) == outside.as_posix()
+
+
+def test_canonical_entity_path_stores_escaping_paths_absolute(
+    tmp_path: Path,
+) -> None:
+    outside = tmp_path.parent / "outside.py"
+
+    assert canonical_entity_path(tmp_path, "../outside.py") == outside.as_posix()
+
+
+def test_canonical_entity_path_strips_symbol_and_line_suffixes(
+    tmp_path: Path,
+) -> None:
+    assert canonical_entity_path(tmp_path, "src/auth.py:handler") == "src/auth.py"
+    assert canonical_entity_path(tmp_path, "src/auth.py:42") == "src/auth.py"
+    assert canonical_entity_path(tmp_path, "src/auth.py:42:7") == "src/auth.py"
+    assert canonical_entity_path(tmp_path, "src/auth.py:42::handler") == "src/auth.py"
+    assert canonical_entity_path(tmp_path, "src/auth.py::handler:42") == "src/auth.py"
+
+
+def test_canonical_entity_path_preserves_posix_colon_filename(
+    tmp_path: Path,
+) -> None:
+    assert canonical_entity_path(tmp_path, "src/foo:bar.py") == "src/foo:bar.py"
+
+
+def test_canonical_entity_path_preserves_urls(tmp_path: Path) -> None:
+    url = "https://example.com/a.py"
+
+    assert canonical_entity_path(tmp_path, url) == url
+
+
+def test_canonical_entity_path_preserves_drive_relative_paths(
+    tmp_path: Path,
+) -> None:
+    assert canonical_entity_path(tmp_path, "C:relative.py") == "C:relative.py"
+
+
+@pytest.mark.parametrize("raw", ["C:\\src\\auth.py", "C:/src/auth.py"])
+def test_canonical_entity_path_rejects_windows_drive_on_posix(tmp_path: Path, raw: str) -> None:
+    if os.name == "nt":
+        assert canonical_entity_path(tmp_path, raw).startswith("C:/")
+    else:
+        with pytest.raises(ValueError, match="not portable"):
+            canonical_entity_path(tmp_path, raw)
+
+
+def test_project_paths_canonical_entity_path_method(tmp_path: Path) -> None:
+    paths = ProjectPaths(base_dir=tmp_path, store_root=tmp_path)
+
+    assert paths.canonical_entity_path("src/auth.py:handler") == "src/auth.py"

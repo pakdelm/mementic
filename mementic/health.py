@@ -27,7 +27,14 @@ class HealthItem:
 def _graph_item(graph: MementicStore | None) -> HealthItem:
     """Check that the store opens and contains at least one entry."""
     if graph is None:
-        return HealthItem(label="Graph", status="fail", hint="Could not load graph.")
+        return HealthItem(
+            label="Graph",
+            status="fail",
+            hint=(
+                "Could not load graph. Run 'mementic init' here, or cd to the "
+                "directory that owns .mementic."
+            ),
+        )
 
     stats = graph.stats()
     if stats.get("constraints", 0) > 0 or stats.get("decisions", 0) > 0:
@@ -35,8 +42,7 @@ def _graph_item(graph: MementicStore | None) -> HealthItem:
             label="Graph",
             status="ok",
             hint=(
-                f"{stats.get('decisions', 0)} decisions, "
-                f"{stats.get('constraints', 0)} constraints"
+                f"{stats.get('decisions', 0)} decisions, {stats.get('constraints', 0)} constraints"
             ),
         )
     return HealthItem(

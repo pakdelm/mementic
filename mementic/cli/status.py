@@ -6,10 +6,12 @@ from mementic.cli import context
 from mementic.console import (
     COLOR_DIM,
     COLOR_FAIL,
+    COLOR_PATH,
     COLOR_SUCCESS,
     STATUS_FAIL,
     STATUS_OK,
     console,
+    escape,
     panel,
     rule,
     table,
@@ -21,6 +23,7 @@ from mementic.health import check_health
 def status() -> None:
     """Show health checklist for mementic."""
     paths = context.resolve_paths()
+    graph_state = "present" if paths.graph_db.exists() else "not initialized"
     store = context.try_open_store(paths)
     try:
         items = check_health(store, repo_path=paths.base_dir)
@@ -38,11 +41,14 @@ def status() -> None:
             health_table.add_row(f"[{COLOR_SUCCESS}]{STATUS_OK}[/]", item.label, "")
             ok_count += 1
         else:
-            health_table.add_row(
-                f"[{COLOR_FAIL}]{STATUS_FAIL}[/]", item.label, item.hint or ""
-            )
+            health_table.add_row(f"[{COLOR_FAIL}]{STATUS_FAIL}[/]", item.label, item.hint or "")
     console.print(
         panel(
+            text(
+                f"[{COLOR_DIM}]Graph[/]: [{COLOR_PATH}]{escape(str(paths.graph_db))}[/] "
+                f"[{COLOR_DIM}]({graph_state})[/]"
+            ),
+            rule(),
             health_table,
             rule(),
             text(f"[{COLOR_DIM}]{ok_count}/{len(items)} checks passed[/]"),

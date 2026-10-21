@@ -11,7 +11,6 @@ from mementic.entries import (
     AddOutcome,
     DeprecateOutcome,
     MISSING_DECISION_MESSAGE,
-    clean_entity_path,
     EntryWriter,
     MissingDecisionError,
     word_overlap,
@@ -57,30 +56,11 @@ def test_word_overlap_partial_sets() -> None:
     assert word_overlap("one two three", "one two four") == pytest.approx(0.5)
 
 
-@pytest.mark.parametrize(
-    ("raw", "expected"),
-    [
-        ("src/foo.py::handler", "src/foo.py"),
-        ("src/foo.py::Handler.handle", "src/foo.py"),
-        ("src/foo.py:handler", "src/foo.py"),
-        ("C:\\src\\foo.py", "C:\\src\\foo.py"),
-        ("C:/src/foo.py", "C:/src/foo.py"),
-        ("C:\\src\\foo.py:handler", "C:\\src\\foo.py"),
-        ("C:\\src\\foo.py::Handler.handle", "C:\\src\\foo.py"),
-        ("C:relative.py", "C:relative.py"),
-    ],
-)
-def test_clean_entity_path_strips_symbol_qualifiers(
-    raw: str, expected: str
-) -> None:
-    assert clean_entity_path(raw) == expected
-
-
 def test_add_decision_creates_new_entry(store: MementicStore) -> None:
     result = EntryWriter(store).add_decision(
         title="Use JWT Auth",
         rationale="Token-based authentication for APIs",
-        paths=["src/auth.py::login"],
+        paths=["src/auth.py"],
     )
 
     assert result.outcome is AddOutcome.CREATED
@@ -146,9 +126,7 @@ def test_add_constraint_requires_existing_decision(store: MementicStore) -> None
         )
 
     assert "does not exist" in str(excinfo.value)
-    assert str(excinfo.value) == MISSING_DECISION_MESSAGE.format(
-        decision_id="no-such-decision"
-    )
+    assert str(excinfo.value) == MISSING_DECISION_MESSAGE.format(decision_id="no-such-decision")
 
 
 def test_missing_decision_does_not_deprecate_existing_constraint(
@@ -187,9 +165,7 @@ def test_add_decision_rejects_existing_constraint_slug(store: MementicStore) -> 
         created_at="2024-01-01T00:00:00+00:00",
     )
     with pytest.raises(ValueError, match="already exists as a constraint"):
-        EntryWriter(store).add_decision(
-            title="Shared Id", rationale="Decision text", paths=[]
-        )
+        EntryWriter(store).add_decision(title="Shared Id", rationale="Decision text", paths=[])
 
 
 def test_failed_successor_write_rolls_back_tombstone(
