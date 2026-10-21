@@ -26,6 +26,7 @@ RECIPE = KIT_DIR / "mementic.dockerfile"
 WRAPPER = KIT_DIR / "mementic"
 PACKAGE = ROOT / "mementic"
 PYPROJECT = ROOT / "pyproject.toml"
+README = ROOT / "README.md"
 LICENSE = ROOT / "LICENSE"
 
 
@@ -47,6 +48,7 @@ def stage(dest: Path) -> Path:
     for source in (DESCRIPTOR, RECIPE, WRAPPER):
         shutil.copy2(source, dest / source.name)
     shutil.copy2(PYPROJECT, dest / "pyproject.toml")
+    shutil.copy2(README, dest / "README.md")
     shutil.copy2(LICENSE, dest / "LICENSE")
     package_dest = dest / "src" / "mementic"
     if package_dest.exists():
