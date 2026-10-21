@@ -1,13 +1,16 @@
-"""Static checks for the sbx mixin kit (no Docker required)."""
+"""Static and staging checks for the sbx mixin kit (no Docker required)."""
 
 from __future__ import annotations
 
 import re
+import subprocess
+import sys
 import tomllib
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 KIT = REPO_ROOT / "docker" / "sbx-mementic"
+KIT_SCRIPT = REPO_ROOT / "scripts" / "kit.py"
 
 
 def _descriptor_path() -> Path:
@@ -62,13 +65,35 @@ def test_descriptor_has_a_stem_matched_companion_recipe() -> None:
     )
 
 
-def test_recipe_installs_tagged_release_and_entry_point() -> None:
+def test_recipe_installs_from_the_staged_context() -> None:
     recipe = _companion_recipe().read_text(encoding="utf-8")
 
     assert "ARG MEMENTIC_VERSION" in recipe
-    assert "/archive/refs/tags/v${MEMENTIC_VERSION}.tar.gz" in recipe
+    assert "COPY pyproject.toml /src/pyproject.toml" in recipe
+    assert "COPY src/mementic /src/mementic" in recipe
+    assert "pip install --no-cache-dir --target /opt/mementic /src" in recipe
+    assert 'test -d "/opt/mementic/mementic-${MEMENTIC_VERSION}.dist-info"' in recipe
     assert "/opt/mementic/entry.py" in recipe
     assert "FROM scratch" in recipe
+    assert "archive/refs/tags" not in recipe
+
+
+def test_stage_produces_the_recipe_sources(tmp_path: Path) -> None:
+    dest = tmp_path / "kit"
+
+    subprocess.run(
+        [sys.executable, str(KIT_SCRIPT), "stage", str(dest)],
+        cwd=REPO_ROOT,
+        check=True,
+    )
+
+    assert (dest / "mementic.yaml").is_file()
+    assert (dest / "mementic.dockerfile").is_file()
+    assert (dest / "mementic").is_file()
+    assert (dest / "pyproject.toml").is_file()
+    assert (dest / "src" / "mementic" / "__init__.py").is_file()
+    assert not (dest / "src" / "mementic" / ".venv").exists()
+    assert not (dest / "src" / "mementic" / "__pycache__").exists()
 
 
 def test_wrapper_checks_python_and_invokes_entry_point() -> None:

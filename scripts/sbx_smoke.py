@@ -21,7 +21,7 @@ import tempfile
 from pathlib import Path
 
 DEFAULT_WORKLOAD = "docker.io/docker/sbx-kit-shell:1.0.0"
-DEFAULT_KIT = Path(__file__).resolve().parents[1] / "docker" / "sbx-mementic"
+KIT_SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "kit.py"
 
 
 def _run(
@@ -165,8 +165,8 @@ def main() -> None:
     parser.add_argument(
         "--kit",
         type=Path,
-        default=DEFAULT_KIT,
-        help=f"Local mixin directory (default: {DEFAULT_KIT}).",
+        default=None,
+        help="Pre-staged mixin directory (default: stage the checkout).",
     )
     parser.add_argument(
         "--keep",
@@ -177,18 +177,22 @@ def main() -> None:
 
     if shutil.which("sbx") is None:
         raise SystemExit("sbx is required for this smoke test")
-    if not args.kit.exists():
-        raise SystemExit(f"mixin directory not found: {args.kit}")
 
     layouts = ("single", "multi") if args.layout == "both" else (args.layout,)
     root = Path(tempfile.mkdtemp(prefix="mementic-sbx-"))
     try:
+        kit = args.kit
+        if kit is None:
+            kit = root / "kit"
+            _run([sys.executable, str(KIT_SCRIPT), "stage", str(kit)])
+        elif not kit.exists():
+            raise SystemExit(f"mixin directory not found: {kit}")
         for layout in layouts:
             _smoke_one(
                 root=root,
                 layout=layout,
                 workload=args.workload,
-                kit=args.kit.resolve(),
+                kit=kit.resolve(),
                 keep=args.keep,
             )
         if args.keep:

@@ -44,21 +44,27 @@ by the descriptor's filename stem, so keep the two names in sync. A mixin with
 no discoverable companion builds successfully but is declaration-only and
 installs nothing.
 
-Build the local directory while iterating (Docker with Buildx required):
+The recipe installs mementic from its build context, so the context must also
+carry `pyproject.toml` and the package source. Stage it before building (Docker
+with Buildx required):
 
 ```sh
+uv run python scripts/kit.py stage .sbx-kit
 sbx run docker.io/docker/sbx-kit-shell:1.0.0 \
-  --kit ./docker/sbx-mementic --name mementic-dev
+  --kit .sbx-kit --name mementic-dev
 ```
 
-`sbx` builds the directory on demand and caches it by source hash. Create a new
-sandbox after editing the kit; an existing sandbox keeps its recorded kits.
+`sbx` builds the staged directory on demand and caches it by source hash.
+Create a new sandbox after editing the kit; an existing sandbox keeps its
+recorded kits.
 
 ## Version pin and publishing
 
-`mementic.yaml` pins `args.version` to the current release; the recipe installs
-the matching GitHub tag archive. `scripts/release.py` bumps the pin in the
-release commit and, after pushing the tag, publishes a multi-arch image
+`mementic.yaml` pins `args.version`, which the published descriptor exposes as
+`provides: mementic@<version>`. The recipe verifies the staged source reports
+that exact distribution version, so a pin that drifts from `pyproject.toml`
+fails the build. `scripts/release.py` bumps the pin in the release commit and,
+after pushing the tag, stages the checkout and publishes a multi-arch image
 (`linux/amd64,linux/arm64`) to `docker.io/pakdelm/sbx-kit-mementic:<version>`.
 
 Publishing needs a buildx builder backed by the `docker-container` driver; the

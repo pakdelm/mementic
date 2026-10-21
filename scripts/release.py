@@ -160,25 +160,23 @@ def update_kit_pin(version: str, dry_run: bool) -> None:
 
 
 def publish_kit(version: str, dry_run: bool) -> None:
-    """Publish the sbx mixin image for the released tag.
+    """Publish the sbx mixin image built from this checkout.
 
-    Runs after the tag is pushed because the recipe installs the GitHub tag
-    archive. A multi-platform push needs a ``docker-container`` buildx
+    Runs after the tag is pushed so the image tag and the git tag name the
+    same release. A multi-platform push needs a ``docker-container`` buildx
     builder; the default ``docker`` driver refuses it.
     """
     image = f"{KIT_IMAGE}:{version}"
     command = [
-        "docker",
-        "buildx",
+        sys.executable,
+        "scripts/kit.py",
         "build",
-        "docker/sbx-mementic",
-        "-f",
-        "docker/sbx-mementic/mementic.yaml",
+        "--output",
+        "push",
+        "--tag",
+        image,
         "--platform",
         KIT_PLATFORMS,
-        "-t",
-        image,
-        "--push",
     ]
     if not KIT_DIR.exists():
         warn("sbx kit directory not found; skipping kit publish.")
@@ -196,7 +194,7 @@ def publish_kit(version: str, dry_run: bool) -> None:
         if attempt < KIT_PUBLISH_ATTEMPTS:
             warn(
                 f"Kit publish failed (attempt {attempt}/{KIT_PUBLISH_ATTEMPTS}); "
-                f"retrying in {KIT_PUBLISH_RETRY_SECONDS}s -- the tag archive may not be ready."
+                f"retrying in {KIT_PUBLISH_RETRY_SECONDS}s."
             )
             time.sleep(KIT_PUBLISH_RETRY_SECONDS)
     die(f"Kit publish failed after {KIT_PUBLISH_ATTEMPTS} attempts. Push {image} manually.")

@@ -24,3 +24,6 @@ Thumbs.db
 
 # Tests
 .coverage
+
+# sbx kit staging
+/.sbx-kit/
