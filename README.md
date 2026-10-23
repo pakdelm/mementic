@@ -16,6 +16,12 @@ What it does:
 
 ![mementic demo](docs/demo.svg)
 
+In an agent harness, the same commands run around every task. The agent queries
+the pack before touching code, cites the rules it applies, and records new
+decisions as it works:
+
+![mementic in an agent harness](docs/agent.svg)
+
 This is a beta. The core loop, `init`, `query` and `add`, works end to end and I
 use it daily, but the surface is small and I have mostly tested it with one
 agent. I would not run it in production yet.
