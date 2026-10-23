@@ -17,6 +17,7 @@ The result is ``docs/agent.svg``.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from xml.sax.saxutils import escape
@@ -93,17 +94,21 @@ SCRIPT: list[Line] = [
     out(("### Relevant Decisions", HEADING)),
     out(("- Tokens carry the session (#use-jwt-auth, affects: src/api/auth.py)", DIM)),
     Line(),
-    agent("There is a constraint: sessions must stay stateless. A refresh-token flow still fits"),
-    agent("if the refresh token rotates and nothing is stored server side."),
-    agent("Before opening the module, the file gate:"),
+    agent(
+        "There is a constraint: sessions must stay stateless. A refresh-token flow still fits\n"
+        "if the refresh token rotates and nothing is stored server side.\n"
+        "Before opening the module, the file gate:"
+    ),
     cmd("uv run mementic query file src/api/auth.py --compact"),
     out(("[mementic: 0 constraints, 1 decisions | src/api/auth.py]", ACCENT)),
     out(("## Evolution of src/api/auth.py", DIM)),
     out(("- Tokens carry the session (#use-jwt-auth)", DIM)),
     Line(),
-    agent("Outcome: I will implement the refresh flow with rotating tokens"),
-    agent("and no server-side session state."),
-    agent("[mementic: sessions-stay-stateless, use-jwt-auth]"),
+    agent(
+        "Outcome: I will implement the refresh flow with rotating tokens\n"
+        "and no server-side session state.\n"
+        "[mementic: sessions-stay-stateless, use-jwt-auth]"
+    ),
     Line(),
     agent("This decision is new. Recording it so the next session finds it:"),
     cmd(
@@ -112,8 +117,6 @@ SCRIPT: list[Line] = [
         "--entity src/api/auth.py"
     ),
     out(("Added decision ", DIM), ("refresh-tokens-rotate-on-use", ACCENT)),
-    Line(),
-    agent("Graph updated. I will query again before the next module."),
 ]
 
 
@@ -122,25 +125,38 @@ def line_text(line: Line) -> str:
     return "".join(text for text, _ in line.runs)
 
 
-def build_timeline(script: list[Line]) -> tuple[list[float], float]:
-    """Return each line's start time in seconds, plus the total duration."""
+def build_timeline(script: list[Line]) -> tuple[list[float], int, float]:
+    """Return each line's start time, the total row count, and the duration."""
     times: list[float] = []
     clock = 0.5
+    rows = 0
     for line in script:
         times.append(clock)
-        length = len(line_text(line))
+        count = _row_count(line)
+        rows += count
         if line.kind == "cmd":
-            clock += length * TYPE_MS / 1000 + 0.35
-        elif length == 0:
+            clock += len(line_text(line)) * TYPE_MS / 1000 + 0.35
+        elif count > 1:
+            clock += 0.2 + (count - 1) * 0.18
+        elif not line_text(line):
             clock += 0.18
         else:
             clock += 0.24
-    return times, clock + 0.6
+    return times, rows, clock + 0.6
 
 
-def render_line(line: Line, index: int, start: float) -> str:
-    """Render one line with its reveal animation."""
-    y = PAD_TOP + TITLEBAR + index * LINE_HEIGHT
+def render_line(line: Line, index: int, start: float) -> list[str]:
+    """Render one script line into one or more SVG text rows.
+
+    A multi-line ``agent`` turn renders its first row with the ``agent``
+    prefix and its continuation rows indented to align under the text, so a
+    single thought reads as one block.
+    """
+    rows: list[str] = []
+    family = (
+        'font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" '
+        f'font-size="{FONT_SIZE}"'
+    )
 
     if line.kind == "cmd":
         parts: list[str] = []
@@ -148,48 +164,84 @@ def render_line(line: Line, index: int, start: float) -> str:
         for run_index, (text, color) in enumerate(line.runs):
             if run_index:
                 clock += 0.1
-            for char in text:
+            # Word-level typing: one tspan per word-plus-space keeps the
+            # tspan count low enough that every renderer runs all delays.
+            for word in re.findall(r"\S+\s*", text):
                 delay = round(clock, 3)
                 parts.append(
-                    f'<tspan fill="{color}" style="animation-delay:{delay}s">{escape(char)}</tspan>'
+                    f'<tspan fill="{color}" style="animation-delay:{delay}s">{escape(word)}</tspan>'
                 )
-                clock += TYPE_MS / 1000
-        return (
-            f'<text x="{PAD_X}" y="{y}" xml:space="preserve" '
-            f'font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" '
-            f'font-size="{FONT_SIZE}">{"".join(parts)}</text>'
+                clock += len(word) * TYPE_MS / 1000
+        rows.append(
+            f'<text x="{PAD_X}" y="{_y(index)}" xml:space="preserve" {family}>'
+            f"{''.join(parts)}</text>"
         )
+        return rows
 
     if not line.runs:
-        return ""
+        return rows
 
-    delay = round(start, 3)
-    style = f"animation:reveal 0.28s ease-out {delay}s both"
+    if line.kind == "agent":
+        chunks = line.runs[-1][0].split("\n")
+        for row_offset, chunk in enumerate(chunks):
+            delay = round(start + row_offset * 0.18, 3)
+            style = f"animation:reveal 0.28s ease-out {delay}s both"
+            if row_offset == 0:
+                prefix = f'<tspan fill="{AGENT}">agent  </tspan>'
+            else:
+                prefix = f'<tspan fill="transparent">{" " * len("agent  ")}</tspan>'
+            rows.append(
+                f'<g style="{style}">'
+                f'<text x="{PAD_X}" y="{_y(index + row_offset)}" xml:space="preserve" {family}>'
+                f'{prefix}<tspan fill="{TEXT}">{escape(chunk)}</tspan></text></g>'
+            )
+        return rows
+
     spans = "".join(f'<tspan fill="{color}">{escape(text)}</tspan>' for text, color in line.runs)
-    return (
-        f'<g style="{style}">'
-        f'<text x="{PAD_X}" y="{y}" xml:space="preserve" '
-        f'font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" '
-        f'font-size="{FONT_SIZE}">{spans}</text></g>'
+    delay = round(start, 3)
+    rows.append(
+        f'<g style="animation:reveal 0.28s ease-out {delay}s both">'
+        f'<text x="{PAD_X}" y="{_y(index)}" xml:space="preserve" {family}>{spans}</text></g>'
     )
+    return rows
+
+
+def _y(index: int) -> int:
+    """Return the baseline y coordinate for a rendered row index."""
+    return PAD_TOP + TITLEBAR + index * LINE_HEIGHT
+
+
+def _row_count(line: Line) -> int:
+    """Return how many visual rows one script line occupies."""
+    if not line.runs:
+        return 1
+    payload = line.runs[-1][0]
+    return len(payload.split("\n"))
 
 
 def build() -> str:
     """Return the SVG document as text."""
-    times, total = build_timeline(SCRIPT)
-    longest = max(len(line_text(line)) for line in SCRIPT)
+    times, rows, total = build_timeline(SCRIPT)
+    longest = max(len(part) for line in SCRIPT for part in line_text(line).split("\n"))
     width = max(WIDTH_FLOOR, int(longest * CHAR_WIDTH) + PAD_X * 2 + 16)
-    height = PAD_TOP + TITLEBAR + len(SCRIPT) * LINE_HEIGHT + PAD_BOTTOM
+    height = PAD_TOP + TITLEBAR + rows * LINE_HEIGHT + PAD_BOTTOM
 
-    rendered = [render_line(line, index, times[index]) for index, line in enumerate(SCRIPT)]
-    body = "\n".join(part for part in rendered if part)
+    rendered: list[str] = []
+    row_cursor = 0
+    for index, line in enumerate(SCRIPT):
+        parts = render_line(line, row_cursor, times[index])
+        rendered.extend(part for part in parts if part)
+        row_cursor += _row_count(line)
+    body = "\n".join(rendered)
 
     last_text = next(
         (line for line in reversed(SCRIPT) if line_text(line)),
         Line(runs=[("", DIM)]),
     )
-    cursor_x = PAD_X + len(line_text(last_text)) * CHAR_WIDTH + 3
-    cursor_y = PAD_TOP + TITLEBAR + (len(SCRIPT) - 1) * LINE_HEIGHT - 11
+    last_chunks = line_text(last_text).split("\n")
+    cursor_row = row_cursor - 1
+    cursor_x = PAD_X + (len("agent  ") + len(last_chunks[-1])) * CHAR_WIDTH + 3
+    cursor_y = _y(cursor_row) - 11
     cursor_delay = round(total - 0.4, 3)
 
     dots = "".join(
