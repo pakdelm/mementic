@@ -14,6 +14,8 @@ What it does:
 - Hands the agent a ranked list of the rules that apply before it starts.
 - Never sends anything off your machine.
 
+![mementic demo](docs/demo.svg)
+
 This is a beta. The core loop, `init`, `query` and `add`, works end to end and I
 use it daily, but the surface is small and I have mostly tested it with one
 agent. I would not run it in production yet.
