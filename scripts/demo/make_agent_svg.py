@@ -1,6 +1,6 @@
 """Generate the agent-workflow demo SVG for the README.
 
-Unlike ``demo.svg`` (a plain terminal recording of CLI commands), this shows a
+Unlike ``terminal.svg`` (a plain recording of CLI commands), this shows a
 harness transcript: the user names a task, the agent thinks, calls mementic
 through ``uv run`` the way an agent does, and states its outcome. The flow
 follows the enforcement block: query the pack before touching code, read the
@@ -10,9 +10,9 @@ real CLI output shapes.
 
 Run after CLI output changes:
 
-    uv run python scripts/make_agent_svg.py
+    uv run python scripts/demo/make_agent_svg.py
 
-The result is ``docs/agent.svg``.
+The result is ``agent.svg``, beside this script.
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from xml.sax.saxutils import escape
 
-OUT = Path(__file__).resolve().parents[1] / "docs" / "agent.svg"
+OUT = Path(__file__).resolve().parent / "agent.svg"
 
 WIDTH_FLOOR = 868
 TITLEBAR = 34

@@ -1,14 +1,14 @@
 """Generate the animated terminal SVG used in the README.
 
-The transcript lives in ``docs/demo.txt``; regenerate it first with
-``make_demo_txt.py`` when CLI output changes:
+The transcript lives in ``terminal.txt`` beside this script; regenerate it
+first with ``make_txt.py`` when CLI output changes:
 
-    uv run python scripts/make_demo_txt.py
-    uv run python scripts/make_demo_svg.py
+    uv run python scripts/demo/make_txt.py
+    uv run python scripts/demo/make_svg.py
 
-The result is `docs/demo.svg`, a self contained SVG whose CSS animations type the
-commands and fade in the output. GitHub renders it inline like a GIF, with no
-video or extra tooling involved.
+The result is ``terminal.svg``, a self contained SVG whose CSS animations type
+the commands and fade in the output. GitHub renders it inline like a GIF, with
+no video or extra tooling involved.
 """
 
 from __future__ import annotations
@@ -17,9 +17,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from xml.sax.saxutils import escape
 
-DOCS = Path(__file__).resolve().parents[1] / "docs"
-OUT = DOCS / "demo.svg"
-TRANSCRIPT = DOCS / "demo.txt"
+HERE = Path(__file__).resolve().parent
+OUT = HERE / "terminal.svg"
+TRANSCRIPT = HERE / "terminal.txt"
 
 WIDTH_FLOOR = 760
 TITLEBAR = 34

@@ -1,8 +1,8 @@
 """Capture the current CLI output for the README demo transcript.
 
-Writes ``docs/demo.txt``: one block per command, box panels width-padded, the
-working directory shown as ``~/dev/shop``. Regenerate whenever CLI output
-changes, then run ``make_demo_svg.py`` to rebuild the SVG.
+Writes ``terminal.txt`` beside this script: one block per command, box panels
+width-padded, the working directory shown as ``~/dev/shop``. Regenerate whenever
+CLI output changes, then run ``make_svg.py`` to rebuild the SVG.
 """
 
 from __future__ import annotations
@@ -14,10 +14,11 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-CLI = Path(__file__).resolve().parents[1] / ".venv" / "Scripts" / "mementic.exe"
-POSIX_CLI = Path(__file__).resolve().parents[1] / ".venv" / "bin" / "mementic"
+ROOT = Path(__file__).resolve().parents[2]
+CLI = ROOT / ".venv" / "Scripts" / "mementic.exe"
+POSIX_CLI = ROOT / ".venv" / "bin" / "mementic"
 ANSI = re.compile(r"\x1b\[[0-9;]*[a-zA-Z]")
-OUT = Path(__file__).resolve().parents[1] / "docs" / "demo.txt"
+OUT = Path(__file__).resolve().parent / "terminal.txt"
 COLUMNS = "104"
 
 STEPS: list[list[str]] = [
