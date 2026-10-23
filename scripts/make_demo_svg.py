@@ -1,9 +1,9 @@
 """Generate the animated terminal SVG used in the README.
 
-The transcript lives in ``docs/demo.txt`` and is captured from a real run at 96
-columns. The only edit is the working directory, shown as ``~/dev/shop`` instead
-of a temporary path. Regenerate after CLI output changes:
+The transcript lives in ``docs/demo.txt``; regenerate it first with
+``make_demo_txt.py`` when CLI output changes:
 
+    uv run python scripts/make_demo_txt.py
     uv run python scripts/make_demo_svg.py
 
 The result is `docs/demo.svg`, a self contained SVG whose CSS animations type the
