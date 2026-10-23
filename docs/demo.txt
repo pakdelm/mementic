@@ -29,5 +29,5 @@ $ mementic query keywords jwt handlers
 └─────────────────────────────────────────────────────────────────────────────────────────────┘
 
 $ mementic deprecate use-jwt-auth --reason "Replaced by short lived tokens"
-Deprecated: 1 deprecated, reason: Replaced by short lived tokens (use-jwt-auth)
+Deprecated use-jwt-auth: retired (Replaced by short lived tokens)
 
