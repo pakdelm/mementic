@@ -55,7 +55,7 @@ mementic init
 
 # 2. Your agent records decisions and constraints as it works:
 #    mementic add decision "Use JWT Auth" --rationale "Token-based auth for APIs"
-#    mementic add constraint "Services must be stateless" -e src/services.py
+#    mementic add constraint "Services must be stateless" --entity src/services.py
 
 # 3. Before a coding task, ask what rules apply here
 mementic query keywords auth rate limit session
@@ -88,7 +88,7 @@ start the agent there, and use paths relative to that root:
 ```sh
 cd ~/dev/workspace
 mementic init
-mementic add constraint "Services must be stateless" -e repo-a/src/services.py
+mementic add constraint "Services must be stateless" --entity repo-a/src/services.py
 mementic query file repo-a/src/services.py
 ```
 
@@ -130,10 +130,16 @@ The commands agents need:
 | Load context before a task | `mementic query keywords kw1 kw2 ...` |
 | Check what affects a file | `mementic query file path/to/file.py` |
 | Record a decision | `mementic add decision TITLE --rationale "..."` |
-| Record a constraint | `mementic add constraint DESC -e PATH` |
-| Retire outdated rules | `mementic deprecate ID1 ID2 ... -r "reason"` |
+| Record a constraint | `mementic add constraint DESC --entity PATH` |
+| Retire outdated rules | `mementic deprecate ID1 ID2 ... --reason "reason"` |
 | Search the graph | `mementic query search <term>` |
 | Trace why an entry was retired | `mementic history <id>` |
+
+`--entity` takes a file path and can be repeated. It is optional for a decision
+and required for a constraint, because a constraint with no file anchor cannot be
+found by `query file`. `--rationale` is required on `add decision`: it is the
+justification text the context pack shows later. The short forms are `-e` and
+`-r`, except on `deprecate`, where `-r` means `--reason`.
 
 `query keywords` and `query file` both take `--json` for scripts and `--compact`
 for plain text. Compact output is the `[mementic: ...]` echo line plus the pack
@@ -240,9 +246,9 @@ If any of that sounds like fun to fix, contributions are welcome. See
 | `mementic query file <path> [--prefix] [--json] [--compact]` | Constraints and decisions for a file (exact match by default) |
 | `mementic query search <term>` | Full text search of the graph |
 | `mementic query stats` | Store statistics |
-| `mementic add decision <title> -r TEXT [-e PATH]` | Record a decision (duplicates resolved automatically) |
-| `mementic add constraint <desc> -e PATH` | Record a constraint (duplicates resolved automatically) |
-| `mementic deprecate <id...> [-r REASON]` | Retire rules |
+| `mementic add decision <title> --rationale TEXT [--entity PATH]` | Record a decision (duplicates resolved automatically) |
+| `mementic add constraint <desc> --entity PATH` | Record a constraint (duplicates resolved automatically) |
+| `mementic deprecate <id...> [--reason REASON]` | Retire rules |
 | `mementic history [id]` | Deprecation records; with an ID, follow the replacement chain |
 | `mementic status` | Health checklist |
 | `mementic list [decisions\|constraints\|entities]` | List everything |
