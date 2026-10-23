@@ -1,7 +1,10 @@
 """Generate the animated terminal SVG used in the README.
 
-The transcript mirrors real `mementic` output from a fresh project: `init`, two
-adds, one keyword query, and one file query. Run it after CLI output changes:
+The transcript is captured CLI output with three cosmetic edits: the working
+directory is shown as ``~/dev/shop`` instead of a temporary path, the box borders
+around the ``init`` panel are dropped, and the panel's trailing hint line is
+omitted. Every other line, including the wording, matches a real run. Regenerate
+after CLI output changes:
 
     uv run python scripts/make_demo_svg.py
 
@@ -63,11 +66,12 @@ def plain(text: str) -> Line:
 
 SCRIPT: list[Line] = [
     command("mementic init"),
-    plain("Graph         ~/dev/shop/.mementic/graph.db (created)"),
-    plain("Instructions  enforcement section synced in AGENTS.md"),
+    plain("Graph: ~/dev/shop/.mementic/graph.db (created)"),
+    plain("Created ~/dev/shop/AGENTS.md with enforcement block."),
     Line(),
     command(
-        'mementic add decision "Use JWT Auth" -r "Tokens carry the session" -e src/api/handlers.py'
+        'mementic add decision "Use JWT Auth" '
+        '-r "Tokens carry the session, no server side state" -e src/api/handlers.py'
     ),
     output(("Added decision ", DIM), ("use-jwt-auth", ACCENT), (" (accepted)", DIM)),
     Line(),
@@ -78,15 +82,25 @@ SCRIPT: list[Line] = [
     Line(),
     command("mementic query keywords jwt handlers --compact"),
     output(("[mementic: 1/1 constraints, 1/1 decisions | jwt, handlers]", ACCENT)),
-    output(("### Constraints", HEADING)),
-    output(("- Handlers must stay stateless (#handlers-must-stay-stateless)", DIM)),
-    output(("### Relevant Decisions", HEADING)),
-    output(("- Tokens carry the session (#use-jwt-auth, affects: src/api/handlers.py)", DIM)),
+    output(("## Architectural Context for: [jwt, handlers] - shown 2 of 2 matched", DIM)),
     Line(),
-    command("mementic query file src/api/handlers.py --compact"),
-    output(("[mementic: 1 constraints, 1 decisions | src/api/handlers.py]", ACCENT)),
-    output(("### Constraints", HEADING)),
-    output(("- Handlers must stay stateless (#handlers-must-stay-stateless)", DIM)),
+    output(("### Constraints (MUST follow)", HEADING)),
+    output(
+        (
+            "- Handlers must stay stateless "
+            "(#handlers-must-stay-stateless, bound: src/api/handlers.py)",
+            DIM,
+        )
+    ),
+    Line(),
+    output(("### Relevant Decisions", HEADING)),
+    output(
+        (
+            "- Tokens carry the session, no server side state "
+            "(#use-jwt-auth, affects: src/api/handlers.py)",
+            DIM,
+        )
+    ),
 ]
 
 
