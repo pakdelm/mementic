@@ -4,16 +4,13 @@ $ mementic init
 │ ─────────────────────────────────────────────────────────────────────────────────────────── │
 │ Created ~/dev/shop/AGENTS.md with enforcement block.                                        │
 │ ─────────────────────────────────────────────────────────────────────────────────────────── │
-│ Run mementic from this directory; subdirectories do not see this graph. Next: agents record │
-│ rules inline via 'mementic add decision|constraint', then query with 'mementic query        │
-│ keywords <kw1> <kw2> ...'                                                                   │
 └─────────────────────────────────────────────────────────────────────────────────────────────┘
 
 $ mementic add decision "Use JWT Auth" --rationale "Tokens carry the session" --entity src/auth.py
-Added decision use-jwt-auth (accepted)
+Added decision use-jwt-auth
 
 $ mementic add constraint "Handlers must stay stateless" --entity src/auth.py
-Added constraint handlers-must-stay-stateless (active)
+Added constraint handlers-must-stay-stateless
 
 $ mementic query keywords jwt handlers
 [mementic: 1/1 constraints, 1/1 decisions | jwt, handlers]
