@@ -47,8 +47,8 @@ def _graph_item(graph: MementicStore | None) -> HealthItem:
         )
     return HealthItem(
         label="Graph",
-        status="fail",
-        hint="Graph is empty. Record rules with 'mementic add'.",
+        status="ok",
+        hint="0 entries recorded. Record rules with 'mementic add'.",
     )
 
 

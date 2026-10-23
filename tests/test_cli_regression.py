@@ -341,7 +341,7 @@ def test_deprecate_decision_by_slug_marks_it_deprecated(project_dir: Path) -> No
         "Single deployable keeps operations simple early on",
     )
     result = _ok("deprecate", "use-monolith", "-r", "Moved to services")
-    assert "1 deprecated" in _text(result)
+    assert "Deprecated use-monolith: retired (Moved to services)" in _text(result)
     listing = _ok("list", "decisions", "--status", "deprecated")
     assert "use-monolith" in _text(listing)
 
@@ -362,8 +362,84 @@ def test_deprecate_already_deprecated_is_graceful(project_dir: Path) -> None:
     )
     _ok("deprecate", "use-monolith")
     result = _ok("deprecate", "use-monolith")
-    assert "already deprecated" in _text(result).lower()
+    assert "Skipped use-monolith: already deprecated" in _text(result)
     assert result.exit_code == 0
+
+
+def test_deprecate_reports_each_result_and_summary(project_dir: Path) -> None:
+    """Per-result lines replace the old count-only summary; exit stays 0."""
+    _ok("add", "decision", "Alpha Rule", "-r", "Alpha rationale")
+    _ok("add", "decision", "Beta Rule", "-r", "Beta rationale")
+    result = _run("deprecate", "alpha-rule", "ghost-id", "beta-rule")
+    output = _text(result)
+    assert "Deprecated alpha-rule: retired" in output
+    assert "Deprecated beta-rule: retired" in output
+    assert "Error: ghost-id not found" in output
+    assert "Summary: 2 deprecated, 1 not found" in output
+    assert result.exit_code == 1
+
+
+def test_deprecate_single_id_skips_summary(project_dir: Path) -> None:
+    """A single-ID deprecate prints one line and no summary."""
+    _ok("add", "decision", "Solo Rule", "-r", "Solo rationale")
+    result = _ok("deprecate", "solo-rule", "-r", "obsolete")
+    output = _text(result)
+    assert "Deprecated solo-rule: retired (obsolete)" in output
+    assert "Summary:" not in output
+    assert result.exit_code == 0
+
+
+def test_query_search_no_matches_prints_sentence(project_dir: Path) -> None:
+    """An empty search prints the echo line and a sentence, not an empty panel."""
+    result = _ok("query", "search", "zzqxv")
+    output = _text(result)
+    assert "No matches for" in output
+    assert "Search:" not in output
+
+
+def test_status_reports_empty_graph_as_ok(project_dir: Path) -> None:
+    """A freshly initialized graph passes the status check."""
+    result = _ok("status")
+    output = _text(result)
+    assert "2/2 checks passed" in output
+    assert "[FAIL]" not in output
+
+
+def test_history_marks_empty_reason(project_dir: Path) -> None:
+    """A tombstone without a reason shows a placeholder instead of a blank cell."""
+    _ok("add", "decision", "Reasonless Rule", "-r", "Reasonless rationale")
+    _ok("deprecate", "reasonless-rule")
+    result = _ok("history", "reasonless-rule")
+    output = _text(result)
+    assert "no reason recorded" in output
+    assert "2026-" in output  # timestamp uses the log format, not raw ISO
+
+
+def test_entities_mark_live_and_dead_paths(project_dir: Path) -> None:
+    """The entities list marks each path with the status icon pattern."""
+    target = project_dir / "src" / "live.py"
+    target.parent.mkdir(parents=True)
+    target.write_text("x = 1", encoding="utf-8")
+    _ok("add", "decision", "Live Binding", "-r", "Live rationale", "-e", "src/live.py")
+    _ok("add", "decision", "Dead Binding", "-r", "Dead rationale", "-e", "src/gone.py")
+    output = _text(_ok("list", "entities"))
+    assert "[OK]" in output
+    assert "[FAIL]" in output
+
+
+def test_log_title_shows_shown_of_limit(project_dir: Path) -> None:
+    """The log panel title reports shown entries against the limit."""
+    _ok("add", "decision", "Logged Rule", "-r", "Logged rationale")
+    output = _text(_ok("log"))
+    assert "Audit log (1 of 20)" in output
+
+
+def test_status_lists_entry_counts(project_dir: Path) -> None:
+    """After entries are added the Graph hint shows the counts."""
+    _ok("add", "decision", "Counted Rule", "-r", "Counted rationale")
+    result = _ok("status")
+    output = _text(result)
+    assert "1 decisions" in output
 
 
 def test_query_keywords_returns_matching_seeded_entries(project_dir: Path) -> None:
@@ -597,7 +673,7 @@ def test_log_lists_mutations_newest_first(project_dir: Path) -> None:
 
 def test_log_without_entries_prints_hint_and_exits_zero(project_dir: Path) -> None:
     result = _ok("log")
-    assert "No audit log found" in _text(result)
+    assert "No mutations recorded yet." in _text(result)
 
 
 def test_unknown_command_exits_nonzero() -> None:
@@ -698,10 +774,10 @@ def test_query_keywords_prints_mementic_summary_line(project_dir: Path) -> None:
     line = next((ln for ln in text.splitlines() if "[mementic:" in ln), None)
     assert line is not None, f"no [mementic: ...] summary line in:\n{text}"
     assert re.search(
-        r"\d+/\d+ constraints, \d+/\d+ decisions \| .+",
+        r"\d+ of \d+ constraints, \d+ of \d+ decisions \| .+",
         line,
     ), f"summary line lacks compact shown/matched format: {line}"
-    assert "1/1 decisions" in line
+    assert "1 of 1 decisions" in line
 
 
 def test_query_file_prints_mementic_summary_line(project_dir: Path) -> None:
@@ -787,4 +863,4 @@ def test_deprecated_entry_excluded_from_context_pack(project_dir: Path) -> None:
     output = _text(result)
     assert "zebra-protocol" not in output
     # Compact echo (Spec 33 Phase 1): nothing live, nothing shown.
-    assert "[mementic: 0/0 constraints, 0/0 decisions | zebra]" in output
+    assert "[mementic: 0 of 0 constraints, 0 of 0 decisions | zebra]" in output

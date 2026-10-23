@@ -55,7 +55,7 @@ def log(
     with context.resolve_store() as store:
         rows = store.get_audit_entries(limit=n)
     if not rows:
-        console.print(text("No audit log found. Run init or add first."))
+        console.print(text("No mutations recorded yet."))
         raise typer.Exit()
 
     audit_table = table()
@@ -87,4 +87,4 @@ def log(
                 context.DEFAULT_LOG_SUMMARY_WIDTH,
             ),
         )
-    console.print(panel(audit_table, title=f"Audit log (last {n})"))
+    console.print(panel(audit_table, title=f"Audit log ({len(rows)} of {n})"))

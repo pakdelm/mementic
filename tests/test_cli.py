@@ -276,7 +276,7 @@ class TestDeprecateCommand:
             result = runner.invoke(app, ["deprecate", "already-dep"])
 
         output = result.stdout + result.stderr
-        assert "already deprecated" in output.lower()
+        assert "Skipped already-dep: already deprecated" in output
 
 
 class TestHistoryCommand:
@@ -460,7 +460,7 @@ class TestQueryCompactOutput:
         assert result.exit_code == 0, f"stderr: {result.stderr}"
         output = _strip_ansi(result.stdout)
         assert output.count("[mementic:") == 1
-        assert "[mementic: 0/0 constraints, 0/0 decisions | zzqxv]" in output
+        assert "[mementic: 0 of 0 constraints, 0 of 0 decisions | zzqxv]" in output
         assert "0 of 1 constraints matched your keywords" in output
         assert "0 of 1 decisions matched your keywords" in output
         assert "use-jwt" not in output
@@ -675,7 +675,9 @@ class TestDeprecateMultiId:
 
         assert result.exit_code == 0
         output = _strip_ansi(result.stdout)
-        assert "2 deprecated" in output
+        assert "Deprecated dec-1: retired" in output
+        assert "Deprecated dec-2: retired" in output
+        assert "Summary: 2 deprecated" in output
         assert store.get_live_decisions() == []
 
     def test_deprecate_mixed_valid_and_invalid(
@@ -690,8 +692,9 @@ class TestDeprecateMultiId:
 
         assert result.exit_code == 1  # errors → exit code 1
         output = _strip_ansi(result.stdout)
-        assert "1 deprecated" in output
-        assert "1 errors" in output
+        assert "Error: nonexistent not found" in _strip_ansi(result.stderr)
+        assert "Deprecated dec-valid: retired" in output
+        assert "Summary: 1 deprecated, 1 not found" in output
 
 
 class TestAddDecisionAutoResolve:
