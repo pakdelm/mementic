@@ -87,4 +87,4 @@ def log(
                 context.DEFAULT_LOG_SUMMARY_WIDTH,
             ),
         )
-    console.print(panel(audit_table, title=f"Audit log (last {n})"))
+    console.print(panel(audit_table, title=f"Audit log ({len(rows)} of {n})"))

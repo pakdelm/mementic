@@ -8,9 +8,11 @@ from mementic.cli import context
 from mementic.console import (
     COLOR_DIM,
     COLOR_ID,
+    COLOR_FAIL,
     COLOR_SUCCESS,
     COLOR_WARN,
     STATUS_DEPRECATED,
+    STATUS_FAIL,
     STATUS_OK,
     console,
     escape,
@@ -210,12 +212,15 @@ def entities(
         raise typer.Exit()
 
     entity_table = table()
+    entity_table.add_column("", width=6)
     entity_table.add_column("Path", style=COLOR_ID, no_wrap=True, overflow="ellipsis")
     for path in all_paths:
-        entity_table.add_row(escape(path))
-    console.print(
-        panel(entity_table, title=f"Entities ({len(all_paths)} of {total})")
-    )
+        if paths.entity_exists(path):
+            marker = f"[{COLOR_SUCCESS}]{STATUS_OK}[/]"
+        else:
+            marker = f"[{COLOR_FAIL}]{STATUS_FAIL}[/]"
+        entity_table.add_row(marker, escape(path))
+    console.print(panel(entity_table, title=f"Entities ({len(all_paths)} of {total})"))
 
 
 def history(
@@ -255,14 +260,13 @@ def history(
         )
         dep_table.add_column("Reason", no_wrap=True, overflow="ellipsis", width=28)
         for record in rows:
+            reason = record["reason"] or ""
             dep_table.add_row(
                 format_timestamp(record["at"]),
                 escape(record["entry_id"]),
-                escape(record["reason"] or ""),
+                escape(reason) if reason else "[dim]no reason recorded[/]",
             )
-        console.print(
-            panel(dep_table, title=f"Deprecation history ({len(rows)} of {total})")
-        )
+        console.print(panel(dep_table, title=f"Deprecation history ({len(rows)} of {total})"))
         return
 
     if not records:
@@ -282,11 +286,12 @@ def history(
             if record["replaced_by"] is None
             else escape(record["replaced_by"])
         )
+        reason = record["reason"] or ""
         dep_table.add_row(
             format_timestamp(record["at"]),
             escape(record["entry_id"]),
             successor,
-            escape(record["reason"] or ""),
+            escape(reason) if reason else "[dim]no reason recorded[/]",
         )
     chain = " -> ".join(escape(chain_id) for chain_id in chain_ids)
     console.print(

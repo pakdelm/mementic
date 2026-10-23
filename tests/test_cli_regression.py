@@ -405,6 +405,35 @@ def test_status_reports_empty_graph_as_ok(project_dir: Path) -> None:
     assert "[FAIL]" not in output
 
 
+def test_history_marks_empty_reason(project_dir: Path) -> None:
+    """A tombstone without a reason shows a placeholder instead of a blank cell."""
+    _ok("add", "decision", "Reasonless Rule", "-r", "Reasonless rationale")
+    _ok("deprecate", "reasonless-rule")
+    result = _ok("history", "reasonless-rule")
+    output = _text(result)
+    assert "no reason recorded" in output
+    assert "2026-" in output  # timestamp uses the log format, not raw ISO
+
+
+def test_entities_mark_live_and_dead_paths(project_dir: Path) -> None:
+    """The entities list marks each path with the status icon pattern."""
+    target = project_dir / "src" / "live.py"
+    target.parent.mkdir(parents=True)
+    target.write_text("x = 1", encoding="utf-8")
+    _ok("add", "decision", "Live Binding", "-r", "Live rationale", "-e", "src/live.py")
+    _ok("add", "decision", "Dead Binding", "-r", "Dead rationale", "-e", "src/gone.py")
+    output = _text(_ok("list", "entities"))
+    assert "[OK]" in output
+    assert "[FAIL]" in output
+
+
+def test_log_title_shows_shown_of_limit(project_dir: Path) -> None:
+    """The log panel title reports shown entries against the limit."""
+    _ok("add", "decision", "Logged Rule", "-r", "Logged rationale")
+    output = _text(_ok("log"))
+    assert "Audit log (1 of 20)" in output
+
+
 def test_status_lists_entry_counts(project_dir: Path) -> None:
     """After entries are added the Graph hint shows the counts."""
     _ok("add", "decision", "Counted Rule", "-r", "Counted rationale")
