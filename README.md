@@ -16,7 +16,7 @@ fixes this:
 
 This is a beta: the core loop — init, query, inline add — works end to end and
 is used daily by the maintainer, but the surface is small and tested mainly
-with one agent. Not recommended for production use.
+with one agent.
 
 ## How mementic differs
 
@@ -77,7 +77,7 @@ automatically; changed content under the same title deprecates the old entry
 and accepts the new one.
 
 Everything lives in `.mementic/` — no global config, no registration,
-no API keys. The install is from the GitHub repo; there is no PyPI package.
+no API keys.
 
 ## Working directory
 
@@ -269,16 +269,6 @@ for it exists with a timestamp newer than the entry's `created_at` (so a
 re-added slug derives as live again) — liveness is derived at query time, so
 context packs and keyword queries always exclude tombstones without any
 cleanup scans.
-
-## Project status & roadmap
-
-Active development, used daily by the maintainer. Next milestones:
-
-- **Publish the sbx kit image** (`docker.io/pakdelm/sbx-kit-mementic`).
-- **Team sharing** via an always-on mutation log.
-
-Contributions in any of those areas are welcome — see
-[CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Contributing
 
