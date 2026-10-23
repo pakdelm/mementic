@@ -278,15 +278,6 @@ newer than its `created_at`, which means a slug that is added again comes back t
 life on its own. Liveness is computed at query time, so packs and keyword queries
 skip tombstones without any cleanup scan.
 
-## Project status and roadmap
-
-Active development, used daily by me. Next up:
-
-- Publish the sbx kit image (`docker.io/pakdelm/sbx-kit-mementic`).
-- Team sharing, built on a mutation log that stays on.
-
-Contributions in either area are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md).
-
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). The short version: PRs are welcome, every
