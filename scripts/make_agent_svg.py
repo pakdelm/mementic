@@ -1,10 +1,12 @@
 """Generate the agent-workflow demo SVG for the README.
 
-Unlike ``demo.svg`` (a plain terminal recording of CLI commands), this shows an
-agent harness working a task the way the enforcement block prescribes: query the
-pack before touching code, respect the constraint it returns, cite what was
-applied, record the new decision inline. Agent turns are simulated narration
-prefixed with ``agent``; the mementic lines follow real CLI output shapes.
+Unlike ``demo.svg`` (a plain terminal recording of CLI commands), this shows a
+harness transcript: the user names a task, the agent thinks, calls mementic
+through ``uv run`` the way an agent does, and states its outcome. The flow
+follows the enforcement block: query the pack before touching code, read the
+constraint, run the file gate, cite what was applied, record the decision
+inline. Turns are prefixed ``user`` / ``agent`` / ``tool``; tool results follow
+real CLI output shapes.
 
 Run after CLI output changes:
 
@@ -44,36 +46,42 @@ HEADING = "#d2a8ff"
 
 @dataclass
 class Line:
-    """One terminal line, typed command, agent turn, or printed output."""
+    """One transcript line: user turn, agent turn, tool call, or tool result."""
 
     runs: list[tuple[str, str]] = field(default_factory=list)
-    kind: str = "out"  # "cmd", "agent", "out"
+    kind: str = "out"  # "cmd", "agent", "user", "out"
 
 
 def cmd(text: str) -> Line:
-    """Return a typed shell command."""
-    return Line(runs=[("$ ", PROMPT), (text, TEXT)], kind="cmd")
+    """Return a tool invocation line, as a harness shows it."""
+    return Line(runs=[("tool   ", ACCENT), (text, TEXT)], kind="cmd")
 
 
 def agent(text: str) -> Line:
-    """Return an agent narration line."""
+    """Return an agent thought or narration line."""
     return Line(runs=[("agent  ", AGENT), (text, TEXT)], kind="agent")
 
 
+def user(text: str) -> Line:
+    """Return the user's task line."""
+    return Line(runs=[("user   ", PROMPT), (text, TEXT)], kind="user")
+
+
 def out(*runs: tuple[str, str]) -> Line:
-    """Return a colored output line."""
+    """Return a tool result line."""
     return Line(runs=list(runs))
 
 
 def dim(text: str) -> Line:
-    """Return a dim output line."""
+    """Return a dim tool-result line."""
     return Line(runs=[(text, DIM)])
 
 
 SCRIPT: list[Line] = [
-    agent("Task: add a refresh-token flow to the auth module"),
-    agent("Querying the project memory before reading anything."),
-    cmd("mementic query keywords auth tokens session --compact"),
+    user("Task: add a refresh-token flow to the auth module"),
+    Line(),
+    agent("First I check the project memory for rules on auth and sessions."),
+    cmd("uv run mementic query keywords auth tokens session --compact"),
     out(("[mementic: 1 of 1 constraints, 2 of 3 decisions | auth, tokens, session]", ACCENT)),
     out(("### Constraints (MUST follow)", HEADING)),
     out(
@@ -85,26 +93,27 @@ SCRIPT: list[Line] = [
     out(("### Relevant Decisions", HEADING)),
     out(("- Tokens carry the session (#use-jwt-auth, affects: src/api/auth.py)", DIM)),
     Line(),
-    agent("Constraint found: keep sessions stateless. Design fits:"),
-    agent("short-lived access tokens, refresh via a rotating store."),
-    agent("File gate before opening the module:"),
-    cmd("mementic query file src/api/auth.py --compact"),
+    agent("There is a constraint: sessions must stay stateless. A refresh-token flow still fits"),
+    agent("if the refresh token rotates and nothing is stored server side."),
+    agent("Before opening the module, the file gate:"),
+    cmd("uv run mementic query file src/api/auth.py --compact"),
     out(("[mementic: 0 constraints, 1 decisions | src/api/auth.py]", ACCENT)),
     out(("## Evolution of src/api/auth.py", DIM)),
     out(("- Tokens carry the session (#use-jwt-auth)", DIM)),
     Line(),
+    agent("Outcome: I will implement the refresh flow with rotating tokens"),
+    agent("and no server-side session state."),
     agent("[mementic: sessions-stay-stateless, use-jwt-auth]"),
-    agent("Implementing the refresh flow, no server-side session state."),
     Line(),
-    agent("Decision made while working. Recording it inline:"),
+    agent("This decision is new. Recording it so the next session finds it:"),
     cmd(
-        'mementic add decision "Refresh tokens rotate on use" '
+        'uv run mementic add decision "Refresh tokens rotate on use" '
         '--rationale "Rotation limits replay windows for stolen tokens" '
         "--entity src/api/auth.py"
     ),
     out(("Added decision ", DIM), ("refresh-tokens-rotate-on-use", ACCENT)),
     Line(),
-    agent("Graph updated. Querying again before the next module."),
+    agent("Graph updated. I will query again before the next module."),
 ]
 
 
@@ -188,7 +197,7 @@ def build() -> str:
         for index, color in enumerate(("#ff5f56", "#ffbd2e", "#27c93f"))
     )
 
-    return f"""<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}" role="img" aria-label="Agent harness working a task with mementic: query the pack, cite the constraint, record the decision">
+    return f"""<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}" role="img" aria-label="Harness transcript: a user names a task, the agent queries mementic, cites the constraint it follows, and records a new decision">
 <title>mementic agent demo</title>
 <style>
   @keyframes reveal {{ from {{ opacity: 0 }} to {{ opacity: 1 }} }}

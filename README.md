@@ -16,9 +16,9 @@ What it does:
 
 ![mementic demo](docs/demo.svg)
 
-In an agent harness, the same commands run around every task. The agent queries
-the pack before touching code, cites the rules it applies, and records new
-decisions as it works:
+In an agent harness the same flow runs around every task: you hand the agent a
+task, it calls mementic through `uv run`, reads the rules before touching code,
+and records new decisions as it works:
 
 ![mementic in an agent harness](docs/agent.svg)
 
