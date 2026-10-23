@@ -349,6 +349,11 @@ _COMPACT_QUERIES = [
     ["query", "file", "src/auth.py", "--compact"],
 ]
 
+_COMPACT_QUERIES_SHORT = [
+    ["query", "keywords", "auth", "-c"],
+    ["query", "file", "src/auth.py", "-c"],
+]
+
 _DEFAULT_QUERIES = [
     ["query", "keywords", "auth"],
     ["query", "file", "src/auth.py"],
@@ -435,6 +440,23 @@ class TestQueryCompactOutput:
             result = runner.invoke(app, args)
         assert result.exit_code == 0, f"stderr: {result.stderr}"
         assert _panel_title(args) not in _strip_ansi(result.stdout)
+
+    @pytest.mark.parametrize("args", _COMPACT_QUERIES_SHORT)
+    def test_compact_short_alias_matches_long_flag(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        args: list[str],
+    ) -> None:
+        """-c is an alias for --compact on both query commands."""
+        store = _seed_query_store(tmp_path, monkeypatch)
+        with patch("mementic.cli.context.resolve_store", return_value=nullcontext(store)):
+            result = runner.invoke(app, args)
+        assert result.exit_code == 0, f"stderr: {result.stderr}"
+        output = _strip_ansi(result.stdout)
+        assert output.count("[mementic:") == 1
+        assert "use-jwt" in output
+        assert _panel_title(args) not in output
 
     @pytest.mark.parametrize("args", _DEFAULT_QUERIES)
     def test_default_output_keeps_panel(

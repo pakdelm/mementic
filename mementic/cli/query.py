@@ -38,6 +38,7 @@ def keywords(
     compact: bool = typer.Option(
         False,
         "--compact",
+        "-c",
         help="Agent-friendly output: summary line plus undecorated pack text",
     ),
 ) -> None:
@@ -124,6 +125,7 @@ def file(
     compact: bool = typer.Option(
         False,
         "--compact",
+        "-c",
         help="Agent-friendly output: summary line plus undecorated pack text",
     ),
 ) -> None:
