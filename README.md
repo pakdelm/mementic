@@ -14,11 +14,9 @@ fixes this:
   that apply.
 - Everything stays local.
 
-It works with OpenCode, Claude Code, Cursor, and Windsurf.
-
-This is a personal project, not a product. I use it daily, but it is not
-recommended for production use. This project is my experiment in agentic
-development. I build it with AI agents and improve it through feedback cycles.
+This is a beta: the core loop — init, query, inline add — works end to end and
+is used daily by the maintainer, but the surface is small and tested mainly
+with one agent.
 
 ## How mementic differs
 
@@ -57,7 +55,6 @@ mementic is zero-config by design.
 
 ```bash
 cd ~/dev/my-project
-
 # 1. Create an empty graph at .mementic/graph.db (idempotent)
 mementic init
 
@@ -125,10 +122,9 @@ guest path appears under `/c/...`.
 
 ## Agent setup
 
-`mementic init` syncs an enforcement section into `AGENTS.md`; agents that
-read `AGENTS.md` — OpenCode and Claude Code — pick the instructions up
-automatically. For Cursor and Windsurf, copy the enforcement block from
-`AGENTS.md` into your agent's own instruction file.
+`mementic init` syncs an enforcement section into `AGENTS.md`. Agents that read
+`AGENTS.md` pick the instructions up automatically; for others, copy the
+enforcement block from `AGENTS.md` into the agent's own instruction file.
 
 Agents use these CLI commands:
 
@@ -223,24 +219,18 @@ vary depending on how dense your project's architectural rules are. But the
 pattern held — the agent spent way less time doing discovery and more time
 doing the actual work.
 
-## What's missing (honest answer)
+## Limitations
 
-This is not production software. It's a personal tool that I open-sourced because
-it might be useful to someone else. Here's what you should know before trying it:
+A few things to know before trying it:
 
-- **Tested on one setup.** I've only actually tested this daily with
-  **OpenCode**. Other agents that read `AGENTS.md` should work, but they
-  haven't been through the same use. If you hit issues, open an issue — I'll
-  fix it.
+- **Tested daily with OpenCode.** Other agents that read `AGENTS.md` should
+  work, but they haven't been through the same use. If you hit issues, open an
+  issue — I'll fix it.
 - **Cold start is empty.** `init` creates an empty graph and scans nothing.
   The graph fills up as you (or your agent) record decisions and constraints
   inline while working.
-- **Edge cases exist.** It handles the happy paths well. Weird repo structures
-  or corrupted graphs may break.
 - **Single user, local-only.** The graph lives on your machine. It is not built
   for team sharing and has no sync feature.
-- **No PyPI package yet.** It installs directly from the GitHub repo. It works,
-  but it's not polished.
 
 If any of this sounds like fun to fix, [contributions are welcome](CONTRIBUTING.md).
 
@@ -280,24 +270,11 @@ re-added slug derives as live again) — liveness is derived at query time, so
 context packs and keyword queries always exclude tombstones without any
 cleanup scans.
 
-## Project status & roadmap
-
-Active development, used daily by the maintainer. The core loop — init,
-query, inline add — works end to end. Next milestones:
-
-- **First PyPI release.** Install is currently from the GitHub repo only.
-- **Pack quality.** File-overlap signals via `entry_paths` for better
-  context-pack precision.
-- **Polish.** Good-first-issue-sized work: docs, error messages, examples.
-
-Contributions in any of those areas are welcome — see
-[CONTRIBUTING.md](CONTRIBUTING.md).
-
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). The short version: PRs welcome, DCO
-sign-off required (`git commit -s`), tests must pass, lint and typecheck must
-be clean.
+sign-off required (`git commit -s`), CLA on your first contribution
+([CLA.md](CLA.md)), tests must pass, lint and typecheck must be clean.
 
 ## License
 
