@@ -55,7 +55,7 @@ def log(
     with context.resolve_store() as store:
         rows = store.get_audit_entries(limit=n)
     if not rows:
-        console.print(text("No audit log found. Run init or add first."))
+        console.print(text("No mutations recorded yet."))
         raise typer.Exit()
 
     audit_table = table()

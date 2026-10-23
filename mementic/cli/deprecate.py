@@ -8,9 +8,7 @@ import typer
 
 from mementic.cli import context
 from mementic.console import (
-    COLOR_DIM,
     COLOR_FAIL,
-    COLOR_HEADER,
     COLOR_SUCCESS,
     COLOR_WARN,
     console,
@@ -48,28 +46,26 @@ def deprecate(
         1 for result in results if result.outcome is DeprecateOutcome.ALREADY_DEPRECATED
     )
     errors = sum(1 for result in results if result.outcome is DeprecateOutcome.NOT_FOUND)
+
     for result in results:
         if result.outcome is DeprecateOutcome.NOT_FOUND:
-            typer.echo(result.message, err=True)
+            typer.echo(f"Error: {escape(result.entry_id)} not found", err=True)
+        elif result.outcome is DeprecateOutcome.ALREADY_DEPRECATED:
+            typer.echo(f"Skipped {escape(result.entry_id)}: already deprecated")
+        elif reason:
+            typer.echo(f"Deprecated {escape(result.entry_id)}: retired ({escape(reason)})")
+        else:
+            typer.echo(f"Deprecated {escape(result.entry_id)}: retired")
 
-    parts: list[str] = []
-    if deprecated:
-        parts.append(f"[{COLOR_SUCCESS}]{deprecated} deprecated[/]")
-    if already:
-        parts.append(f"[{COLOR_WARN}]{already} already deprecated[/]")
-    if errors:
-        parts.append(f"[{COLOR_FAIL}]{errors} errors[/]")
-    if reason:
-        parts.append(f"[{COLOR_DIM}]reason: {escape(reason)}[/]")
-
-    id_list = ", ".join(escape(entry_id) for entry_id in ids)
-    console.print(
-        text(
-            f"[{COLOR_HEADER}]Deprecated:[/] "
-            + ", ".join(parts)
-            + f" ([{COLOR_DIM}]{id_list}[/])"
-        )
-    )
+    if len(results) > 1:
+        parts: list[str] = []
+        if deprecated:
+            parts.append(f"[{COLOR_SUCCESS}]{deprecated} deprecated[/]")
+        if already:
+            parts.append(f"[{COLOR_WARN}]{already} skipped[/]")
+        if errors:
+            parts.append(f"[{COLOR_FAIL}]{errors} not found[/]")
+        console.print(text("Summary: " + ", ".join(parts)))
 
     if errors:
         raise typer.Exit(code=1)

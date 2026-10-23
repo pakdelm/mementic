@@ -38,7 +38,7 @@ def status() -> None:
     ok_count = 0
     for item in items:
         if item.status == "ok":
-            health_table.add_row(f"[{COLOR_SUCCESS}]{STATUS_OK}[/]", item.label, "")
+            health_table.add_row(f"[{COLOR_SUCCESS}]{STATUS_OK}[/]", item.label, item.hint or "")
             ok_count += 1
         else:
             health_table.add_row(f"[{COLOR_FAIL}]{STATUS_FAIL}[/]", item.label, item.hint or "")

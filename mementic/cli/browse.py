@@ -99,7 +99,7 @@ def decisions(
     )
     if show_superseded:
         decision_table.add_column(
-            "Superseded By", style=COLOR_WARN, no_wrap=True, overflow="ellipsis", width=12
+            "Superseded By", style=COLOR_WARN, no_wrap=True, overflow="ellipsis", width=16
         )
     for decision, superseded_by in pairs:
         date = decision.created_at[:10] if decision.created_at else ""
@@ -165,7 +165,7 @@ def constraints(
     )
     if show_superseded:
         constraint_table.add_column(
-            "Superseded By", style=COLOR_WARN, no_wrap=True, overflow="ellipsis", width=12
+            "Superseded By", style=COLOR_WARN, no_wrap=True, overflow="ellipsis", width=16
         )
     for constraint, superseded_by in pairs:
         icon = STATUS_OK if superseded_by is None else STATUS_DEPRECATED
@@ -272,7 +272,7 @@ def history(
     chain_ids = _replacement_chain(entry_id, records)
 
     dep_table = table()
-    dep_table.add_column("At", style=COLOR_DIM)
+    dep_table.add_column("At", style=COLOR_DIM, no_wrap=True, width=16)
     dep_table.add_column("Entry", style=COLOR_ID)
     dep_table.add_column("Replaced By")
     dep_table.add_column("Reason", overflow="fold")
@@ -283,7 +283,7 @@ def history(
             else escape(record["replaced_by"])
         )
         dep_table.add_row(
-            record["at"],
+            format_timestamp(record["at"]),
             escape(record["entry_id"]),
             successor,
             escape(record["reason"] or ""),
