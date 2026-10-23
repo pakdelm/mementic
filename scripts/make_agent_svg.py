@@ -24,7 +24,7 @@ from xml.sax.saxutils import escape
 
 OUT = Path(__file__).resolve().parents[1] / "docs" / "agent.svg"
 
-WIDTH_FLOOR = 760
+WIDTH_FLOOR = 868
 TITLEBAR = 34
 PAD_X = 22
 PAD_TOP = 24
@@ -112,8 +112,8 @@ SCRIPT: list[Line] = [
     Line(),
     agent("This decision is new. Recording it so the next session finds it:"),
     cmd(
-        'uv run mementic add decision "Refresh tokens rotate on use" '
-        '--rationale "Rotation limits replay windows for stolen tokens" '
+        'uv run mementic add decision "Refresh tokens rotate on use" \\\n'
+        '  --rationale "Rotation limits replay windows for stolen tokens" \\\n'
         "--entity src/api/auth.py"
     ),
     out(("Added decision ", DIM), ("refresh-tokens-rotate-on-use", ACCENT)),
@@ -150,7 +150,8 @@ def render_line(line: Line, index: int, start: float) -> list[str]:
 
     A multi-line ``agent`` turn renders its first row with the ``agent``
     prefix and its continuation rows indented to align under the text, so a
-    single thought reads as one block.
+    single thought reads as one block. A multi-line ``cmd`` wraps the typed
+    invocation across rows, keeping the canvas narrow.
     """
     rows: list[str] = []
     family = (
@@ -159,23 +160,27 @@ def render_line(line: Line, index: int, start: float) -> list[str]:
     )
 
     if line.kind == "cmd":
-        parts: list[str] = []
+        chunks = line.runs[-1][0].split("\n")
         clock = start
-        for run_index, (text, color) in enumerate(line.runs):
-            if run_index:
+        for row_offset, chunk in enumerate(chunks):
+            parts: list[str] = []
+            if row_offset == 0:
+                parts.append(f'<tspan fill="{ACCENT}">tool   </tspan>')
                 clock += 0.1
+            else:
+                parts.append(f'<tspan fill="transparent">{" " * len("tool   ")}</tspan>')
             # Word-level typing: one tspan per word-plus-space keeps the
             # tspan count low enough that every renderer runs all delays.
-            for word in re.findall(r"\S+\s*", text):
+            for word in re.findall(r"\S+\s*", chunk):
                 delay = round(clock, 3)
                 parts.append(
-                    f'<tspan fill="{color}" style="animation-delay:{delay}s">{escape(word)}</tspan>'
+                    f'<tspan fill="{TEXT}" style="animation-delay:{delay}s">{escape(word)}</tspan>'
                 )
                 clock += len(word) * TYPE_MS / 1000
-        rows.append(
-            f'<text x="{PAD_X}" y="{_y(index)}" xml:space="preserve" {family}>'
-            f"{''.join(parts)}</text>"
-        )
+            rows.append(
+                f'<text x="{PAD_X}" y="{_y(index + row_offset)}" xml:space="preserve" {family}>'
+                f"{''.join(parts)}</text>"
+            )
         return rows
 
     if not line.runs:
@@ -219,10 +224,21 @@ def _row_count(line: Line) -> int:
     return len(payload.split("\n"))
 
 
+def _row_chunks(line: Line) -> list[str]:
+    """Return the text of each visual row one script line occupies."""
+    if not line.runs:
+        return [""]
+    return line.runs[-1][0].split("\n")
+
+
 def build() -> str:
     """Return the SVG document as text."""
     times, rows, total = build_timeline(SCRIPT)
-    longest = max(len(part) for line in SCRIPT for part in line_text(line).split("\n"))
+    longest = max(
+        len(chunk) + (len("agent  ") if line.kind == "agent" else 0)
+        for line in SCRIPT
+        for chunk in _row_chunks(line)
+    )
     width = max(WIDTH_FLOOR, int(longest * CHAR_WIDTH) + PAD_X * 2 + 16)
     height = PAD_TOP + TITLEBAR + rows * LINE_HEIGHT + PAD_BOTTOM
 
@@ -234,13 +250,13 @@ def build() -> str:
         row_cursor += _row_count(line)
     body = "\n".join(rendered)
 
-    last_text = next(
-        (line for line in reversed(SCRIPT) if line_text(line)),
-        Line(runs=[("", DIM)]),
-    )
-    last_chunks = line_text(last_text).split("\n")
+    last_line = next((line for line in reversed(SCRIPT) if line_text(line)), None)
     cursor_row = row_cursor - 1
-    cursor_x = PAD_X + (len("agent  ") + len(last_chunks[-1])) * CHAR_WIDTH + 3
+    if last_line is not None and last_line.kind == "agent":
+        last_row = _row_chunks(last_line)[-1]
+    else:
+        last_row = line_text(last_line) if last_line else ""
+    cursor_x = PAD_X + (len("agent  ") + len(last_row)) * CHAR_WIDTH + 3
     cursor_y = _y(cursor_row) - 11
     cursor_delay = round(total - 0.4, 3)
 
