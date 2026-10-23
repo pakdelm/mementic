@@ -1,0 +1,36 @@
+$ mementic init
+┌─────────────────────────────────── Mementic initialized ────────────────────────────────────┐
+│ Graph: ~/dev/shop/.mementic/graph.db (created)                                              │
+│ ─────────────────────────────────────────────────────────────────────────────────────────── │
+│ Created ~/dev/shop/AGENTS.md with enforcement block.                                        │
+│ ─────────────────────────────────────────────────────────────────────────────────────────── │
+│ Run mementic from this directory; subdirectories do not see this graph. Next: agents record │
+│ rules inline via 'mementic add decision|constraint', then query with 'mementic query        │
+│ keywords <kw1> <kw2> ...'                                                                   │
+└─────────────────────────────────────────────────────────────────────────────────────────────┘
+
+$ mementic add decision "Use JWT Auth" --rationale "Tokens carry the session" --entity src/auth.py
+Added decision use-jwt-auth (accepted)
+
+$ mementic add constraint "Handlers must stay stateless" --entity src/auth.py
+Added constraint handlers-must-stay-stateless (active)
+
+$ mementic query keywords jwt handlers
+[mementic: 1/1 constraints, 1/1 decisions | jwt, handlers]
+┌──────────────────────────────── Context pack: jwt, handlers ────────────────────────────────┐
+│ 1 of 1 constraints, 1 of 1 decisions                                                        │
+│ ─────────────────────────────────────────────────────────────────────────────────────────── │
+│ Architectural Context for: [jwt, handlers] - shown 2 of 2 matched                           │
+│                                                                                             │
+│ Constraints (MUST follow)                                                                   │
+│                                                                                             │
+│  • Handlers must stay stateless (#handlers-must-stay-stateless, bound: src/auth.py)         │
+│                                                                                             │
+│ Relevant Decisions                                                                          │
+│                                                                                             │
+│  • Tokens carry the session (#use-jwt-auth, affects: src/auth.py)                           │
+└─────────────────────────────────────────────────────────────────────────────────────────────┘
+
+$ mementic deprecate use-jwt-auth --reason "Replaced by short lived tokens"
+Deprecated: 1 deprecated, reason: Replaced by short lived tokens (use-jwt-auth)
+

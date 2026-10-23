@@ -1,10 +1,8 @@
 """Generate the animated terminal SVG used in the README.
 
-The transcript is captured CLI output with three cosmetic edits: the working
-directory is shown as ``~/dev/shop`` instead of a temporary path, the box borders
-around the ``init`` panel are dropped, and the panel's trailing hint line is
-omitted. Every other line, including the wording, matches a real run. Regenerate
-after CLI output changes:
+The transcript lives in ``docs/demo.txt`` and is captured from a real run at 96
+columns. The only edit is the working directory, shown as ``~/dev/shop`` instead
+of a temporary path. Regenerate after CLI output changes:
 
     uv run python scripts/make_demo_svg.py
 
@@ -19,14 +17,16 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from xml.sax.saxutils import escape
 
-OUT = Path(__file__).resolve().parents[1] / "docs" / "demo.svg"
+DOCS = Path(__file__).resolve().parents[1] / "docs"
+OUT = DOCS / "demo.svg"
+TRANSCRIPT = DOCS / "demo.txt"
 
 WIDTH_FLOOR = 760
 TITLEBAR = 34
 PAD_X = 22
 PAD_TOP = 24
 PAD_BOTTOM = 26
-LINE_HEIGHT = 23
+LINE_HEIGHT = 21
 FONT_SIZE = 13
 CHAR_WIDTH = 7.85
 TYPE_MS = 22
@@ -34,6 +34,7 @@ TYPE_MS = 22
 BG = "#0d1117"
 BAR = "#161b22"
 BORDER = "#30363d"
+PANEL = "#484f58"
 TEXT = "#e6edf3"
 DIM = "#8b949e"
 PROMPT = "#7ee787"
@@ -54,54 +55,37 @@ def command(text: str) -> Line:
     return Line(runs=[("$ ", PROMPT), (text, TEXT)], typed=True)
 
 
-def output(*runs: tuple[str, str]) -> Line:
-    """Return an output line built from colored runs."""
-    return Line(runs=list(runs))
+def rich(text: str) -> Line:
+    """Return a captured output line with colors chosen from its shape."""
+    stripped = text.lstrip()
+
+    if text.startswith(("┌", "└")) or stripped.startswith("│ ─"):
+        color = PANEL
+    elif "Mementic initialized" in text or "Context pack:" in text:
+        color = HEADING
+    elif stripped.startswith("│") and (
+        "Constraints (MUST follow)" in text or "Relevant Decisions" in text
+    ):
+        color = TEXT
+    elif text.startswith("[mementic:"):
+        color = ACCENT
+    else:
+        color = DIM
+
+    return Line(runs=[(text, color)])
 
 
-def plain(text: str) -> Line:
-    """Return a dim output line."""
-    return Line(runs=[(text, DIM)])
-
-
-SCRIPT: list[Line] = [
-    command("mementic init"),
-    plain("Graph: ~/dev/shop/.mementic/graph.db (created)"),
-    plain("Created ~/dev/shop/AGENTS.md with enforcement block."),
-    Line(),
-    command(
-        'mementic add decision "Use JWT Auth" '
-        '-r "Tokens carry the session, no server side state" -e src/api/handlers.py'
-    ),
-    output(("Added decision ", DIM), ("use-jwt-auth", ACCENT), (" (accepted)", DIM)),
-    Line(),
-    command('mementic add constraint "Handlers must stay stateless" -e src/api/handlers.py'),
-    output(
-        ("Added constraint ", DIM), ("handlers-must-stay-stateless", ACCENT), (" (active)", DIM)
-    ),
-    Line(),
-    command("mementic query keywords jwt handlers --compact"),
-    output(("[mementic: 1/1 constraints, 1/1 decisions | jwt, handlers]", ACCENT)),
-    output(("## Architectural Context for: [jwt, handlers] - shown 2 of 2 matched", DIM)),
-    Line(),
-    output(("### Constraints (MUST follow)", HEADING)),
-    output(
-        (
-            "- Handlers must stay stateless "
-            "(#handlers-must-stay-stateless, bound: src/api/handlers.py)",
-            DIM,
-        )
-    ),
-    Line(),
-    output(("### Relevant Decisions", HEADING)),
-    output(
-        (
-            "- Tokens carry the session, no server side state "
-            "(#use-jwt-auth, affects: src/api/handlers.py)",
-            DIM,
-        )
-    ),
-]
+def load_script() -> list[Line]:
+    """Read the captured transcript into renderable lines."""
+    script: list[Line] = []
+    for raw in TRANSCRIPT.read_text(encoding="utf-8").splitlines():
+        if raw.startswith("$ "):
+            script.append(command(raw[2:]))
+        elif raw.strip():
+            script.append(rich(raw))
+        else:
+            script.append(Line())
+    return script
 
 
 def line_text(line: Line) -> str:
@@ -162,20 +146,21 @@ def render_line(line: Line, index: int, start: float) -> str:
 
 def build() -> str:
     """Return the SVG document as text."""
-    times, total = build_timeline(SCRIPT)
-    longest = max(len(line_text(line)) for line in SCRIPT)
+    script = load_script()
+    times, total = build_timeline(script)
+    longest = max(len(line_text(line)) for line in script)
     width = max(WIDTH_FLOOR, int(longest * CHAR_WIDTH) + PAD_X * 2 + 16)
-    height = PAD_TOP + TITLEBAR + len(SCRIPT) * LINE_HEIGHT + PAD_BOTTOM
+    height = PAD_TOP + TITLEBAR + len(script) * LINE_HEIGHT + PAD_BOTTOM
 
-    rendered = [render_line(line, index, times[index]) for index, line in enumerate(SCRIPT)]
+    rendered = [render_line(line, index, times[index]) for index, line in enumerate(script)]
     body = "\n".join(part for part in rendered if part)
 
     last_text = next(
-        (line for line in reversed(SCRIPT) if line_text(line)),
+        (line for line in reversed(script) if line_text(line)),
         Line(runs=[("", DIM)]),
     )
     cursor_x = PAD_X + len(line_text(last_text)) * CHAR_WIDTH + 3
-    cursor_y = PAD_TOP + TITLEBAR + (len(SCRIPT) - 1) * LINE_HEIGHT - 11
+    cursor_y = PAD_TOP + TITLEBAR + (len(script) - 1) * LINE_HEIGHT - 11
     cursor_delay = round(total - 0.4, 3)
 
     dots = "".join(
