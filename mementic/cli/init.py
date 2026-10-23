@@ -43,13 +43,6 @@ def init() -> None:
             ),
             rule(),
             text(escape(enforcement_note)),
-            rule(),
-            text(
-                f"[{COLOR_DIM} italic]Run mementic from this directory; "
-                f"subdirectories do not see this graph. Next: agents record "
-                f"rules inline via 'mementic add decision|constraint', then "
-                f"query with 'mementic query keywords <kw1> <kw2> ...'[/]"
-            ),
             title="Mementic initialized",
         )
     )

@@ -827,8 +827,8 @@ class TestAddDecisionAutoResolve:
 
         assert result.exit_code != 0
 
-    def test_output_reports_accepted(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Add output is one line naming the entry and its outcome."""
+    def test_output_reports_created(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Add output is one line naming the entry, with no outcome suffix."""
         monkeypatch.chdir(tmp_path)
 
         store = _make_store()
@@ -839,8 +839,8 @@ class TestAddDecisionAutoResolve:
             )
 
         output = _strip_ansi(result.stdout + result.stderr)
-        assert "some-decision" in output
-        assert "accepted" in output.lower()
+        assert "Added decision some-decision" in output
+        assert "accepted" not in output.lower()
 
 
 class TestAddConstraintAutoResolve:
@@ -918,8 +918,8 @@ class TestAddConstraintAutoResolve:
         assert "TLS 1.3" in c.description
         assert {x.id for x in store.get_live_constraints()} == {"use-https"}
 
-    def test_output_reports_active(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Add-constraint output is one line naming the entry and its outcome."""
+    def test_output_reports_created(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Add-constraint output names the entry, with no outcome suffix."""
         monkeypatch.chdir(tmp_path)
 
         store = _make_store()
@@ -930,8 +930,8 @@ class TestAddConstraintAutoResolve:
             )
 
         output = _strip_ansi(result.stdout + result.stderr)
-        assert "no-raw-sql-in-handlers" in output
-        assert "active" in output.lower()
+        assert "Added constraint no-raw-sql-in-handlers" in output
+        assert "active" not in output.lower()
 
 
 class TestInitStub:

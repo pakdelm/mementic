@@ -166,7 +166,7 @@ def test_init_second_run_updates_section_in_place(bare_dir: Path) -> None:
 
 def test_add_decision_new_slug_is_accepted(project_dir: Path) -> None:
     result = _ok("add", "decision", "Use Jwt Auth", "-r", "Jwt tokens carry authentication claims")
-    assert "accepted" in _text(result)
+    assert "added decision use-jwt-auth" in _text(result).lower()
     d = _decision("use-jwt-auth")
     assert d is not None
     # Live entries derive as accepted — no cached status column exists.
@@ -250,7 +250,7 @@ def test_add_decision_reports_outcome_per_disposition(
 
 def test_add_constraint_new_description_is_accepted(project_dir: Path) -> None:
     result = _ok("add", "constraint", "Handlers must remain stateless", "-e", "src/api.py")
-    assert "active" in _text(result)
+    assert "added constraint handlers-must-remain-stateless" in _text(result).lower()
     c = _constraint("handlers-must-remain-stateless")
     assert c is not None
 
@@ -648,7 +648,6 @@ def test_readd_after_deprecate_replaces_tombstone(project_dir: Path) -> None:
     _ok("deprecate", "use-monolith")
     result = _ok("add", "decision", "Use Monolith", "-r", "Single deployable simplifies operations")
     output = _text(result)
-    assert "accepted" in output.lower()
     assert "replaced deprecated" in output.lower()
     d = _decision("use-monolith")
     assert d is not None

@@ -23,23 +23,23 @@ def ellipsize(value: str, limit: int) -> str:
     return value[: limit - 3] + "..."
 
 
-def add_outcome_label(outcome: AddOutcome, kind: EntryKind) -> str:
-    """Return the human-facing label for an add outcome.
+def add_outcome_label(outcome: AddOutcome) -> str:
+    """Return the parenthetical suffix for an add outcome.
 
     Args:
         outcome: Writer outcome.
-        kind: Entry kind.
 
     Returns:
-        Label used in the one-line confirmation.
+        A label for outcomes worth calling out, or an empty string for a
+        plain created entry.
     """
     if outcome is AddOutcome.DUPLICATE:
-        return "skipped (duplicate)"
+        return "duplicate"
     if outcome is AddOutcome.REPLACED:
-        return "accepted (previous entry deprecated)"
+        return "previous entry deprecated"
     if outcome is AddOutcome.REVIVED:
-        return "accepted (replaced deprecated entry)"
-    return "active" if kind is EntryKind.CONSTRAINT else "accepted"
+        return "replaced deprecated entry"
+    return ""
 
 
 def add_summary(kind: EntryKind, entry_id: str, outcome: AddOutcome) -> str:
@@ -54,12 +54,8 @@ def add_summary(kind: EntryKind, entry_id: str, outcome: AddOutcome) -> str:
         Rich-markup confirmation line.
     """
     noun = kind.value
+    label = add_outcome_label(outcome)
+    suffix = f" ({label})" if label else ""
     if outcome is AddOutcome.DUPLICATE:
-        return (
-            f"[{COLOR_WARN}]Skipped {noun}[/] [{COLOR_ID}]{entry_id}[/] "
-            f"({add_outcome_label(outcome, kind)})"
-        )
-    return (
-        f"[{COLOR_SUCCESS}]Added {noun}[/] [{COLOR_ID}]{entry_id}[/] "
-        f"({add_outcome_label(outcome, kind)})"
-    )
+        return f"[{COLOR_WARN}]Skipped {noun}[/] [{COLOR_ID}]{entry_id}[/]{suffix}"
+    return f"[{COLOR_SUCCESS}]Added {noun}[/] [{COLOR_ID}]{entry_id}[/]{suffix}"
