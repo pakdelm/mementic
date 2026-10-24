@@ -14,13 +14,7 @@ What it does:
 - Hands the agent a ranked list of the rules that apply before it starts.
 - Never sends anything off your machine.
 
-![mementic demo](scripts/demo/terminal.svg)
-
-In an agent harness the same flow runs around every task: you hand the agent a
-task, it calls mementic through `uv run`, reads the rules before touching code,
-and records new decisions as it works:
-
-![mementic in an agent harness](scripts/demo/agent.svg)
+![mementic demo](scripts/demo/terminal.gif)
 
 This is a beta. The core loop, `init`, `query` and `add`, works end to end and I
 use it daily, but the surface is small and I have mostly tested it with one
