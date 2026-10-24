@@ -13,6 +13,7 @@ from mementic.paths import (
     ProjectPaths,
     canonical_entity_path,
     clean_entity_path,
+    display_path,
     graph_db_path,
     memory_dir,
     resolve_base_dir,
@@ -45,6 +46,20 @@ def test_resolve_base_dir_ignores_ancestor_markers(
     monkeypatch.chdir(nested)
 
     assert resolve_base_dir() == nested.resolve()
+
+
+def test_display_path_is_relative_under_base(tmp_path: Path) -> None:
+    """Paths under the project render relative to it with / separators."""
+    path = tmp_path / MEMORY_DIR_NAME / GRAPH_DB_NAME
+
+    assert display_path(path, tmp_path) == f"{MEMORY_DIR_NAME}/{GRAPH_DB_NAME}"
+
+
+def test_display_path_keeps_outside_paths_absolute(tmp_path: Path) -> None:
+    """Paths outside the project stay absolute instead of using .. segments."""
+    outside = tmp_path.parent / "elsewhere" / "AGENTS.md"
+
+    assert display_path(outside, tmp_path) == outside.as_posix()
 
 
 def test_resolve_base_dir_ignores_scope_env_vars(

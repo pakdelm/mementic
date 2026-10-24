@@ -984,6 +984,19 @@ class TestInitStub:
         assert second.exit_code == 0, f"stderr: {second.stderr}"
         assert db_path.exists()
 
+    def test_init_reports_paths_relative_to_cwd(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """init names the graph and AGENTS.md relative to the working directory."""
+        monkeypatch.chdir(tmp_path)
+
+        result = runner.invoke(app, ["init"])
+
+        output = _strip_ansi(result.stdout + result.stderr)
+        assert ".mementic/graph.db" in output
+        assert "Created AGENTS.md with enforcement block." in output
+        assert str(tmp_path) not in output
+
     def test_init_help_has_no_provider_flags(self) -> None:
         """init --help no longer shows --provider/--model/--key/--deep flags."""
         result = runner.invoke(app, ["init", "--help"])

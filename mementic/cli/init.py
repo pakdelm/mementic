@@ -14,6 +14,7 @@ from mementic.console import (
     text,
 )
 from mementic.inject import sync_enforcement
+from mementic.paths import display_path
 from mementic.store import MementicStore
 
 
@@ -31,14 +32,16 @@ def init() -> None:
         store.close()
         created = True
 
-    enforcement_note = sync_enforcement(paths.agents_md)
+    graph_label = display_path(paths.graph_db, paths.base_dir)
+    agents_label = display_path(paths.agents_md, paths.base_dir)
+    enforcement_note = sync_enforcement(paths.agents_md, label=agents_label)
     graph_state = "created" if created else "already exists"
 
     console.print(
         panel(
             text(
                 f"[{COLOR_HEADER} bold]Graph[/]: "
-                f"[{COLOR_PATH}]{escape(str(paths.graph_db))}[/] "
+                f"[{COLOR_PATH}]{escape(graph_label)}[/] "
                 f"[{COLOR_DIM}]({graph_state})[/]"
             ),
             rule(),
