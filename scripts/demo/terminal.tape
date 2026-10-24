@@ -17,15 +17,18 @@ Require mementic
 
 Set Shell "powershell"
 Set FontFamily "Consolas"
-Set FontSize 16
-Set Width 1000
-Set Height 720
+Set FontSize 19
+Set Width 1250
+Set Height 900
 Set Theme "GitHub Dark"
-Set Padding 24
-Set BorderRadius 10
+Set Padding 30
+Set BorderRadius 12
 Set WindowBar Rings
-Set WindowBarSize 28
+Set WindowBarSize 36
 Set TypingSpeed 25ms
+# Capture at 25 fps: VHS's default 50 fps outruns the frame grabber, and
+# dropped frames shorten the recording so it plays faster than the tape.
+Set Framerate 25
 
 # Start from an empty screen: the shell's first prompt is printed while hidden.
 # The prompt prints its own text because the prompt VHS installs writes its
@@ -47,15 +50,15 @@ Sleep 600ms
 
 Type "mementic init"
 Enter
-Sleep 1200ms
+Sleep 1500ms
 
 Type `mementic add decision "Use JWT Auth" --rationale "Tokens carry the session" --entity "src/auth.py"`
 Enter
-Sleep 900ms
+Sleep 1500ms
 
 Type `mementic add constraint "Handlers must stay stateless" --entity "src/auth.py"`
 Enter
-Sleep 900ms
+Sleep 1500ms
 
 Type "mementic query keywords jwt handlers"
 Enter
@@ -64,4 +67,4 @@ Sleep 4s
 Type `mementic deprecate use-jwt-auth --reason "Replaced by short lived tokens"`
 Enter
 
-Sleep 10s
+Sleep 9s
