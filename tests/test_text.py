@@ -11,7 +11,7 @@ from mementic.text import format_timestamp
     ("value", "expected"),
     [
         ("2024-01-01T00:00:00Z", "2024-01-01 00:00"),
-        ("2024-01-01T23:59:59.123456+02:00", "2024-01-01 23:59"),
+        ("2024-01-01T23:59:59.123456+02:00", "2024-01-01 21:59"),
     ],
 )
 def test_format_timestamp_renders_iso_values(value: str, expected: str) -> None:

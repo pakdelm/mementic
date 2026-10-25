@@ -389,11 +389,33 @@ def test_deprecate_single_id_skips_summary(project_dir: Path) -> None:
     assert result.exit_code == 0
 
 
+def test_deprecate_reason_with_markup_characters_renders_literally(
+    project_dir: Path,
+) -> None:
+    """Bracketed reasons print as typed, without Rich escape backslashes."""
+    _ok("add", "decision", "Bracket Rule", "-r", "Bracket rationale")
+    result = _ok("deprecate", "bracket-rule", "-r", "superseded by [v2] plan")
+    output = _text(result)
+    assert "superseded by [v2] plan" in output
+    assert "\\[" not in output
+
+
+def test_deprecate_unknown_id_with_markup_characters_renders_literally(
+    project_dir: Path,
+) -> None:
+    """A missing ID with brackets prints as typed on stderr."""
+    result = _run("deprecate", "[v2]")
+    output = _text(result)
+    assert "Error: [v2] not found" in output
+    assert "\\[" not in output
+    assert result.exit_code == 1
+
+
 def test_query_search_no_matches_prints_sentence(project_dir: Path) -> None:
     """An empty search prints the echo line and a sentence, not an empty panel."""
     result = _ok("query", "search", "zzqxv")
     output = _text(result)
-    assert "No matches for" in output
+    assert 'No matches for "zzqxv".' in output
     assert "Search:" not in output
 
 
@@ -405,6 +427,13 @@ def test_status_reports_empty_graph_as_ok(project_dir: Path) -> None:
     assert "[FAIL]" not in output
 
 
+def test_status_reports_graph_path_relative_to_cwd(project_dir: Path) -> None:
+    """status names the graph relative to the working directory."""
+    output = _text(_ok("status"))
+    assert ".mementic/graph.db" in output
+    assert project_dir.as_posix() not in output
+
+
 def test_history_marks_empty_reason(project_dir: Path) -> None:
     """A tombstone without a reason shows a placeholder instead of a blank cell."""
     _ok("add", "decision", "Reasonless Rule", "-r", "Reasonless rationale")
@@ -413,6 +442,7 @@ def test_history_marks_empty_reason(project_dir: Path) -> None:
     output = _text(result)
     assert "no reason recorded" in output
     assert "2026-" in output  # timestamp uses the log format, not raw ISO
+    assert "At (UTC)" in output
 
 
 def test_entities_mark_live_and_dead_paths(project_dir: Path) -> None:
@@ -427,11 +457,19 @@ def test_entities_mark_live_and_dead_paths(project_dir: Path) -> None:
     assert "[FAIL]" in output
 
 
-def test_log_title_shows_shown_of_limit(project_dir: Path) -> None:
-    """The log panel title reports shown entries against the limit."""
+def test_log_title_shows_shown_of_total(project_dir: Path) -> None:
+    """The log panel title reports shown entries against the total."""
     _ok("add", "decision", "Logged Rule", "-r", "Logged rationale")
     output = _text(_ok("log"))
-    assert "Audit log (1 of 20)" in output
+    assert "Audit log (1 of 1)" in output
+
+
+def test_log_title_counts_total_when_limit_applies(project_dir: Path) -> None:
+    """A limited log run reports shown against total, not against the limit."""
+    _ok("add", "decision", "Alpha Rule", "-r", "Alpha rationale")
+    _ok("add", "decision", "Beta Rule", "-r", "Beta rationale")
+    output = _text(_ok("log", "-n", "1"))
+    assert "Audit log (1 of 2)" in output
 
 
 def test_status_lists_entry_counts(project_dir: Path) -> None:
@@ -669,6 +707,7 @@ def test_log_lists_mutations_newest_first(project_dir: Path) -> None:
     assert "beta-decision" in output
     assert "alpha-decision" in output
     assert output.index("beta-decision") < output.index("alpha-decision")
+    assert "Timestamp (UTC)" in output
 
 
 def test_log_without_entries_prints_hint_and_exits_zero(project_dir: Path) -> None:

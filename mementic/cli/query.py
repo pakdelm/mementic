@@ -239,7 +239,7 @@ def search(
         f"{len(matching_decisions)} decisions | {term}]"
     )
     if not panel_lines:
-        typer.echo(f'No matches for "{term}".')
+        console.print(text(f'No matches for "{escape(term)}".'))
         return
     console.print(panel(*panel_lines, title=f'Search: "{escape(term)}"'))
 

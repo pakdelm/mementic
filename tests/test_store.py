@@ -750,6 +750,14 @@ class TestStatsAndAudit:
         details = json.loads(entries[0]["details"])
         assert details["reason"] == "done"
 
+    def test_count_audit_entries_counts_all_mutations(
+        self, store: MementicStore,
+    ) -> None:
+        _add_decision(store, "d1")
+        store.deprecate("decision", "d1", replaced_by=None)
+        assert store.count_audit_entries() == 2
+        assert len(store.get_audit_entries(limit=1)) == 1
+
     def test_file_backed_store_roundtrip(self, tmp_path: Path) -> None:
         db = tmp_path / "graph.db"
         s1 = MementicStore(db_path=db)

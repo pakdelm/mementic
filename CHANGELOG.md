@@ -30,11 +30,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - **Compact query output (Spec 33)** — `mementic query keywords` and
-  `query file` gain `--compact` (echo line plus undecorated pack text, no
+  `query file` gain `--compact` (`-c`; echo line plus undecorated pack text, no
   Rich panel); the `[mementic: ...]` summary line is compacted across
   `query keywords`, `query file`, and `query search` (keywords keeps
-  `shown/matched` ratios; file/search use plain counts; `|`-separated
-  terms or path).
+  shown-of-matched counts as `N of M`; file/search use plain counts;
+  `|`-separated terms or path).
 
 ### Changed
 - **CLI and context-pack refactor.** `cli.py` is now a `mementic/cli/`
@@ -46,8 +46,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   from the removed usage metrics. Auto-resolve and the successor write now run
   in one SQLite transaction, so a failed re-add cannot orphan a tombstone.
 - **Output noise reduction.** `history` without an ID is capped at 20 records
-  (`-n`), passing `status` checks no longer print hints, list/log tables stop
-  wrapping into tall cells, and add/deprecate success is one line.
+  (`-n`), `status` renders hints on passing checks (an empty graph is healthy),
+  `add` no longer appends `(accepted)`/`(active)`, and `deprecate` prints one
+  line per result with a summary only for multi-ID runs.
+- **Consistent CLI language.** `query search` prints a sentence when nothing
+  matches, `list entities` marks path liveness, the log title reports shown and
+  total records, and `init` prints project-relative paths. Timestamps in `log`
+  and `history` render in UTC and are labelled as such.
 - **Path liveness fix.** `query file` and `list entities --stale` resolve
   repo-relative paths against the repo root instead of the process CWD.
 - **Dead code removed.** Legacy `audit.jsonl` fallback and path helpers,

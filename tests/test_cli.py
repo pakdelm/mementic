@@ -995,7 +995,7 @@ class TestInitStub:
         output = _strip_ansi(result.stdout + result.stderr)
         assert ".mementic/graph.db" in output
         assert "Created AGENTS.md with enforcement block." in output
-        assert str(tmp_path) not in output
+        assert tmp_path.as_posix() not in output
 
     def test_init_help_has_no_provider_flags(self) -> None:
         """init --help no longer shows --provider/--model/--key/--deep flags."""

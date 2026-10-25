@@ -18,12 +18,14 @@ from mementic.console import (
     text,
 )
 from mementic.health import check_health
+from mementic.paths import display_path
 
 
 def status() -> None:
     """Show health checklist for mementic."""
     paths = context.resolve_paths()
     graph_state = "present" if paths.graph_db.exists() else "not initialized"
+    graph_label = display_path(paths.graph_db, paths.base_dir)
     store = context.try_open_store(paths)
     try:
         items = check_health(store, repo_path=paths.base_dir)
@@ -45,7 +47,7 @@ def status() -> None:
     console.print(
         panel(
             text(
-                f"[{COLOR_DIM}]Graph[/]: [{COLOR_PATH}]{escape(str(paths.graph_db))}[/] "
+                f"[{COLOR_DIM}]Graph[/]: [{COLOR_PATH}]{escape(graph_label)}[/] "
                 f"[{COLOR_DIM}]({graph_state})[/]"
             ),
             rule(),

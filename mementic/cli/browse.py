@@ -254,7 +254,7 @@ def history(
         if n > 0:
             rows = rows[:n]
         dep_table = table()
-        dep_table.add_column("At", style=COLOR_DIM, no_wrap=True, width=16)
+        dep_table.add_column("At (UTC)", style=COLOR_DIM, no_wrap=True, width=16)
         dep_table.add_column(
             "Entry", style=COLOR_ID, no_wrap=True, overflow="ellipsis", width=30
         )
@@ -276,7 +276,7 @@ def history(
     chain_ids = _replacement_chain(entry_id, records)
 
     dep_table = table()
-    dep_table.add_column("At", style=COLOR_DIM, no_wrap=True, width=16)
+    dep_table.add_column("At (UTC)", style=COLOR_DIM, no_wrap=True, width=16)
     dep_table.add_column("Entry", style=COLOR_ID)
     dep_table.add_column("Replaced By")
     dep_table.add_column("Reason", overflow="fold")

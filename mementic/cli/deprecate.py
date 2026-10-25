@@ -49,13 +49,15 @@ def deprecate(
 
     for result in results:
         if result.outcome is DeprecateOutcome.NOT_FOUND:
-            typer.echo(f"Error: {escape(result.entry_id)} not found", err=True)
+            typer.echo(f"Error: {result.entry_id} not found", err=True)
         elif result.outcome is DeprecateOutcome.ALREADY_DEPRECATED:
-            typer.echo(f"Skipped {escape(result.entry_id)}: already deprecated")
+            console.print(text(f"Skipped {escape(result.entry_id)}: already deprecated"))
         elif reason:
-            typer.echo(f"Deprecated {escape(result.entry_id)}: retired ({escape(reason)})")
+            console.print(
+                text(f"Deprecated {escape(result.entry_id)}: retired ({escape(reason)})")
+            )
         else:
-            typer.echo(f"Deprecated {escape(result.entry_id)}: retired")
+            console.print(text(f"Deprecated {escape(result.entry_id)}: retired"))
 
     if len(results) > 1:
         parts: list[str] = []

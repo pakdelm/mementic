@@ -8,7 +8,8 @@ repository's virtualenv on PATH, and runs VHS from inside that project:
 
 The demo commands and the project layout follow the README quick start, so the
 recording shows the same flow a reader gets when they try mementic themselves.
-Requires ``vhs`` (with ``ttyd`` and ``ffmpeg``) on PATH.
+Requires ``vhs`` (with ``ttyd`` and ``ffmpeg``) on PATH. The tape runs
+PowerShell; on macOS or Linux change ``Set Shell`` in ``terminal.tape`` first.
 """
 
 from __future__ import annotations

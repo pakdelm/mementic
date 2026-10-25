@@ -142,9 +142,9 @@ justification text the context pack shows later. The short forms are `-e` and
 `-r`, except on `deprecate`, where `-r` means `--reason`.
 
 `query keywords` and `query file` both take `--json` for scripts and `--compact`
-for plain text. Compact output is the `[mementic: ...]` echo line plus the pack
-text with no panel around it, where the echo line carries shown and matched counts
-plus the terms or paths that were queried.
+(`-c`) for plain text. Compact output is the `[mementic: ...]` echo line plus the
+pack text with no panel around it, where the echo line carries shown and matched
+counts plus the terms or paths that were queried.
 
 ### The enforcement instruction (summary)
 
@@ -242,8 +242,8 @@ If any of that sounds like fun to fix, contributions are welcome. See
 | Command | What it does |
 |---|---|
 | `mementic init` | Create `.mementic/graph.db` when missing (idempotent) and create or update the AGENTS.md enforcement section |
-| `mementic query keywords <kw...> [--json] [--compact]` | Get ranked context for a task |
-| `mementic query file <path> [--prefix] [--json] [--compact]` | Constraints and decisions for a file (exact match by default) |
+| `mementic query keywords <kw...> [--json] [-c/--compact]` | Get ranked context for a task |
+| `mementic query file <path> [--prefix] [--json] [-c/--compact]` | Constraints and decisions for a file (exact match by default) |
 | `mementic query search <term>` | Full text search of the graph |
 | `mementic query stats` | Store statistics |
 | `mementic add decision <title> --rationale TEXT [--entity PATH]` | Record a decision (duplicates resolved automatically) |
