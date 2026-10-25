@@ -25,7 +25,7 @@ class HealthItem:
 
 
 def _graph_item(graph: MementicStore | None) -> HealthItem:
-    """Check that the store opens and contains at least one entry."""
+    """Check that the store opens. An empty graph is healthy and reports a hint."""
     if graph is None:
         return HealthItem(
             label="Graph",
@@ -47,8 +47,8 @@ def _graph_item(graph: MementicStore | None) -> HealthItem:
         )
     return HealthItem(
         label="Graph",
-        status="fail",
-        hint="Graph is empty. Record rules with 'mementic add'.",
+        status="ok",
+        hint="0 entries recorded. Record rules with 'mementic add'.",
     )
 
 

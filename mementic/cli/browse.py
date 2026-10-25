@@ -8,9 +8,11 @@ from mementic.cli import context
 from mementic.console import (
     COLOR_DIM,
     COLOR_ID,
+    COLOR_FAIL,
     COLOR_SUCCESS,
     COLOR_WARN,
     STATUS_DEPRECATED,
+    STATUS_FAIL,
     STATUS_OK,
     console,
     escape,
@@ -24,6 +26,8 @@ from mementic.text import format_timestamp
 list_app = typer.Typer(help="Browse decisions, constraints, and entities")
 
 _VALID_STATUSES = {"accepted", "deprecated", "active"}
+_SUPERSEDED_HEADER = "Superseded By"
+_SUPERSEDED_WIDTH = 16
 
 
 def _validate_status(status: str | None) -> None:
@@ -38,10 +42,10 @@ def _validate_status(status: str | None) -> None:
 
 
 def _superseded_label(superseded_by: str | None) -> str:
-    """Render the Superseded-by cell: successor ID, ``retired``, or blank."""
+    """Render the Superseded-by cell: successor ID, ``none``, or blank."""
     if superseded_by is None:
         return ""
-    return "retired" if superseded_by == "retired" else superseded_by
+    return "none" if superseded_by == "retired" else superseded_by
 
 
 def _replacement_chain(entry_id: str, records: list) -> list[str]:
@@ -99,7 +103,11 @@ def decisions(
     )
     if show_superseded:
         decision_table.add_column(
-            "Superseded By", style=COLOR_WARN, no_wrap=True, overflow="ellipsis", width=12
+            _SUPERSEDED_HEADER,
+            style=COLOR_WARN,
+            no_wrap=True,
+            overflow="ellipsis",
+            width=_SUPERSEDED_WIDTH,
         )
     for decision, superseded_by in pairs:
         date = decision.created_at[:10] if decision.created_at else ""
@@ -165,7 +173,11 @@ def constraints(
     )
     if show_superseded:
         constraint_table.add_column(
-            "Superseded By", style=COLOR_WARN, no_wrap=True, overflow="ellipsis", width=12
+            _SUPERSEDED_HEADER,
+            style=COLOR_WARN,
+            no_wrap=True,
+            overflow="ellipsis",
+            width=_SUPERSEDED_WIDTH,
         )
     for constraint, superseded_by in pairs:
         icon = STATUS_OK if superseded_by is None else STATUS_DEPRECATED
@@ -210,12 +222,15 @@ def entities(
         raise typer.Exit()
 
     entity_table = table()
+    entity_table.add_column("", width=6)
     entity_table.add_column("Path", style=COLOR_ID, no_wrap=True, overflow="ellipsis")
     for path in all_paths:
-        entity_table.add_row(escape(path))
-    console.print(
-        panel(entity_table, title=f"Entities ({len(all_paths)} of {total})")
-    )
+        if paths.entity_exists(path):
+            marker = f"[{COLOR_SUCCESS}]{STATUS_OK}[/]"
+        else:
+            marker = f"[{COLOR_FAIL}]{STATUS_FAIL}[/]"
+        entity_table.add_row(marker, escape(path))
+    console.print(panel(entity_table, title=f"Entities ({len(all_paths)} of {total})"))
 
 
 def history(
@@ -249,20 +264,19 @@ def history(
         if n > 0:
             rows = rows[:n]
         dep_table = table()
-        dep_table.add_column("At", style=COLOR_DIM, no_wrap=True, width=16)
+        dep_table.add_column("At (UTC)", style=COLOR_DIM, no_wrap=True, width=16)
         dep_table.add_column(
             "Entry", style=COLOR_ID, no_wrap=True, overflow="ellipsis", width=30
         )
         dep_table.add_column("Reason", no_wrap=True, overflow="ellipsis", width=28)
         for record in rows:
+            reason = record["reason"] or ""
             dep_table.add_row(
                 format_timestamp(record["at"]),
                 escape(record["entry_id"]),
-                escape(record["reason"] or ""),
+                escape(reason) if reason else "[dim]no reason recorded[/]",
             )
-        console.print(
-            panel(dep_table, title=f"Deprecation history ({len(rows)} of {total})")
-        )
+        console.print(panel(dep_table, title=f"Deprecation history ({len(rows)} of {total})"))
         return
 
     if not records:
@@ -272,21 +286,22 @@ def history(
     chain_ids = _replacement_chain(entry_id, records)
 
     dep_table = table()
-    dep_table.add_column("At", style=COLOR_DIM)
+    dep_table.add_column("At (UTC)", style=COLOR_DIM, no_wrap=True, width=16)
     dep_table.add_column("Entry", style=COLOR_ID)
     dep_table.add_column("Replaced By")
     dep_table.add_column("Reason", overflow="fold")
     for record in records:
         successor = (
-            "[dim]retired[/]"
+            "[dim]none[/]"
             if record["replaced_by"] is None
             else escape(record["replaced_by"])
         )
+        reason = record["reason"] or ""
         dep_table.add_row(
-            record["at"],
+            format_timestamp(record["at"]),
             escape(record["entry_id"]),
             successor,
-            escape(record["reason"] or ""),
+            escape(reason) if reason else "[dim]no reason recorded[/]",
         )
     chain = " -> ".join(escape(chain_id) for chain_id in chain_ids)
     console.print(

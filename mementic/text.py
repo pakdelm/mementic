@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 
 _MAX_ENTITY_LIST_CHARS: int = 80
 
@@ -60,20 +60,24 @@ def configure_utf8_streams() -> None:
 
 
 def format_timestamp(value: str) -> str:
-    """Render an ISO 8601 timestamp as ``YYYY-MM-DD HH:MM``.
+    """Render an ISO 8601 timestamp as ``YYYY-MM-DD HH:MM`` in UTC.
 
     Args:
         value: ISO 8601 timestamp, optionally ``Z``-suffixed or carrying a
             UTC offset.
 
     Returns:
-        A display timestamp. Unparseable values are returned unchanged so
-        legacy rows remain visible instead of rendering blank cells.
+        A UTC display timestamp. Offset-aware values are converted to UTC;
+        unparseable values are returned unchanged so legacy rows remain
+        visible instead of rendering blank cells.
     """
     try:
-        return datetime.fromisoformat(value).strftime("%Y-%m-%d %H:%M")
+        moment = datetime.fromisoformat(value)
     except ValueError:
         return value
+    if moment.tzinfo is not None:
+        moment = moment.astimezone(timezone.utc)
+    return moment.strftime("%Y-%m-%d %H:%M")
 
 
 def estimate_tokens(text: str) -> int:

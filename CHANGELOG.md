@@ -30,11 +30,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - **Compact query output (Spec 33)** — `mementic query keywords` and
-  `query file` gain `--compact` (echo line plus undecorated pack text, no
+  `query file` gain `--compact` (`-c`; echo line plus undecorated pack text, no
   Rich panel); the `[mementic: ...]` summary line is compacted across
   `query keywords`, `query file`, and `query search` (keywords keeps
-  `shown/matched` ratios; file/search use plain counts; `|`-separated
-  terms or path).
+  shown-of-matched counts as `N of M`; file/search use plain counts;
+  `|`-separated terms or path).
 
 ### Changed
 - **CLI and context-pack refactor.** `cli.py` is now a `mementic/cli/`
@@ -46,8 +46,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   from the removed usage metrics. Auto-resolve and the successor write now run
   in one SQLite transaction, so a failed re-add cannot orphan a tombstone.
 - **Output noise reduction.** `history` without an ID is capped at 20 records
-  (`-n`), passing `status` checks no longer print hints, list/log tables stop
-  wrapping into tall cells, and add/deprecate success is one line.
+  (`-n`), `status` renders hints on passing checks (an empty graph is healthy),
+  `add` no longer appends `(accepted)`/`(active)`, and `deprecate` prints one
+  line per result (`Deprecated x: reason`) with a summary only for multi-ID runs.
+- **Consistent CLI language.** `query search` prints a sentence when nothing
+  matches, `list entities` marks path liveness, `log` reports shown and total
+  records (and `No changes recorded yet.` when empty), and `init` prints
+  project-relative paths. Timestamps in `log` and `history` render in UTC and
+  are labelled as such.
 - **Path liveness fix.** `query file` and `list entities --stale` resolve
   repo-relative paths against the repo root instead of the process CWD.
 - **Dead code removed.** Legacy `audit.jsonl` fallback and path helpers,
@@ -55,7 +61,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and the `scripts/probe_packs.py` context-pack probe harness.
 - **Relational storage simplification (Spec 29, schema v5).** Replaced the
   GraphStore hybrid (in-memory NetworkX graph serialized into SQLite payloads,
-  full-graph rewrite per mutation) with a pure relational schema accessed
+  full-graph rewrite per change) with a pure relational schema accessed
   through a thin `sqlite3` module (`mementic/store.py`). Decisions and
   constraints are flat tables; file associations live in `entry_paths` rows;
   entry lifecycle moved from cached status columns to a `deprecations`
@@ -67,7 +73,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   successor in the `deprecations` table) instead of appending
   `[DEPRECATED: ...]` prose to rationale text.
 - **`list decisions|constraints`** gained a "Superseded by" column for dead
-  entries (successor ID or "retired").
+  entries (successor ID or "none").
 - **`query file <path>`** runs on `entry_paths` with exact match by default
   and opt-in `--prefix`; paths whose files no longer exist are filtered
   lazily via a filesystem check at read time.

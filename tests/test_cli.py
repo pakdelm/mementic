@@ -147,13 +147,13 @@ class TestListCommand:
         store = _make_store()
         _seed_decision(store, "old-way", rationale="...")
         _seed_decision(store, "new-way", created_at="2024-02-01T00:00:00Z")
-        store.deprecate("decision", "old-way")  # retired: replaced_by NULL
+        store.deprecate("decision", "old-way")  # no successor: replaced_by NULL
 
         with patch("mementic.cli.context.resolve_store", return_value=nullcontext(store)):
             result = runner.invoke(app, ["list", "decisions", "--status", "deprecated"])
 
         output = _strip_ansi(result.stdout)
-        assert "retired" in output.lower()
+        assert "none" in output.lower()
         assert "Superseded" in output
 
     def test_list_decisions_last_n(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -276,7 +276,7 @@ class TestDeprecateCommand:
             result = runner.invoke(app, ["deprecate", "already-dep"])
 
         output = result.stdout + result.stderr
-        assert "already deprecated" in output.lower()
+        assert "Skipped already-dep: already deprecated" in output
 
 
 class TestHistoryCommand:
@@ -347,6 +347,11 @@ class TestHistoryCommand:
 _COMPACT_QUERIES = [
     ["query", "keywords", "auth", "--compact"],
     ["query", "file", "src/auth.py", "--compact"],
+]
+
+_COMPACT_QUERIES_SHORT = [
+    ["query", "keywords", "auth", "-c"],
+    ["query", "file", "src/auth.py", "-c"],
 ]
 
 _DEFAULT_QUERIES = [
@@ -436,6 +441,23 @@ class TestQueryCompactOutput:
         assert result.exit_code == 0, f"stderr: {result.stderr}"
         assert _panel_title(args) not in _strip_ansi(result.stdout)
 
+    @pytest.mark.parametrize("args", _COMPACT_QUERIES_SHORT)
+    def test_compact_short_alias_matches_long_flag(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        args: list[str],
+    ) -> None:
+        """-c is an alias for --compact on both query commands."""
+        store = _seed_query_store(tmp_path, monkeypatch)
+        with patch("mementic.cli.context.resolve_store", return_value=nullcontext(store)):
+            result = runner.invoke(app, args)
+        assert result.exit_code == 0, f"stderr: {result.stderr}"
+        output = _strip_ansi(result.stdout)
+        assert output.count("[mementic:") == 1
+        assert "use-jwt" in output
+        assert _panel_title(args) not in output
+
     @pytest.mark.parametrize("args", _DEFAULT_QUERIES)
     def test_default_output_keeps_panel(
         self,
@@ -460,7 +482,7 @@ class TestQueryCompactOutput:
         assert result.exit_code == 0, f"stderr: {result.stderr}"
         output = _strip_ansi(result.stdout)
         assert output.count("[mementic:") == 1
-        assert "[mementic: 0/0 constraints, 0/0 decisions | zzqxv]" in output
+        assert "[mementic: 0 of 0 constraints, 0 of 0 decisions | zzqxv]" in output
         assert "0 of 1 constraints matched your keywords" in output
         assert "0 of 1 decisions matched your keywords" in output
         assert "use-jwt" not in output
@@ -675,7 +697,9 @@ class TestDeprecateMultiId:
 
         assert result.exit_code == 0
         output = _strip_ansi(result.stdout)
-        assert "2 deprecated" in output
+        assert "Deprecated dec-1." in output
+        assert "Deprecated dec-2." in output
+        assert "Summary: 2 deprecated" in output
         assert store.get_live_decisions() == []
 
     def test_deprecate_mixed_valid_and_invalid(
@@ -690,8 +714,9 @@ class TestDeprecateMultiId:
 
         assert result.exit_code == 1  # errors → exit code 1
         output = _strip_ansi(result.stdout)
-        assert "1 deprecated" in output
-        assert "1 errors" in output
+        assert "Error: nonexistent not found" in _strip_ansi(result.stderr)
+        assert "Deprecated dec-valid." in output
+        assert "Summary: 1 deprecated, 1 not found" in output
 
 
 class TestAddDecisionAutoResolve:
@@ -827,8 +852,8 @@ class TestAddDecisionAutoResolve:
 
         assert result.exit_code != 0
 
-    def test_output_reports_accepted(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Add output is one line naming the entry and its outcome."""
+    def test_output_reports_created(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Add output is one line naming the entry, with no outcome suffix."""
         monkeypatch.chdir(tmp_path)
 
         store = _make_store()
@@ -839,8 +864,8 @@ class TestAddDecisionAutoResolve:
             )
 
         output = _strip_ansi(result.stdout + result.stderr)
-        assert "some-decision" in output
-        assert "accepted" in output.lower()
+        assert "Added decision some-decision" in output
+        assert "accepted" not in output.lower()
 
 
 class TestAddConstraintAutoResolve:
@@ -918,8 +943,8 @@ class TestAddConstraintAutoResolve:
         assert "TLS 1.3" in c.description
         assert {x.id for x in store.get_live_constraints()} == {"use-https"}
 
-    def test_output_reports_active(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Add-constraint output is one line naming the entry and its outcome."""
+    def test_output_reports_created(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Add-constraint output names the entry, with no outcome suffix."""
         monkeypatch.chdir(tmp_path)
 
         store = _make_store()
@@ -930,8 +955,8 @@ class TestAddConstraintAutoResolve:
             )
 
         output = _strip_ansi(result.stdout + result.stderr)
-        assert "no-raw-sql-in-handlers" in output
-        assert "active" in output.lower()
+        assert "Added constraint no-raw-sql-in-handlers" in output
+        assert "active" not in output.lower()
 
 
 class TestInitStub:
@@ -958,6 +983,19 @@ class TestInitStub:
         second = runner.invoke(app, ["init"])
         assert second.exit_code == 0, f"stderr: {second.stderr}"
         assert db_path.exists()
+
+    def test_init_reports_paths_relative_to_cwd(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """init names the graph and AGENTS.md relative to the working directory."""
+        monkeypatch.chdir(tmp_path)
+
+        result = runner.invoke(app, ["init"])
+
+        output = _strip_ansi(result.stdout + result.stderr)
+        assert ".mementic/graph.db" in output
+        assert "Created AGENTS.md with enforcement block." in output
+        assert tmp_path.as_posix() not in output
 
     def test_init_help_has_no_provider_flags(self) -> None:
         """init --help no longer shows --provider/--model/--key/--deep flags."""

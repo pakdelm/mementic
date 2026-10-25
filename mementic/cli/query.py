@@ -38,6 +38,7 @@ def keywords(
     compact: bool = typer.Option(
         False,
         "--compact",
+        "-c",
         help="Agent-friendly output: summary line plus undecorated pack text",
     ),
 ) -> None:
@@ -80,8 +81,8 @@ def keywords(
     stats = result.stats
     kw_list = ", ".join(keywords)
     typer.echo(
-        f"[mementic: {stats.shown_constraints}/{stats.matched_constraints} constraints, "
-        f"{stats.shown_decisions}/{stats.matched_decisions} decisions | {kw_list}]"
+        f"[mementic: {stats.shown_constraints} of {stats.matched_constraints} constraints, "
+        f"{stats.shown_decisions} of {stats.matched_decisions} decisions | {kw_list}]"
     )
     if compact:
         typer.echo(sanitize(result.text))
@@ -124,6 +125,7 @@ def file(
     compact: bool = typer.Option(
         False,
         "--compact",
+        "-c",
         help="Agent-friendly output: summary line plus undecorated pack text",
     ),
 ) -> None:
@@ -185,7 +187,7 @@ def search(
 ) -> None:
     """Full-text search across decisions and constraints.
 
-    Deprecated entries are included so retired rules remain findable.
+    Deprecated entries stay searchable.
     """
     from mementic.console import (
         COLOR_HEADER,
@@ -236,6 +238,9 @@ def search(
         f"[mementic: {len(matching_constraints)} constraints, "
         f"{len(matching_decisions)} decisions | {term}]"
     )
+    if not panel_lines:
+        console.print(text(f'No matches for "{escape(term)}".'))
+        return
     console.print(panel(*panel_lines, title=f'Search: "{escape(term)}"'))
 
 

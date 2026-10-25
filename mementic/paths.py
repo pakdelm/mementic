@@ -210,6 +210,27 @@ def graph_db_path(base_dir: Path) -> Path:
     return memory_dir(base_dir) / GRAPH_DB_NAME
 
 
+def display_path(path: Path, base_dir: Path) -> str:
+    """Return ``path`` as it should appear in CLI output.
+
+    Paths under ``base_dir`` are shown relative to it with ``/`` separators, so
+    the output does not leak the machine's directory layout. Paths outside the
+    project keep their absolute form rather than escaping the project with
+    ``..`` segments.
+
+    Args:
+        path: Path to render.
+        base_dir: Directory the graph and entity paths anchor at.
+
+    Returns:
+        A project-relative path when possible, otherwise an absolute path.
+    """
+    try:
+        return path.relative_to(base_dir).as_posix()
+    except ValueError:
+        return path.as_posix()
+
+
 @dataclass(frozen=True, kw_only=True)
 class ProjectPaths:
     """Resolved paths for one CLI invocation.

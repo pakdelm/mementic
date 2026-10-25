@@ -51,15 +51,16 @@ def log(
         context.DEFAULT_PAGE_SIZE, "--n", "-n", help="Number of log entries to show"
     ),
 ) -> None:
-    """Show recent graph mutations from the audit log."""
+    """Show recent graph changes from the audit log."""
     with context.resolve_store() as store:
         rows = store.get_audit_entries(limit=n)
+        total = store.count_audit_entries()
     if not rows:
-        console.print(text("No audit log found. Run init or add first."))
+        console.print(text("No changes recorded yet."))
         raise typer.Exit()
 
     audit_table = table()
-    audit_table.add_column("Timestamp", style=COLOR_DIM, no_wrap=True, width=16)
+    audit_table.add_column("Timestamp (UTC)", style=COLOR_DIM, no_wrap=True, width=16)
     audit_table.add_column("Action", no_wrap=True, width=10)
     audit_table.add_column(
         "Rule ID", style=COLOR_ID, no_wrap=True, overflow="ellipsis", width=18
@@ -87,4 +88,4 @@ def log(
                 context.DEFAULT_LOG_SUMMARY_WIDTH,
             ),
         )
-    console.print(panel(audit_table, title=f"Audit log (last {n})"))
+    console.print(panel(audit_table, title=f"Audit log ({len(rows)} of {total})"))

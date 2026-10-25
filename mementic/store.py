@@ -914,6 +914,15 @@ class MementicStore:
         )
         return conn.execute(sql, {"etype": table[:-1]}).fetchone()[0]
 
+    def count_audit_entries(self) -> int:
+        """Return the total number of audit log entries.
+
+        Returns:
+            Row count of the ``audit_log`` table.
+        """
+        conn = self._conn_or_raise()
+        return int(conn.execute("SELECT COUNT(*) FROM audit_log").fetchone()[0])
+
     def get_audit_entries(
         self, limit: int = DEFAULT_AUDIT_LIMIT
     ) -> list[sqlite3.Row]:

@@ -55,7 +55,9 @@ def test_init_creates_graph_and_agents_at_cwd(
 
     assert (tmp_path / ".mementic" / "graph.db").exists()
     assert (tmp_path / "AGENTS.md").exists()
-    assert str(tmp_path / ".mementic" / "graph.db") in _text(_run("status"))
+    status_output = _text(_run("status"))
+    assert ".mementic/graph.db" in status_output
+    assert tmp_path.as_posix() not in status_output
 
 
 def test_query_from_subdirectory_fails_without_creating_graph(

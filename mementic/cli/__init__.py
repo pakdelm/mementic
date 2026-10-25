@@ -63,7 +63,7 @@ class LazyTyperGroup(TyperGroup):
 
 app = typer.Typer(
     cls=LazyTyperGroup,
-    help="Mementic — semantic memory for engineering teams and AI agents",
+    help="Mementic: semantic memory for engineering teams and AI agents",
 )
 
 

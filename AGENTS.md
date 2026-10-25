@@ -32,7 +32,7 @@ ops commands, meta discussion) need no query.
    every entity you apply or reject as `[mementic: <id>]`.
 4. **Record inline.** When you make a decision or establish a rule, run
    `mementic add decision TITLE -r "..."` or
-   `mementic add constraint DESC -e PATH` immediately — no gate. Retire
+   `mementic add constraint DESC -e PATH` immediately — no gate. Deprecate
    superseded rules with `mementic deprecate ID... -r "reason"`. Before
    re-adding content, check `mementic history <id>` — tombstones carry
    reasons and successor chains.
