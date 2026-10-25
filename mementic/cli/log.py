@@ -51,12 +51,12 @@ def log(
         context.DEFAULT_PAGE_SIZE, "--n", "-n", help="Number of log entries to show"
     ),
 ) -> None:
-    """Show recent graph mutations from the audit log."""
+    """Show recent graph changes from the audit log."""
     with context.resolve_store() as store:
         rows = store.get_audit_entries(limit=n)
         total = store.count_audit_entries()
     if not rows:
-        console.print(text("No mutations recorded yet."))
+        console.print(text("No changes recorded yet."))
         raise typer.Exit()
 
     audit_table = table()

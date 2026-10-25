@@ -187,7 +187,7 @@ def search(
 ) -> None:
     """Full-text search across decisions and constraints.
 
-    Deprecated entries are included so retired rules remain findable.
+    Deprecated entries stay searchable.
     """
     from mementic.console import (
         COLOR_HEADER,

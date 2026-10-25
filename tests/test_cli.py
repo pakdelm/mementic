@@ -147,13 +147,13 @@ class TestListCommand:
         store = _make_store()
         _seed_decision(store, "old-way", rationale="...")
         _seed_decision(store, "new-way", created_at="2024-02-01T00:00:00Z")
-        store.deprecate("decision", "old-way")  # retired: replaced_by NULL
+        store.deprecate("decision", "old-way")  # no successor: replaced_by NULL
 
         with patch("mementic.cli.context.resolve_store", return_value=nullcontext(store)):
             result = runner.invoke(app, ["list", "decisions", "--status", "deprecated"])
 
         output = _strip_ansi(result.stdout)
-        assert "retired" in output.lower()
+        assert "none" in output.lower()
         assert "Superseded" in output
 
     def test_list_decisions_last_n(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -697,8 +697,8 @@ class TestDeprecateMultiId:
 
         assert result.exit_code == 0
         output = _strip_ansi(result.stdout)
-        assert "Deprecated dec-1: retired" in output
-        assert "Deprecated dec-2: retired" in output
+        assert "Deprecated dec-1." in output
+        assert "Deprecated dec-2." in output
         assert "Summary: 2 deprecated" in output
         assert store.get_live_decisions() == []
 
@@ -715,7 +715,7 @@ class TestDeprecateMultiId:
         assert result.exit_code == 1  # errors → exit code 1
         output = _strip_ansi(result.stdout)
         assert "Error: nonexistent not found" in _strip_ansi(result.stderr)
-        assert "Deprecated dec-valid: retired" in output
+        assert "Deprecated dec-valid." in output
         assert "Summary: 1 deprecated, 1 not found" in output
 
 

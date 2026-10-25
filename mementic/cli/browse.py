@@ -26,6 +26,8 @@ from mementic.text import format_timestamp
 list_app = typer.Typer(help="Browse decisions, constraints, and entities")
 
 _VALID_STATUSES = {"accepted", "deprecated", "active"}
+_SUPERSEDED_HEADER = "Superseded By"
+_SUPERSEDED_WIDTH = 16
 
 
 def _validate_status(status: str | None) -> None:
@@ -40,10 +42,10 @@ def _validate_status(status: str | None) -> None:
 
 
 def _superseded_label(superseded_by: str | None) -> str:
-    """Render the Superseded-by cell: successor ID, ``retired``, or blank."""
+    """Render the Superseded-by cell: successor ID, ``none``, or blank."""
     if superseded_by is None:
         return ""
-    return "retired" if superseded_by == "retired" else superseded_by
+    return "none" if superseded_by == "retired" else superseded_by
 
 
 def _replacement_chain(entry_id: str, records: list) -> list[str]:
@@ -101,7 +103,11 @@ def decisions(
     )
     if show_superseded:
         decision_table.add_column(
-            "Superseded By", style=COLOR_WARN, no_wrap=True, overflow="ellipsis", width=16
+            _SUPERSEDED_HEADER,
+            style=COLOR_WARN,
+            no_wrap=True,
+            overflow="ellipsis",
+            width=_SUPERSEDED_WIDTH,
         )
     for decision, superseded_by in pairs:
         date = decision.created_at[:10] if decision.created_at else ""
@@ -167,7 +173,11 @@ def constraints(
     )
     if show_superseded:
         constraint_table.add_column(
-            "Superseded By", style=COLOR_WARN, no_wrap=True, overflow="ellipsis", width=16
+            _SUPERSEDED_HEADER,
+            style=COLOR_WARN,
+            no_wrap=True,
+            overflow="ellipsis",
+            width=_SUPERSEDED_WIDTH,
         )
     for constraint, superseded_by in pairs:
         icon = STATUS_OK if superseded_by is None else STATUS_DEPRECATED
@@ -282,7 +292,7 @@ def history(
     dep_table.add_column("Reason", overflow="fold")
     for record in records:
         successor = (
-            "[dim]retired[/]"
+            "[dim]none[/]"
             if record["replaced_by"] is None
             else escape(record["replaced_by"])
         )

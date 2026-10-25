@@ -53,11 +53,9 @@ def deprecate(
         elif result.outcome is DeprecateOutcome.ALREADY_DEPRECATED:
             console.print(text(f"Skipped {escape(result.entry_id)}: already deprecated"))
         elif reason:
-            console.print(
-                text(f"Deprecated {escape(result.entry_id)}: retired ({escape(reason)})")
-            )
+            console.print(text(f"Deprecated {escape(result.entry_id)}: {escape(reason)}"))
         else:
-            console.print(text(f"Deprecated {escape(result.entry_id)}: retired"))
+            console.print(text(f"Deprecated {escape(result.entry_id)}."))
 
     if len(results) > 1:
         parts: list[str] = []

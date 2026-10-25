@@ -750,7 +750,7 @@ class TestStatsAndAudit:
         details = json.loads(entries[0]["details"])
         assert details["reason"] == "done"
 
-    def test_count_audit_entries_counts_all_mutations(
+    def test_count_audit_entries_counts_all_changes(
         self, store: MementicStore,
     ) -> None:
         _add_decision(store, "d1")

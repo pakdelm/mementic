@@ -131,9 +131,9 @@ The commands agents need:
 | Check what affects a file | `mementic query file path/to/file.py` |
 | Record a decision | `mementic add decision TITLE --rationale "..."` |
 | Record a constraint | `mementic add constraint DESC --entity PATH` |
-| Retire outdated rules | `mementic deprecate ID1 ID2 ... --reason "reason"` |
+| Deprecate outdated rules | `mementic deprecate ID1 ID2 ... --reason "reason"` |
 | Search the graph | `mementic query search <term>` |
-| Trace why an entry was retired | `mementic history <id>` |
+| Trace why an entry was deprecated | `mementic history <id>` |
 
 `--entity` takes a file path and can be repeated. It is optional for a decision
 and required for a constraint, because a constraint with no file anchor cannot be
@@ -177,7 +177,7 @@ ops commands, meta discussion) need no query.
 3. **Validate.** Do not write code that violates an active constraint; cite
    every entity you apply or reject as `[mementic: <id>]`.
 4. **Record inline.** Run `mementic add decision TITLE -r "..."` or
-   `mementic add constraint DESC -e PATH` immediately, with no gate. Retire
+   `mementic add constraint DESC -e PATH` immediately, with no gate. Deprecate
    superseded rules with `mementic deprecate ID... -r "reason"`.
 
 The pack replaces reading ADRs, specs, and instruction files wholesale, but
@@ -248,11 +248,11 @@ If any of that sounds like fun to fix, contributions are welcome. See
 | `mementic query stats` | Store statistics |
 | `mementic add decision <title> --rationale TEXT [--entity PATH]` | Record a decision (duplicates resolved automatically) |
 | `mementic add constraint <desc> --entity PATH` | Record a constraint (duplicates resolved automatically) |
-| `mementic deprecate <id...> [--reason REASON]` | Retire rules |
+| `mementic deprecate <id...> [--reason REASON]` | Deprecate rules |
 | `mementic history [id]` | Deprecation records; with an ID, follow the replacement chain |
 | `mementic status` | Health checklist |
 | `mementic list [decisions\|constraints\|entities]` | List everything |
-| `mementic log [-n N]` | Recent mutations |
+| `mementic log [-n N]` | Recent changes |
 
 ## Storage
 
@@ -265,7 +265,7 @@ Everything lives in one SQLite file at `.mementic/graph.db`, schema v5
 | `constraints` | id, description, enforced_by (FK to decisions), created_at |
 | `entry_paths` | One row per entry and file association |
 | `deprecations` | Tombstones: reason, optional successor, timestamp |
-| `audit_log` | Every mutation |
+| `audit_log` | Every change |
 
 There is no status column. An entry is dead when a `deprecations` row for it is
 newer than its `created_at`, which means a slug that is added again comes back to

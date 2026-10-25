@@ -341,7 +341,7 @@ def test_deprecate_decision_by_slug_marks_it_deprecated(project_dir: Path) -> No
         "Single deployable keeps operations simple early on",
     )
     result = _ok("deprecate", "use-monolith", "-r", "Moved to services")
-    assert "Deprecated use-monolith: retired (Moved to services)" in _text(result)
+    assert "Deprecated use-monolith: Moved to services" in _text(result)
     listing = _ok("list", "decisions", "--status", "deprecated")
     assert "use-monolith" in _text(listing)
 
@@ -372,8 +372,8 @@ def test_deprecate_reports_each_result_and_summary(project_dir: Path) -> None:
     _ok("add", "decision", "Beta Rule", "-r", "Beta rationale")
     result = _run("deprecate", "alpha-rule", "ghost-id", "beta-rule")
     output = _text(result)
-    assert "Deprecated alpha-rule: retired" in output
-    assert "Deprecated beta-rule: retired" in output
+    assert "Deprecated alpha-rule." in output
+    assert "Deprecated beta-rule." in output
     assert "Error: ghost-id not found" in output
     assert "Summary: 2 deprecated, 1 not found" in output
     assert result.exit_code == 1
@@ -384,7 +384,7 @@ def test_deprecate_single_id_skips_summary(project_dir: Path) -> None:
     _ok("add", "decision", "Solo Rule", "-r", "Solo rationale")
     result = _ok("deprecate", "solo-rule", "-r", "obsolete")
     output = _text(result)
-    assert "Deprecated solo-rule: retired (obsolete)" in output
+    assert "Deprecated solo-rule: obsolete" in output
     assert "Summary:" not in output
     assert result.exit_code == 0
 
@@ -699,7 +699,7 @@ def test_status_corrupt_store_reports_failure(project_dir: Path) -> None:
     assert "Could not load graph" in _text(result)
 
 
-def test_log_lists_mutations_newest_first(project_dir: Path) -> None:
+def test_log_lists_changes_newest_first(project_dir: Path) -> None:
     _ok("add", "decision", "Alpha Decision", "-r", "First recorded architectural choice")
     _ok("add", "decision", "Beta Decision", "-r", "Second recorded architectural choice")
     result = _ok("log")
@@ -712,7 +712,7 @@ def test_log_lists_mutations_newest_first(project_dir: Path) -> None:
 
 def test_log_without_entries_prints_hint_and_exits_zero(project_dir: Path) -> None:
     result = _ok("log")
-    assert "No mutations recorded yet." in _text(result)
+    assert "No changes recorded yet." in _text(result)
 
 
 def test_unknown_command_exits_nonzero() -> None:
@@ -874,7 +874,7 @@ def test_history_with_id_shows_reason_and_successor_chain(
     output = _text(_ok("history", "legacy-auth"))
     assert "legacy-auth" in output
     assert "insecure scheme" in output  # the written reason is echoed back
-    assert "retired" in output.lower()  # replaced_by NULL renders as retired
+    assert "none" in output.lower()  # replaced_by NULL renders as none
 
 
 def test_history_transitive_chain_prints_arrows(project_dir: Path) -> None:
