@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import importlib.util
 import re
 import subprocess
 import sys
 import tomllib
 from pathlib import Path
+from types import ModuleType
+
+import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 KIT = REPO_ROOT / "docker" / "sbx-mementic"
@@ -28,6 +32,16 @@ def _companion_recipe() -> Path:
     not an error: the kit builds as declaration-only and installs nothing.
     """
     return _descriptor_path().with_suffix(".dockerfile")
+
+
+def _load_kit_module() -> ModuleType:
+    """Import ``scripts/kit.py`` without putting it on ``sys.path``."""
+    spec = importlib.util.spec_from_file_location("kit_script", KIT_SCRIPT)
+
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def test_kit_version_matches_pyproject() -> None:
@@ -98,6 +112,20 @@ def test_stage_produces_the_recipe_sources(tmp_path: Path) -> None:
     assert (dest / "src" / "mementic" / "__init__.py").is_file()
     assert not (dest / "src" / "mementic" / ".venv").exists()
     assert not (dest / "src" / "mementic" / "__pycache__").exists()
+
+
+def test_stage_normalizes_the_wrapper_to_lf(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A CRLF shebang makes the sandbox kernel look for ``/bin/sh\\r``."""
+    module = _load_kit_module()
+    source = tmp_path / "mementic"
+    source.write_bytes(b'#!/bin/sh\r\nexec python3 /opt/mementic/entry.py "$@"\r\n')
+    monkeypatch.setattr(module, "WRAPPER", source)
+
+    staged = module.stage(tmp_path / "kit") / "mementic"
+
+    assert staged.read_bytes() == b'#!/bin/sh\nexec python3 /opt/mementic/entry.py "$@"\n'
 
 
 def test_wrapper_checks_python_and_invokes_entry_point() -> None:

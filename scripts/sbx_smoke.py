@@ -14,6 +14,7 @@ repository reports no graph. It removes the sandbox and temporary workspace unle
 from __future__ import annotations
 
 import argparse
+import posixpath
 import shutil
 import subprocess
 import sys
@@ -37,6 +38,8 @@ def _run(
         cwd=str(cwd) if cwd is not None else None,
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         check=False,
     )
     if result.stdout:
@@ -122,12 +125,16 @@ def _smoke_one(
         if not host_graph.exists():
             raise RuntimeError(f"host graph missing after sandbox write: {host_graph}")
 
+        # --workdir resolves inside the sandbox, so map the host child path
+        # through the sandbox's own workspace path.
+        sandbox_root = _run(["sbx", "exec", name, "pwd"]).stdout.strip()
+        child_workdir = posixpath.join(sandbox_root, child_rel)
         child_result = _run(
             [
                 "sbx",
                 "exec",
                 "--workdir",
-                str(child),
+                child_workdir,
                 name,
                 "mementic",
                 "query",
@@ -148,8 +155,17 @@ def _smoke_one(
             _run(["sbx", "rm", "-f", name], check=False)
 
 
+def _configure_output() -> None:
+    """Emit sbx's UTF-8 output without crashing on a cp1252 console."""
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is not None:
+            reconfigure(encoding="utf-8", errors="replace")
+
+
 def main() -> None:
     """Parse arguments and run the requested layouts."""
+    _configure_output()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--layout",

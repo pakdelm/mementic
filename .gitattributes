@@ -1,0 +1,2 @@
+# Runs inside a Linux sandbox; a CRLF shebang breaks the interpreter lookup.
+docker/sbx-mementic/mementic text eol=lf

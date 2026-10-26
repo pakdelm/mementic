@@ -35,6 +35,16 @@ def _ignore_build_context(directory: str, names: list[str]) -> set[str]:
     return {name for name in names if name.startswith(".") or name == "__pycache__"}
 
 
+def _copy_script(source: Path, dest: Path) -> None:
+    """Copy an executable script with LF endings.
+
+    A CRLF shebang makes the sandbox kernel look for an interpreter named
+    ``/bin/sh\\r``, so a wrapper staged from a Windows checkout with
+    ``core.autocrlf`` would not run.
+    """
+    dest.write_bytes(source.read_bytes().replace(b"\r\n", b"\n"))
+
+
 def stage(dest: Path) -> Path:
     """Copy the kit and the source its recipe installs into ``dest``.
 
@@ -45,8 +55,9 @@ def stage(dest: Path) -> Path:
         ``dest``, for chaining.
     """
     dest.mkdir(parents=True, exist_ok=True)
-    for source in (DESCRIPTOR, RECIPE, WRAPPER):
+    for source in (DESCRIPTOR, RECIPE):
         shutil.copy2(source, dest / source.name)
+    _copy_script(WRAPPER, dest / WRAPPER.name)
     shutil.copy2(PYPROJECT, dest / "pyproject.toml")
     shutil.copy2(README, dest / "README.md")
     shutil.copy2(LICENSE, dest / "LICENSE")
