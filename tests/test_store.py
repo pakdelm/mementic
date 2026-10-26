@@ -163,6 +163,12 @@ class TestSchema:
         fk = _raw_conn(store).execute("PRAGMA foreign_keys").fetchone()[0]
         assert fk == 1
 
+    def test_file_database_uses_wal_journal(self, tmp_path: Path) -> None:
+        """WAL is required for writes on sbx virtiofs workspaces."""
+        with MementicStore(db_path=tmp_path / "graph.db") as store:
+            mode = _raw_conn(store).execute("PRAGMA journal_mode").fetchone()[0]
+        assert mode == "wal"
+
     def test_opening_v4_database_raises_with_migration_hint(
         self, tmp_path: Path,
     ) -> None:

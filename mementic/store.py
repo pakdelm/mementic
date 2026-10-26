@@ -130,6 +130,28 @@ class MementicStore:
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
         return sqlite3.connect(str(self._db_path))
 
+    def _configure_journal(self) -> None:
+        """Use WAL so writes work on shared VM filesystems such as virtiofs.
+
+        SQLite's rollback-journal modes fail with "attempt to write a
+        readonly database" on an sbx virtiofs workspace, while WAL writes
+        through the shared-memory file. Read-only stores keep whatever mode
+        the writer left on the database.
+
+        Raises:
+            RuntimeError: If a file-backed read-write database cannot switch
+                to WAL, which would make writes fail on mounted workspaces.
+        """
+        if self._read_only or str(self._db_path) == ":memory:":
+            return
+        conn = self._conn_or_raise()
+        mode = conn.execute("PRAGMA journal_mode=WAL").fetchone()[0]
+        if str(mode).lower() != "wal":
+            raise RuntimeError(
+                f"cannot enable WAL journal mode (got {mode!r}); "
+                "the graph filesystem must support SQLite WAL"
+            )
+
     def close(self) -> None:
         """Close the SQLite connection. Safe to call multiple times."""
         if self._conn is not None:
@@ -198,6 +220,7 @@ class MementicStore:
         conn = self._conn_or_raise()
         version: int = conn.execute("PRAGMA user_version").fetchone()[0]
         if version == SCHEMA_VERSION:
+            self._configure_journal()
             return
         if self._read_only:
             raise RuntimeError(
@@ -217,9 +240,10 @@ class MementicStore:
                     "Database has pre-versioning tables but user_version=0; "
                     "cannot open it safely."
                 )
-            conn.executescript(SCHEMA_DDL)
-            conn.execute(SET_USER_VERSION_SQL)
-            conn.commit()
+            self._configure_journal()
+            conn.executescript(
+                f"BEGIN;\n{SCHEMA_DDL}\n{SET_USER_VERSION_SQL};\nCOMMIT;"
+            )
             return
         raise RuntimeError(
             f"Database schema is v{version} but this build requires "
