@@ -17,6 +17,7 @@ FK-enforced, so dangling IDs raise :class:`sqlite3.IntegrityError`.
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 from collections import deque
 from collections.abc import Callable, Iterator
@@ -127,8 +128,16 @@ class MementicStore:
                 + "?mode=ro"
             )
             return sqlite3.connect(uri, uri=True)
-        self._db_path.parent.mkdir(parents=True, exist_ok=True)
-        return sqlite3.connect(str(self._db_path))
+        parent = self._db_path.parent
+        if not parent.exists():
+            parent.mkdir(parents=True, exist_ok=True)
+            if os.name != "nt":
+                os.chmod(parent, 0o700)
+        existed = self._db_path.exists()
+        conn = sqlite3.connect(str(self._db_path))
+        if not existed and os.name != "nt":
+            os.chmod(self._db_path, 0o600)
+        return conn
 
     def _configure_journal(self) -> None:
         """Use WAL so writes work on shared VM filesystems such as virtiofs.

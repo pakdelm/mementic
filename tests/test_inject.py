@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 
 from mementic.inject import (
@@ -9,6 +10,7 @@ from mementic.inject import (
     START_MARKER,
     load_template,
     sync_enforcement,
+    sync_gitignore,
 )
 
 
@@ -136,3 +138,82 @@ def test_sync_warns_on_corrupt_markers(tmp_path: Path) -> None:
     assert "Warning" in result
     assert "manual fix" in result
     assert md.read_text(encoding="utf-8") == original
+
+
+def test_sync_enforcement_warns_when_write_fails(tmp_path: Path, monkeypatch) -> None:
+    """A read-only target returns a warning instead of raising."""
+    md = tmp_path / "AGENTS.md"
+
+    def fail(path: Path, content: str) -> None:
+        raise PermissionError("read-only")
+
+    monkeypatch.setattr("mementic.inject._write_text_atomic", fail)
+
+    result = sync_enforcement(md)
+
+    assert "Warning" in result
+    assert "permissions" in result
+    assert not md.exists()
+
+
+def test_sync_enforcement_leaves_target_untouched_on_replace_failure(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A failed replace leaves the existing file and no temporary file."""
+    md = tmp_path / "AGENTS.md"
+    original = "# Project\n"
+    md.write_text(original, encoding="utf-8")
+
+    def fail(src: str, dst: Path) -> None:
+        raise PermissionError("read-only")
+
+    monkeypatch.setattr("mementic.inject.os.replace", fail)
+
+    result = sync_enforcement(md)
+
+    assert "Warning" in result
+    assert md.read_text(encoding="utf-8") == original
+    assert list(tmp_path.glob(".AGENTS.md.*.tmp")) == []
+
+
+def test_sync_gitignore_adds_entry_in_git_work_tree(tmp_path: Path) -> None:
+    """A Git work tree gets .mementic/ appended to .gitignore."""
+    subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
+
+    result = sync_gitignore(tmp_path)
+
+    assert result is not None
+    assert "Added" in result
+    assert ".mementic/" in (tmp_path / ".gitignore").read_text(encoding="utf-8")
+
+
+def test_sync_gitignore_is_idempotent(tmp_path: Path) -> None:
+    """A second sync does not duplicate the entry."""
+    subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
+    sync_gitignore(tmp_path)
+
+    assert sync_gitignore(tmp_path) is None
+    content = (tmp_path / ".gitignore").read_text(encoding="utf-8")
+    assert content.count(".mementic/") == 1
+
+
+def test_sync_gitignore_skips_non_git_directory(tmp_path: Path) -> None:
+    """Outside a Git work tree no .gitignore is created."""
+    assert sync_gitignore(tmp_path) is None
+    assert not (tmp_path / ".gitignore").exists()
+
+
+def test_sync_gitignore_warns_when_write_fails(tmp_path: Path, monkeypatch) -> None:
+    """A read-only .gitignore returns the exact line to add."""
+    subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
+
+    def fail(path: Path, content: str) -> None:
+        raise PermissionError("read-only")
+
+    monkeypatch.setattr("mementic.inject._write_text_atomic", fail)
+
+    result = sync_gitignore(tmp_path)
+
+    assert result is not None
+    assert "Warning" in result
+    assert ".mementic/" in result

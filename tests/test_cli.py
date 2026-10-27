@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import re
+import subprocess
+import sys
 from collections.abc import Generator
 from contextlib import nullcontext
 from pathlib import Path
@@ -984,6 +986,19 @@ class TestInitStub:
         assert second.exit_code == 0, f"stderr: {second.stderr}"
         assert db_path.exists()
 
+    def test_init_adds_memory_dir_to_gitignore(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """init ignores .mementic/ in a Git work tree."""
+        subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
+        monkeypatch.chdir(tmp_path)
+
+        result = runner.invoke(app, ["init"])
+
+        assert result.exit_code == 0, f"stderr: {result.stderr}"
+        gitignore = (tmp_path / ".gitignore").read_text(encoding="utf-8")
+        assert ".mementic/" in gitignore
+
     def test_init_reports_paths_relative_to_cwd(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -1013,3 +1028,30 @@ class TestInitStub:
         assert result.exit_code == 0, f"stderr: {result.stderr}"
         output = _strip_ansi(result.stdout)
         assert "capture" not in output
+
+
+class TestVersion:
+    """Version reporting through the root callback and python -m."""
+
+    def test_version_flag(self) -> None:
+        """mementic --version prints the installed package version."""
+        from mementic import __version__
+
+        result = runner.invoke(app, ["--version"])
+
+        assert result.exit_code == 0, f"stderr: {result.stderr}"
+        assert __version__ in result.stdout
+
+    def test_python_m_mementic(self) -> None:
+        """python -m mementic --version runs the same CLI."""
+        result = subprocess.run(
+            [sys.executable, "-m", "mementic", "--version"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+        )
+
+        assert result.returncode == 0, result.stderr
+        assert "mementic" in result.stdout
