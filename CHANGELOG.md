@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`mementic --version`** (`-V`) prints the installed package version and
+  exits.
 - **Compact query output (Spec 33)** — `mementic query keywords` and
   `query file` gain `--compact` (`-c`; echo line plus undecorated pack text, no
   Rich panel); the `[mementic: ...]` summary line is compacted across
@@ -16,6 +18,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `|`-separated terms or path).
 
 ### Changed
+- **`mementic init` keeps the graph out of Git.** In a Git work tree, `init`
+  appends `.mementic/` to `.gitignore` (or prints the exact line when the file
+  cannot be written).
 - **CLI and context-pack refactor.** `cli.py` is now a `mementic/cli/`
   package with one module per command group; decision and constraint writes
   (including deterministic auto-resolve) live in `mementic/entries.py` as

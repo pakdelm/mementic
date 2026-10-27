@@ -70,7 +70,8 @@ mementic log
 `init` also writes an enforcement section into `AGENTS.md`. It creates the file
 if needed and replaces the section in place on every run, leaving the rest of the
 file alone. The section tells your agent to query before working and to record
-new rules through `mementic add`.
+new rules through `mementic add`. In a Git work tree, it also adds `.mementic/`
+to `.gitignore` so the graph is never committed.
 
 Adding the same title twice is safe. If the content is near-identical (80% word
 overlap), the second add is skipped. If it differs materially, the old entry is
@@ -245,6 +246,7 @@ If any of that sounds like fun to fix, contributions are welcome. See
 
 | Command | What it does |
 |---|---|
+| `mementic --version` | Print the installed package version and exit |
 | `mementic init` | Create `.mementic/graph.db` when missing (idempotent) and create or update the AGENTS.md enforcement section |
 | `mementic query keywords <kw...> [--json] [-c/--compact]` | Get ranked context for a task |
 | `mementic query file <path> [--prefix] [--json] [-c/--compact]` | Constraints and decisions for a file (exact match by default) |
