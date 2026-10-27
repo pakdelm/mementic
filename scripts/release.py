@@ -1,8 +1,8 @@
 """Deterministic release script for mementic.
 
 Creates a release branch from main, bumps the version, updates the changelog,
-commits, tags, pushes, and publishes the sbx kit image. You then create a PR
-for review and merge.
+commits, tags, and pushes. You then create a PR for review and merge. The sbx
+kit image is not published; the script only bumps its local version pin.
 
 Usage:
     python scripts/release.py 0.2.3          # full release
@@ -13,10 +13,8 @@ from __future__ import annotations
 
 import argparse
 import re
-import shutil
 import subprocess
 import sys
-import time
 from datetime import date
 from pathlib import Path
 from typing import NoReturn
@@ -27,10 +25,6 @@ CHANGELOG = ROOT / "CHANGELOG.md"
 LOCKFILE = ROOT / "uv.lock"
 KIT_DIR = ROOT / "docker" / "sbx-mementic"
 KIT_DESCRIPTOR = KIT_DIR / "mementic.yaml"
-KIT_IMAGE = "docker.io/pakdelm/sbx-kit-mementic"
-KIT_PLATFORMS = "linux/amd64,linux/arm64"
-KIT_PUBLISH_ATTEMPTS = 3
-KIT_PUBLISH_RETRY_SECONDS = 10
 
 SEMVER_RE = re.compile(r"^\d+\.\d+\.\d+$")
 VERSION_RE = re.compile(r'^version\s*=\s*"([^"]+)"', re.MULTILINE)
@@ -159,47 +153,6 @@ def update_kit_pin(version: str, dry_run: bool) -> None:
     ok(f"sbx kit -> version {version}")
 
 
-def publish_kit(version: str, dry_run: bool) -> None:
-    """Publish the sbx mixin image built from this checkout.
-
-    Runs after the tag is pushed so the image tag and the git tag name the
-    same release. A multi-platform push needs a ``docker-container`` buildx
-    builder; the default ``docker`` driver refuses it.
-    """
-    image = f"{KIT_IMAGE}:{version}"
-    command = [
-        sys.executable,
-        "scripts/kit.py",
-        "build",
-        "--output",
-        "push",
-        "--tag",
-        image,
-        "--platform",
-        KIT_PLATFORMS,
-    ]
-    if not KIT_DIR.exists():
-        warn("sbx kit directory not found; skipping kit publish.")
-        return
-    if dry_run:
-        dry(f"Would publish kit: {' '.join(command)}")
-        return
-    if shutil.which("docker") is None:
-        die("docker is required to publish the sbx kit image.")
-    for attempt in range(1, KIT_PUBLISH_ATTEMPTS + 1):
-        result = subprocess.run(command, cwd=ROOT, text=True)
-        if result.returncode == 0:
-            ok(f"Published kit: {image}")
-            return
-        if attempt < KIT_PUBLISH_ATTEMPTS:
-            warn(
-                f"Kit publish failed (attempt {attempt}/{KIT_PUBLISH_ATTEMPTS}); "
-                f"retrying in {KIT_PUBLISH_RETRY_SECONDS}s."
-            )
-            time.sleep(KIT_PUBLISH_RETRY_SECONDS)
-    die(f"Kit publish failed after {KIT_PUBLISH_ATTEMPTS} attempts. Push {image} manually.")
-
-
 def get_last_version_tag() -> str | None:
     """Return the most recent v* tag reachable from main, or None."""
     result = run("git", "tag", "--sort=-creatordate", "--merged", "main", capture=True)
@@ -307,7 +260,6 @@ def main() -> None:
 
     if dry_run:
         print()
-        publish_kit(version, dry_run=True)
         print(f"[DRY RUN] Would commit on {branch}, tag {tag}, and push.")
         print("[DRY RUN] Done -- no changes made.")
         return
@@ -331,10 +283,6 @@ def main() -> None:
     ok(f"Pushed branch: {branch}")
     run("git", "push", "origin", tag)
     ok(f"Pushed tag: {tag}")
-
-    # -- Publish kit --
-    print()
-    publish_kit(version, dry_run=False)
 
     # -- Done --
     print(f"""
