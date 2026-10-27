@@ -8,7 +8,7 @@ license = "Apache-2.0"
 authors = [
     { name = "pakdelm", email = "mehrshad.pakdel@posteo.de" },
 ]
-keywords = ["ai", "agents", "architecture", "memory", "llm"]
+keywords = ["ai", "agents", "architecture", "memory"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Environment :: Console",
@@ -48,6 +48,7 @@ include = [
     "/mementic",
     "/tests",
     "/scripts",
+    "/docker/sbx-mementic",
     "/README.md",
     "/CHANGELOG.md",
     "/CONTRIBUTING.md",
@@ -55,6 +56,9 @@ include = [
     "/CODE_OF_CONDUCT.md",
     "/LICENSE",
     "/pyproject.toml",
+]
+exclude = [
+    "/scripts/demo",
 ]
 
 [dependency-groups]
