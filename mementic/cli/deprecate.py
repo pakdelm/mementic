@@ -19,12 +19,8 @@ from mementic.entries import DeprecateOutcome, EntryWriter
 
 
 def deprecate(
-    ids: list[str] = typer.Argument(
-        ..., help="Decision or constraint IDs to deprecate"
-    ),
-    reason: str = typer.Option(
-        "", "--reason", "-r", help="Reason for deprecation"
-    ),
+    ids: list[str] = typer.Argument(..., help="Decision or constraint IDs to deprecate"),
+    reason: str = typer.Option("", "--reason", "-r", help="Reason for deprecation"),
 ) -> None:
     """Mark one or more decisions or constraints as deprecated.
 
@@ -39,12 +35,8 @@ def deprecate(
             typer.echo(f"Error: {exc}", err=True)
             raise typer.Exit(code=1) from exc
 
-    deprecated = sum(
-        1 for result in results if result.outcome is DeprecateOutcome.DEPRECATED
-    )
-    already = sum(
-        1 for result in results if result.outcome is DeprecateOutcome.ALREADY_DEPRECATED
-    )
+    deprecated = sum(1 for result in results if result.outcome is DeprecateOutcome.DEPRECATED)
+    already = sum(1 for result in results if result.outcome is DeprecateOutcome.ALREADY_DEPRECATED)
     errors = sum(1 for result in results if result.outcome is DeprecateOutcome.NOT_FOUND)
 
     for result in results:

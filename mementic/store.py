@@ -121,11 +121,7 @@ class MementicStore:
                 raise ValueError("read_only=True requires a file-backed database")
             return sqlite3.connect(":memory:")
         if self._read_only:
-            uri = (
-                "file:"
-                + quote(self._db_path.resolve().as_posix(), safe="/:")
-                + "?mode=ro"
-            )
+            uri = "file:" + quote(self._db_path.resolve().as_posix(), safe="/:") + "?mode=ro"
             return sqlite3.connect(uri, uri=True)
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
         return sqlite3.connect(str(self._db_path))
@@ -231,19 +227,14 @@ class MementicStore:
         if version == 0:
             tables = {
                 row["name"]
-                for row in conn.execute(
-                    "SELECT name FROM sqlite_master WHERE type='table'"
-                )
+                for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
             }
             if tables & {"decisions", "constraints"}:
                 raise RuntimeError(
-                    "Database has pre-versioning tables but user_version=0; "
-                    "cannot open it safely."
+                    "Database has pre-versioning tables but user_version=0; cannot open it safely."
                 )
             self._configure_journal()
-            conn.executescript(
-                f"BEGIN;\n{SCHEMA_DDL}\n{SET_USER_VERSION_SQL};\nCOMMIT;"
-            )
+            conn.executescript(f"BEGIN;\n{SCHEMA_DDL}\n{SET_USER_VERSION_SQL};\nCOMMIT;")
             return
         raise RuntimeError(
             f"Database schema is v{version} but this build requires "
@@ -301,7 +292,10 @@ class MementicStore:
             )
             self._replace_paths("decision", entry_id, paths)
             self._log_audit(
-                "decision", entry_id, action, {"title": title},
+                "decision",
+                entry_id,
+                action,
+                {"title": title},
             )
         return action
 
@@ -358,12 +352,18 @@ class MementicStore:
             )
             self._replace_paths("constraint", entry_id, paths)
             self._log_audit(
-                "constraint", entry_id, action, {"description": description},
+                "constraint",
+                entry_id,
+                action,
+                {"description": description},
             )
         return action
 
     def _replace_paths(
-        self, entry_type: str, entry_id: str, paths: list[str] | tuple[str, ...],
+        self,
+        entry_type: str,
+        entry_id: str,
+        paths: list[str] | tuple[str, ...],
     ) -> None:
         """Replace the entry_paths rows for one entry inside an open transaction."""
         conn = self._conn_or_raise()
@@ -373,8 +373,7 @@ class MementicStore:
         )
         for path in dict.fromkeys(paths):
             conn.execute(
-                "INSERT OR IGNORE INTO entry_paths (entry_type, entry_id, path) "
-                "VALUES (?, ?, ?)",
+                "INSERT OR IGNORE INTO entry_paths (entry_type, entry_id, path) VALUES (?, ?, ?)",
                 (entry_type, entry_id, path),
             )
 
@@ -411,16 +410,11 @@ class MementicStore:
                 ``"constraint"``.
         """
         if entry_type not in {"decision", "constraint"}:
-            raise ValueError(
-                f"entry_type must be 'decision' or 'constraint', "
-                f"got {entry_type!r}"
-            )
+            raise ValueError(f"entry_type must be 'decision' or 'constraint', got {entry_type!r}")
         conn = self._conn_or_raise()
         label = "title" if entry_type == "decision" else "description"
         table = entry_type + "s"
-        row = conn.execute(
-            f"SELECT id, {label} FROM {table} WHERE id = ?", (entry_id,)
-        ).fetchone()
+        row = conn.execute(f"SELECT id, {label} FROM {table} WHERE id = ?", (entry_id,)).fetchone()
         if row is None:
             return {
                 "status": "not_found",
@@ -429,9 +423,7 @@ class MementicStore:
         if self.is_deprecated(entry_type, entry_id):
             return {
                 "status": "already_deprecated",
-                "message": (
-                    f"{entry_type.title()} '{entry_id}' is already deprecated."
-                ),
+                "message": (f"{entry_type.title()} '{entry_id}' is already deprecated."),
             }
         now = utc_now()
         with self._write_scope():
@@ -481,10 +473,7 @@ class MementicStore:
                 ``"constraint"``.
         """
         if entry_type not in {"decision", "constraint"}:
-            raise ValueError(
-                f"entry_type must be 'decision' or 'constraint', "
-                f"got {entry_type!r}"
-            )
+            raise ValueError(f"entry_type must be 'decision' or 'constraint', got {entry_type!r}")
         conn = self._conn_or_raise()
         now = utc_now()
         with self._write_scope():
@@ -499,7 +488,11 @@ class MementicStore:
         return inserted_at
 
     def _log_audit(
-        self, entity_type: str, entity_id: str, action: str, details: dict,
+        self,
+        entity_type: str,
+        entity_id: str,
+        action: str,
+        details: dict,
     ) -> None:
         """Append one audit_log row inside an open transaction."""
         conn = self._conn_or_raise()
@@ -512,22 +505,16 @@ class MementicStore:
     def get_entry_type(self, entry_id: str) -> str | None:
         """Return ``"decision"``, ``"constraint"``, or None for unknown IDs."""
         conn = self._conn_or_raise()
-        if conn.execute(
-            "SELECT 1 FROM decisions WHERE id = ?", (entry_id,)
-        ).fetchone():
+        if conn.execute("SELECT 1 FROM decisions WHERE id = ?", (entry_id,)).fetchone():
             return "decision"
-        if conn.execute(
-            "SELECT 1 FROM constraints WHERE id = ?", (entry_id,)
-        ).fetchone():
+        if conn.execute("SELECT 1 FROM constraints WHERE id = ?", (entry_id,)).fetchone():
             return "constraint"
         return None
 
     def get_decision(self, entry_id: str) -> Decision | None:
         """Return one decision by ID, or None."""
         conn = self._conn_or_raise()
-        row = conn.execute(
-            "SELECT * FROM decisions WHERE id = ?", (entry_id,)
-        ).fetchone()
+        row = conn.execute("SELECT * FROM decisions WHERE id = ?", (entry_id,)).fetchone()
         if row is None:
             return None
         return Decision(
@@ -541,9 +528,7 @@ class MementicStore:
     def get_constraint(self, entry_id: str) -> Constraint | None:
         """Return one constraint by ID, or None."""
         conn = self._conn_or_raise()
-        row = conn.execute(
-            "SELECT * FROM constraints WHERE id = ?", (entry_id,)
-        ).fetchone()
+        row = conn.execute("SELECT * FROM constraints WHERE id = ?", (entry_id,)).fetchone()
         if row is None:
             return None
         return Constraint(
@@ -585,7 +570,9 @@ class MementicStore:
         successor ID or the literal ``"retired"`` when no successor exists.
         """
         rows = self._query_entries(
-            "decisions", live_only=False, with_superseded=True,
+            "decisions",
+            live_only=False,
+            with_superseded=True,
         )
         paths = self._paths_by_entry("decision")
         return [(self._row_to_decision(r, paths), r["superseded_by"]) for r in rows]
@@ -593,13 +580,19 @@ class MementicStore:
     def get_constraints_with_liveness(self) -> list[tuple[Constraint, str | None]]:
         """Return ``(constraint, superseded_by)`` pairs for every constraint."""
         rows = self._query_entries(
-            "constraints", live_only=False, with_superseded=True,
+            "constraints",
+            live_only=False,
+            with_superseded=True,
         )
         paths = self._paths_by_entry("constraint")
         return [(self._row_to_constraint(r, paths), r["superseded_by"]) for r in rows]
 
     def _query_entries(
-        self, table: str, *, live_only: bool, with_superseded: bool = False,
+        self,
+        table: str,
+        *,
+        live_only: bool,
+        with_superseded: bool = False,
     ) -> list[sqlite3.Row]:
         """Query the decisions/constraints table with derived liveness."""
         conn = self._conn_or_raise()
@@ -672,8 +665,7 @@ class MementicStore:
         conn = self._conn_or_raise()
         grouped: dict[str, list[str]] = {}
         rows = conn.execute(
-            "SELECT entry_id, path FROM entry_paths WHERE entry_type = ? "
-            "ORDER BY rowid",
+            "SELECT entry_id, path FROM entry_paths WHERE entry_type = ? ORDER BY rowid",
             (entry_type,),
         )
         for row in rows:
@@ -686,8 +678,7 @@ class MementicStore:
         return [
             r["path"]
             for r in conn.execute(
-                "SELECT path FROM entry_paths WHERE entry_type = ? "
-                "AND entry_id = ? ORDER BY rowid",
+                "SELECT path FROM entry_paths WHERE entry_type = ? AND entry_id = ? ORDER BY rowid",
                 (entry_type, entry_id),
             )
         ]
@@ -715,15 +706,14 @@ class MementicStore:
             callers re-sort by recency.
         """
         ids = self._entry_ids_matching_path(
-            "constraint", path, prefix=prefix, path_exists=path_exists,
+            "constraint",
+            path,
+            prefix=prefix,
+            path_exists=path_exists,
         )
         if not ids:
             return []
-        rows = [
-            r
-            for r in self._query_entries("constraints", live_only=True)
-            if r["id"] in ids
-        ]
+        rows = [r for r in self._query_entries("constraints", live_only=True) if r["id"] in ids]
         paths = self._paths_by_entry("constraint")
         return [self._row_to_constraint(r, paths) for r in rows]
 
@@ -749,7 +739,10 @@ class MementicStore:
             ``path_exists``, when given).
         """
         matches = self.get_path_matches(
-            "decision", path, prefix=prefix, path_exists=path_exists,
+            "decision",
+            path,
+            prefix=prefix,
+            path_exists=path_exists,
         )
         if not matches:
             return []
@@ -771,9 +764,14 @@ class MementicStore:
         path_exists: Callable[[str], bool] | None = None,
     ) -> set[str]:
         """Return entry IDs with at least one surviving matching path."""
-        return set(self.get_path_matches(
-            entry_type, path, prefix=prefix, path_exists=path_exists,
-        ).keys())
+        return set(
+            self.get_path_matches(
+                entry_type,
+                path,
+                prefix=prefix,
+                path_exists=path_exists,
+            ).keys()
+        )
 
     def get_path_matches(
         self,
@@ -808,9 +806,7 @@ class MementicStore:
             # paths beginning with ``path`` (including prefix-siblings such
             # as ``src/utils.py`` for prefix ``src/util`` — same semantics
             # as the historical startswith behavior).
-            escaped = path.replace("\\", "\\\\").replace("%", "\\%").replace(
-                "_", "\\_"
-            )
+            escaped = path.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
             pattern = escaped + "%"
             rows = conn.execute(
                 "SELECT entry_id, path FROM entry_paths "
@@ -819,8 +815,7 @@ class MementicStore:
             )
         else:
             rows = conn.execute(
-                "SELECT entry_id, path FROM entry_paths "
-                "WHERE entry_type = ? AND path = ?",
+                "SELECT entry_id, path FROM entry_paths WHERE entry_type = ? AND path = ?",
                 (entry_type, path),
             )
         matches: dict[str, set[str]] = {}
@@ -834,9 +829,7 @@ class MementicStore:
         """Return every distinct stored path, in insertion order."""
         conn = self._conn_or_raise()
         seen: dict[str, None] = {}
-        for r in conn.execute(
-            "SELECT path FROM entry_paths ORDER BY rowid"
-        ):
+        for r in conn.execute("SELECT path FROM entry_paths ORDER BY rowid"):
             seen.setdefault(r["path"], None)
         return list(seen)
 
@@ -858,7 +851,9 @@ class MementicStore:
         return row is not None
 
     def get_deprecations_for_entry(
-        self, entry_type: str, entry_id: str,
+        self,
+        entry_type: str,
+        entry_id: str,
     ) -> list[sqlite3.Row]:
         """Return every deprecations row recorded for an entry ID.
 
@@ -867,13 +862,14 @@ class MementicStore:
         """
         conn = self._conn_or_raise()
         return conn.execute(
-            "SELECT * FROM deprecations WHERE entry_type = ? AND entry_id = ? "
-            "ORDER BY at",
+            "SELECT * FROM deprecations WHERE entry_type = ? AND entry_id = ? ORDER BY at",
             (entry_type, entry_id),
         ).fetchall()
 
     def get_replacement_chain(
-        self, entry_type: str, entry_id: str,
+        self,
+        entry_type: str,
+        entry_id: str,
     ) -> list[sqlite3.Row]:
         """Return the transitive deprecation chain starting at an entry.
 
@@ -916,15 +912,9 @@ class MementicStore:
         dead_decisions = self._count_dead("decisions")
         dead_constraints = self._count_dead("constraints")
         return {
-            "decisions": conn.execute(
-                "SELECT COUNT(*) FROM decisions"
-            ).fetchone()[0],
-            "constraints": conn.execute(
-                "SELECT COUNT(*) FROM constraints"
-            ).fetchone()[0],
-            "paths": conn.execute(
-                "SELECT COUNT(*) FROM entry_paths"
-            ).fetchone()[0],
+            "decisions": conn.execute("SELECT COUNT(*) FROM decisions").fetchone()[0],
+            "constraints": conn.execute("SELECT COUNT(*) FROM constraints").fetchone()[0],
+            "paths": conn.execute("SELECT COUNT(*) FROM entry_paths").fetchone()[0],
             "deprecated": dead_decisions + dead_constraints,
         }
 
@@ -932,10 +922,7 @@ class MementicStore:
         """Count entries currently killed by a later-stamped tombstone."""
         conn = self._conn_or_raise()
         alias = table[0]
-        sql = (
-            f"SELECT COUNT(*) FROM {table} {alias} "
-            f"WHERE NOT ({LIVE_WHERE.format(alias=alias)})"
-        )
+        sql = f"SELECT COUNT(*) FROM {table} {alias} WHERE NOT ({LIVE_WHERE.format(alias=alias)})"
         return conn.execute(sql, {"etype": table[:-1]}).fetchone()[0]
 
     def count_audit_entries(self) -> int:
@@ -947,9 +934,7 @@ class MementicStore:
         conn = self._conn_or_raise()
         return int(conn.execute("SELECT COUNT(*) FROM audit_log").fetchone()[0])
 
-    def get_audit_entries(
-        self, limit: int = DEFAULT_AUDIT_LIMIT
-    ) -> list[sqlite3.Row]:
+    def get_audit_entries(self, limit: int = DEFAULT_AUDIT_LIMIT) -> list[sqlite3.Row]:
         """Return recent audit log entries, newest first.
 
         Args:
@@ -960,6 +945,4 @@ class MementicStore:
             entity_id, action, details, source, timestamp.
         """
         conn = self._conn_or_raise()
-        return conn.execute(
-            "SELECT * FROM audit_log ORDER BY id DESC LIMIT ?", (limit,)
-        ).fetchall()
+        return conn.execute("SELECT * FROM audit_log ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
