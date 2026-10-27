@@ -67,6 +67,24 @@ app = typer.Typer(
 )
 
 
+def _version_callback(value: bool) -> None:
+    """Print the installed version and exit when ``--version`` is set."""
+    if value:
+        from mementic import __version__
+
+        typer.echo(f"mementic {__version__}")
+        raise typer.Exit()
+
+
 @app.callback()
-def _root() -> None:
+def _root(
+    version: bool = typer.Option(
+        False,
+        "--version",
+        "-V",
+        callback=_version_callback,
+        is_eager=True,
+        help="Show the installed mementic version and exit.",
+    ),
+) -> None:
     """Run before any subcommand; present so Typer builds a command group."""

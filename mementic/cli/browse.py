@@ -34,8 +34,7 @@ def _validate_status(status: str | None) -> None:
     """Validate --status, exiting on an invalid value."""
     if status and status not in _VALID_STATUSES:
         typer.echo(
-            f"Invalid status '{status}'. "
-            f"Valid: {', '.join(sorted(_VALID_STATUSES))}",
+            f"Invalid status '{status}'. Valid: {', '.join(sorted(_VALID_STATUSES))}",
             err=True,
         )
         raise typer.Exit(code=1)
@@ -91,9 +90,7 @@ def decisions(
     show_superseded = status == "deprecated"
     decision_table = table()
     decision_table.add_column("", width=6)
-    decision_table.add_column(
-        "ID", style=COLOR_ID, no_wrap=True, overflow="ellipsis", width=24
-    )
+    decision_table.add_column("ID", style=COLOR_ID, no_wrap=True, overflow="ellipsis", width=24)
     decision_table.add_column("Date", style=COLOR_DIM, no_wrap=True, width=10)
     decision_table.add_column(
         "Title",
@@ -122,9 +119,7 @@ def decisions(
         if show_superseded:
             row.append(escape(_superseded_label(superseded_by)))
         decision_table.add_row(*row)
-    console.print(
-        panel(decision_table, title=f"Decisions ({len(pairs)} of {total})")
-    )
+    console.print(panel(decision_table, title=f"Decisions ({len(pairs)} of {total})"))
 
 
 @list_app.command()
@@ -161,13 +156,9 @@ def constraints(
         description_width = 30
     constraint_table = table()
     constraint_table.add_column("", width=6)
-    constraint_table.add_column(
-        "ID", style=COLOR_ID, no_wrap=True, overflow="ellipsis", width=30
-    )
+    constraint_table.add_column("ID", style=COLOR_ID, no_wrap=True, overflow="ellipsis", width=30)
     if show_enforced:
-        constraint_table.add_column(
-            "Enforced By", style=COLOR_DIM, no_wrap=True, width=14
-        )
+        constraint_table.add_column("Enforced By", style=COLOR_DIM, no_wrap=True, width=14)
     constraint_table.add_column(
         "Description", no_wrap=True, overflow="ellipsis", width=description_width
     )
@@ -184,18 +175,12 @@ def constraints(
         color = COLOR_SUCCESS if superseded_by is None else COLOR_WARN
         row = [f"[{color}]{icon}[/]", escape(constraint.id)]
         if show_enforced:
-            row.append(
-                f"via {escape(constraint.enforced_by)}"
-                if constraint.enforced_by
-                else ""
-            )
+            row.append(f"via {escape(constraint.enforced_by)}" if constraint.enforced_by else "")
         row.append(escape(constraint.description))
         if show_superseded:
             row.append(escape(_superseded_label(superseded_by)))
         constraint_table.add_row(*row)
-    console.print(
-        panel(constraint_table, title=f"Constraints ({len(pairs)} of {total})")
-    )
+    console.print(panel(constraint_table, title=f"Constraints ({len(pairs)} of {total})"))
 
 
 @list_app.command()
@@ -237,9 +222,7 @@ def history(
     entry_id: str | None = typer.Argument(
         None, help="Decision or constraint ID to trace (omit for recent records)"
     ),
-    n: int = typer.Option(
-        context.DEFAULT_PAGE_SIZE, "--n", "-n", help="Number of records to show"
-    ),
+    n: int = typer.Option(context.DEFAULT_PAGE_SIZE, "--n", "-n", help="Number of records to show"),
 ) -> None:
     """Show deprecation records: one entry's lifecycle chain or recent records."""
     rows: list = []
@@ -265,9 +248,7 @@ def history(
             rows = rows[:n]
         dep_table = table()
         dep_table.add_column("At (UTC)", style=COLOR_DIM, no_wrap=True, width=16)
-        dep_table.add_column(
-            "Entry", style=COLOR_ID, no_wrap=True, overflow="ellipsis", width=30
-        )
+        dep_table.add_column("Entry", style=COLOR_ID, no_wrap=True, overflow="ellipsis", width=30)
         dep_table.add_column("Reason", no_wrap=True, overflow="ellipsis", width=28)
         for record in rows:
             reason = record["reason"] or ""
@@ -292,9 +273,7 @@ def history(
     dep_table.add_column("Reason", overflow="fold")
     for record in records:
         successor = (
-            "[dim]none[/]"
-            if record["replaced_by"] is None
-            else escape(record["replaced_by"])
+            "[dim]none[/]" if record["replaced_by"] is None else escape(record["replaced_by"])
         )
         reason = record["reason"] or ""
         dep_table.add_row(

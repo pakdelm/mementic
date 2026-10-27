@@ -13,11 +13,18 @@
    uv sync
    ```
 
-3. Verify setup:
+3. Initialize the local graph and verify setup:
    ```sh
+   uv run mementic init
    uv run pytest
    uv run ruff check .
+   uv run ruff format --check .
    uv run mypy .
+   ```
+
+4. Install the pre-commit hooks:
+   ```sh
+   uv run pre-commit install
    ```
 
 ### Docker and sbx tests
@@ -50,9 +57,8 @@ The Kit frontend resolves the recipe by the descriptor's filename stem, so keep
 the two names in sync; a recipe under any other name is ignored and the kit
 builds without content. The CI `docker` job stages and builds the kit.
 
-Releases publish the kit image from the checkout. `scripts/release.py` needs
-Docker with a multi-platform buildx builder (the `docker-container` driver) and
-a registry login for `docker.io/pakdelm`.
+The kit image is not published. Stage it from the checkout and build it
+locally; `scripts/release.py` does not push an image.
 
 ## Pull Request Checklist
 
@@ -60,48 +66,18 @@ Before submitting a pull request, ensure:
 
 1. All tests pass with `uv run pytest`
 2. Lint clean with `uv run ruff check .`
-3. Type check clean with `uv run mypy .`
-4. No new dependencies without discussion
-5. Tests cover new functionality
-6. Follow existing code style (PEP 8, 100-char line limit, Google-style docstrings)
-7. Docker tests pass if the change touches the kit or container path (`uv run pytest -m docker -n 0`)
-8. CLA signed on your first contribution (see below)
+3. Formatting clean with `uv run ruff format --check .`
+4. Type check clean with `uv run mypy .`
+5. No new dependencies without discussion
+6. Tests cover new functionality
+7. Follow existing code style (PEP 8, 100-char line limit, Google-style docstrings)
+8. Docker tests pass if the change touches the kit or container path (`uv run pytest -m docker -n 0`)
 
-## CLA (Contributor License Agreement)
+## Licensing
 
-Every contributor signs the [CLA](CLA.md) before their first pull request is
-merged. The CLA keeps your copyright but grants the Project Owner the
-relicensing rights the project needs to offer different licensing terms later.
-It is in addition to the DCO sign-off required on every commit.
-
-Sign by commenting on your first pull request:
-
-> I have read the CLA and I sign it.
-
-Corporate contributors must have an authorized representative sign on the
-entity's behalf. The Project Owner records the signature on the pull request.
-
-## DCO (Developer Certificate of Origin)
-
-All contributions must include a `Signed-off-by: Name <email>` line in every commit
-message. This certifies the contributor has the right to submit the work under the
-project's Apache-2.0 license.
-
-The email in the sign-off must match the commit author email. Committing under one
-identity and signing off with another fails the DCO check.
-
-See https://developercertificate.org/ for the full DCO text.
-
-Use the `-s` flag to add the Signed-off-by line automatically:
-```sh
-git commit -s -m "Add feature X"
-```
-
-This requires `git user.name` and `user.email` to be configured.
-
-Run `uv run pre-commit install` once to install the hooks. That includes the
-`commit-msg` check, which catches a missing or mismatched sign-off before the
-commit is created. `git commit --no-verify` skips it, but CI still enforces it.
+Contributions are accepted under the Apache-2.0 license. By opening a pull
+request you confirm you have the right to submit the work under that license.
+No CLA or DCO sign-off is required.
 
 ## Code Style
 
@@ -113,5 +89,4 @@ commit is created. `git commit --no-verify` skips it, but CI still enforces it.
 
 ## Getting Help
 
-- Use [GitHub Discussions](https://github.com/pakdelm/mementic/discussions) for questions.
 - Use [issues](https://github.com/pakdelm/mementic/issues) for bugs and feature requests.

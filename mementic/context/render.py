@@ -19,10 +19,7 @@ _RATIONALE_MAX_CHARS: int = 200
 
 def _compact_evolution_line(decision: Decision) -> str:
     """Format a decision with provenance for evolution traces."""
-    return (
-        f"- [{decision.created_at}] {decision.title}: "
-        f"{decision.rationale} (#{decision.id})"
-    )
+    return f"- [{decision.created_at}] {decision.title}: {decision.rationale} (#{decision.id})"
 
 
 def format_evolution(
@@ -51,9 +48,7 @@ def format_evolution(
         for decision in selected:
             lines.append(_compact_evolution_line(decision))
         if shown < total:
-            lines.append(
-                f"... and {total - shown} more decisions omitted (token budget)."
-            )
+            lines.append(f"... and {total - shown} more decisions omitted (token budget).")
 
     return "\n".join(lines)
 
@@ -93,9 +88,7 @@ def format_context_pack_json(
     )
     stats = result.stats
 
-    constraint_label = (
-        f"{stats.shown_constraints} of {stats.matched_constraints}"
-    )
+    constraint_label = f"{stats.shown_constraints} of {stats.matched_constraints}"
     decision_label = f"{stats.shown_decisions} of {stats.matched_decisions}"
 
     if keywords:
@@ -105,10 +98,7 @@ def format_context_pack_json(
             f"matched for [{keyword_summary}]"
         )
     else:
-        summary = (
-            f"{stats.shown_constraints} constraints, "
-            f"{stats.shown_decisions} decisions"
-        )
+        summary = f"{stats.shown_constraints} constraints, {stats.shown_decisions} decisions"
 
     truncated = (
         stats.shown_constraints < stats.matched_constraints
@@ -180,10 +170,7 @@ def format_file_history_json(
         for constraint in constraints
     ]
 
-    summary = (
-        f"{len(decisions)} decisions, {len(constraints)} constraints "
-        f"affecting {entity_path}"
-    )
+    summary = f"{len(decisions)} decisions, {len(constraints)} constraints affecting {entity_path}"
 
     return {
         "summary": summary,

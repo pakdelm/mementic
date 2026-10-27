@@ -37,10 +37,7 @@ def _summary_from_details(details: object) -> str:
     if isinstance(details, dict) and "description" in details:
         return str(details["description"])
     if isinstance(details, dict) and "relation" in details:
-        return (
-            f"{details.get('source', '')} -> "
-            f"{details.get('target', '')} ({details['relation']})"
-        )
+        return f"{details.get('source', '')} -> {details.get('target', '')} ({details['relation']})"
     if isinstance(details, str):
         return details
     return "-"
@@ -62,9 +59,7 @@ def log(
     audit_table = table()
     audit_table.add_column("Timestamp (UTC)", style=COLOR_DIM, no_wrap=True, width=16)
     audit_table.add_column("Action", no_wrap=True, width=10)
-    audit_table.add_column(
-        "Rule ID", style=COLOR_ID, no_wrap=True, overflow="ellipsis", width=18
-    )
+    audit_table.add_column("Rule ID", style=COLOR_ID, no_wrap=True, overflow="ellipsis", width=18)
     audit_table.add_column(
         "Summary",
         no_wrap=True,

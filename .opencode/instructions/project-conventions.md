@@ -4,8 +4,6 @@
 
 - Use `git` for version control.
 - Write concise, imperative commit messages (e.g., "Add user authentication").
-- Sign every commit with `git commit -s` — the DCO `Signed-off-by` trailer is
-  required; `.github/workflows/dco.yml` fails any PR commit without it.
 - Never commit secrets, `.env` files, or generated artifacts.
 
 ## Dependency Management

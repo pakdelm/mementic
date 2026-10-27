@@ -44,8 +44,7 @@ def split_pack_budget(total: int | None) -> tuple[int, int]:
             CONTEXT_PACK_DEFAULT_MAX_DECISION_TOKENS,
         )
     share = CONTEXT_PACK_DEFAULT_MAX_CONSTRAINT_TOKENS / (
-        CONTEXT_PACK_DEFAULT_MAX_CONSTRAINT_TOKENS
-        + CONTEXT_PACK_DEFAULT_MAX_DECISION_TOKENS
+        CONTEXT_PACK_DEFAULT_MAX_CONSTRAINT_TOKENS + CONTEXT_PACK_DEFAULT_MAX_DECISION_TOKENS
     )
     constraint_tokens = math.floor(total * share)
     return (constraint_tokens, total - constraint_tokens)
@@ -172,9 +171,7 @@ def _render_keyword_section(
     for item in selected:
         lines.append(line_formatter(item))
     if len(selected) < matched:
-        lines.append(
-            f"+{matched - len(selected)} more below threshold - {_TRUNCATION_HINT}"
-        )
+        lines.append(f"+{matched - len(selected)} more below threshold - {_TRUNCATION_HINT}")
     return lines
 
 
@@ -213,9 +210,7 @@ def _render_recency_fallback(
         if len(constraints) == 0:
             lines.append("_None_")
         else:
-            lines.append(
-                f"_... and {len(constraints)} constraints omitted (token budget)._"
-            )
+            lines.append(f"_... and {len(constraints)} constraints omitted (token budget)._")
     else:
         for constraint in selected_c:
             lines.append(_compact_constraint_line(constraint))
@@ -229,9 +224,7 @@ def _render_recency_fallback(
         if len(decisions) == 0:
             lines.append("_None_")
         else:
-            lines.append(
-                f"_... and {len(decisions)} decisions omitted (token budget)._"
-            )
+            lines.append(f"_... and {len(decisions)} decisions omitted (token budget)._")
     else:
         for decision in selected_d:
             lines.append(_compact_decision_line(decision))
@@ -273,19 +266,13 @@ def build_context_pack(
         )
 
         n_docs = len(live_constraints) + len(live_decisions)
-        doc_freq = document_frequencies(
-            [*live_constraints, *live_decisions], keywords
-        )
+        doc_freq = document_frequencies([*live_constraints, *live_decisions], keywords)
         idf = idf_weights(n_docs, doc_freq)
 
         ranked_c = rank_keyword_section(live_constraints, keywords, idf)
         ranked_d = rank_keyword_section(live_decisions, keywords, idf)
-        selected_c = truncate_ranked(
-            ranked_c, max_constraint_tokens, _compact_constraint_line
-        )
-        selected_d = truncate_ranked(
-            ranked_d, max_decision_tokens, _compact_decision_line
-        )
+        selected_c = truncate_ranked(ranked_c, max_constraint_tokens, _compact_constraint_line)
+        selected_d = truncate_ranked(ranked_d, max_decision_tokens, _compact_decision_line)
 
         stats.matched_constraints = len(ranked_c)
         stats.shown_constraints = len(selected_c)

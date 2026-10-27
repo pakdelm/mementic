@@ -1,5 +1,7 @@
 # Mementic
 
+Declarative architectural memory for AI coding agents.
+
 Mementic gives your AI coding agent the architectural rules it needs before it
 starts working. Your project's decisions and constraints live in a local graph
 you can query, so the agent reads what the project decided instead of
@@ -31,7 +33,8 @@ a task, the answer comes from what the project wrote down.
 
 A few things follow from that:
 
-- Every entry has a rationale, so you can ask why a rule exists.
+- Decisions carry a rationale; constraints carry a description and an optional
+  `enforced_by` link to the decision that enforces them.
 - Nothing is inferred. The only way in is `mementic add decision` or
   `mementic add constraint`.
 - The graph is a SQLite file on your disk. No cloud, no API keys, no telemetry.
@@ -67,11 +70,12 @@ mementic log
 `init` also writes an enforcement section into `AGENTS.md`. It creates the file
 if needed and replaces the section in place on every run, leaving the rest of the
 file alone. The section tells your agent to query before working and to record
-new rules through `mementic add`.
+new rules through `mementic add`. In a Git work tree, it also adds `.mementic/`
+to `.gitignore` so the graph is never committed.
 
-Adding the same title twice is safe. If the content matches, the second add is
-skipped. If it differs, the old entry is deprecated and the new one takes its
-place.
+Adding the same title twice is safe. If the content is near-identical (80% word
+overlap), the second add is skipped. If it differs materially, the old entry is
+deprecated and the new one takes its place.
 
 Everything lives in `.mementic/`. No global config, no registration, no API keys.
 
@@ -98,9 +102,9 @@ substring search and not a glob.
 
 ## Docker Sandboxes (sbx)
 
-The v3 mixin in `docker/sbx-mementic/` installs the CLI into a workload. A
-published image ships with the next release. Until then you can stage the kit from
-a checkout and run it from the workspace root that should own `.mementic/`:
+The v3 mixin in `docker/sbx-mementic/` installs the CLI into a workload. The kit
+image is not published. Stage it from a checkout and run it from the workspace
+root that should own `.mementic/`:
 
 ```sh
 uv run python scripts/kit.py stage .sbx-kit
@@ -217,10 +221,11 @@ A cross cutting feature spanning several modules:
 
 Across both: 51% fewer tokens, 75% fewer subagents, 47% fewer file reads.
 
-That is my codebase, my graph and my setup, so treat the numbers as a signal
-rather than a promise. How much you gain depends on how many architectural rules
-your project actually has written down. The pattern held though. The agent spent
-less time on discovery and more time on the task.
+These numbers are a one-off anecdote, not a reproducible benchmark: Windows 11,
+Python 3.13, October 2026, two tasks run in OpenCode against my graph (330
+decisions, 215 constraints). Treat them as a signal rather than a promise. How
+much you gain depends on how many architectural rules your project actually has
+written down.
 
 ## Limitations
 
@@ -241,6 +246,7 @@ If any of that sounds like fun to fix, contributions are welcome. See
 
 | Command | What it does |
 |---|---|
+| `mementic --version` | Print the installed package version and exit |
 | `mementic init` | Create `.mementic/graph.db` when missing (idempotent) and create or update the AGENTS.md enforcement section |
 | `mementic query keywords <kw...> [--json] [-c/--compact]` | Get ranked context for a task |
 | `mementic query file <path> [--prefix] [--json] [-c/--compact]` | Constraints and decisions for a file (exact match by default) |
@@ -274,9 +280,9 @@ skip tombstones without any cleanup scan.
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md). The short version: PRs are welcome, every
-commit needs a DCO sign off (`git commit -s`), the CLA is required on your first
-contribution (see [CLA.md](CLA.md)), and tests, lint and typecheck must be clean.
+See [CONTRIBUTING.md](CONTRIBUTING.md). The short version: PRs are welcome,
+tests, lint, formatting, and typecheck must be clean, and no CLA or DCO sign-off
+is required.
 
 ## License
 

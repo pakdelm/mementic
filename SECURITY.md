@@ -2,45 +2,38 @@
 
 ## Reporting a Vulnerability
 
-If you discover a security vulnerability in mementic, please report it via
-**GitHub Security Advisories** — go to the [Security tab](https://github.com/pakdelm/mementic/security/advisories/new)
-and create a private advisory. Do **not** open a public GitHub issue — this
-allows us to address the issue before it is publicly disclosed.
+If you discover a security vulnerability in mementic, report it through
+**GitHub private vulnerability reporting**: open the
+[Security tab](https://github.com/pakdelm/mementic/security/advisories/new) and
+create a private advisory. Do not open a public issue before the issue is
+disclosed.
 
 You can expect:
 
 - **Acknowledgment** within 48 hours of your report.
-- A **timeline and assessment** of the issue once we have triaged it.
-- Coordinated disclosure so that a fix is available before the vulnerability is
-  announced publicly.
-
-We appreciate responsible disclosure and will credit reporters (with permission)
-in the release notes.
+- A **timeline and assessment** once the issue has been triaged.
+- Coordinated disclosure so that a fix is available before public announcement.
 
 ## Supported Versions
 
-There are no public releases yet. Once the first release ships, only the latest
-release line receives security updates.
+`0.5.x` is the first public release line. Only the latest release line receives
+security updates.
 
-| Version          | Supported          |
-| ---------------- | ------------------ |
-| Latest release   | :white_check_mark: |
-| Older releases   | :x:                |
+| Version | Supported |
+| ------- | --------- |
+| 0.5.x   | yes       |
+| older   | no        |
 
 ## Security Model
 
-mementic is a local CLI. It runs no servers and collects no telemetry. The
-knowledge graph is a local SQLite database that lives entirely on your machine.
-API keys are stored in your operating system keychain (with environment
-variables as a CI fallback) and are never written to disk.
+mementic is a local CLI. It runs no server, collects no telemetry, and makes no
+network requests at runtime. The knowledge graph is a local SQLite database at
+`.mementic/graph.db`; it is not encrypted and is readable by anyone with access
+to the file.
 
-LLM extraction is the only network activity, and it is always direct: requests
-go straight from your machine to the provider you configured (e.g., OpenAI,
-DeepSeek, OpenRouter) using your own API key. Depending on the command, a
-request can include session-log excerpts, the current git diff (`mementic
-capture`), or repository markdown and a codebase summary (`mementic init
---deep`). Nothing is ever sent to a mementic-hosted server — mementic has none.
+There is no LLM extraction, no API key handling, no keyring integration, no
+`capture` command, and no `init --deep` mode. Decisions and constraints are
+written explicitly with `mementic add`.
 
-If your code must not leave your machine, run mementic without an API key:
-extraction then runs fully locally in deterministic mode (no LLM calls), or
-point the provider at a local model such as Ollama.
+The graph belongs to the directory where `mementic init` was run. It is not
+synced or shared. Back it up like any other local file.

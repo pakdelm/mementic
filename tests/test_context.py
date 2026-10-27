@@ -177,10 +177,10 @@ class TestFormatContextPack:
         constraints = [make_constraint()]
 
         output = _render_pack(
-            decisions, constraints,
+            decisions,
+            constraints,
             max_constraint_tokens=CONTEXT_PACK_DEFAULT_MAX_CONSTRAINT_TOKENS,
             max_decision_tokens=CONTEXT_PACK_DEFAULT_MAX_DECISION_TOKENS,
-
         )
 
         assert output.startswith("## Architectural Context")
@@ -191,10 +191,10 @@ class TestFormatContextPack:
 
     def test_with_empty_lists(self) -> None:
         output: str = _render_pack(
-            [], [],
+            [],
+            [],
             max_constraint_tokens=CONTEXT_PACK_DEFAULT_MAX_CONSTRAINT_TOKENS,
             max_decision_tokens=CONTEXT_PACK_DEFAULT_MAX_DECISION_TOKENS,
-
         )
 
         assert output.startswith("## Architectural Context")
@@ -206,10 +206,10 @@ class TestFormatContextPack:
     def test_with_only_decisions(self) -> None:
         decisions = [make_decision(title="Use pydantic")]
         output = _render_pack(
-            decisions, [],
+            decisions,
+            [],
             max_constraint_tokens=CONTEXT_PACK_DEFAULT_MAX_CONSTRAINT_TOKENS,
             max_decision_tokens=CONTEXT_PACK_DEFAULT_MAX_DECISION_TOKENS,
-
         )
 
         assert "### Constraints (MUST follow)" in output
@@ -220,10 +220,10 @@ class TestFormatContextPack:
     def test_with_only_constraints(self) -> None:
         constraints = [make_constraint(description="Must use type hints")]
         output = _render_pack(
-            [], constraints,
+            [],
+            constraints,
             max_constraint_tokens=CONTEXT_PACK_DEFAULT_MAX_CONSTRAINT_TOKENS,
             max_decision_tokens=CONTEXT_PACK_DEFAULT_MAX_DECISION_TOKENS,
-
         )
 
         assert "### Constraints (MUST follow)" in output
@@ -235,10 +235,10 @@ class TestFormatContextPack:
         """Compact format drops the [C] prefix."""
         constraints = [make_constraint(description="Must use double quotes")]
         output = _render_pack(
-            [], constraints,
+            [],
+            constraints,
             max_constraint_tokens=CONTEXT_PACK_DEFAULT_MAX_CONSTRAINT_TOKENS,
             max_decision_tokens=CONTEXT_PACK_DEFAULT_MAX_DECISION_TOKENS,
-
         )
 
         assert "[C]" not in output
@@ -248,10 +248,10 @@ class TestFormatContextPack:
         """Compact format drops (enforced by: X)."""
         constraints = [make_constraint(description="A test rule", enforced_by="dec-42")]
         output = _render_pack(
-            [], constraints,
+            [],
+            constraints,
             max_constraint_tokens=CONTEXT_PACK_DEFAULT_MAX_CONSTRAINT_TOKENS,
             max_decision_tokens=CONTEXT_PACK_DEFAULT_MAX_DECISION_TOKENS,
-
         )
 
         assert "enforced by" not in output
@@ -261,10 +261,10 @@ class TestFormatContextPack:
         """Compact decision format drops title and date."""
         decisions = [make_decision(title="Pick DB", rationale="Chose PostgreSQL")]
         output = _render_pack(
-            decisions, [],
+            decisions,
+            [],
             max_constraint_tokens=CONTEXT_PACK_DEFAULT_MAX_CONSTRAINT_TOKENS,
             max_decision_tokens=CONTEXT_PACK_DEFAULT_MAX_DECISION_TOKENS,
-
         )
 
         assert "Pick DB" not in output
@@ -281,10 +281,10 @@ class TestFormatContextPack:
             make_constraint(id="c-2", description="Constraint 2"),
         ]
         output = _render_pack(
-            decisions, constraints,
+            decisions,
+            constraints,
             max_constraint_tokens=CONTEXT_PACK_DEFAULT_MAX_CONSTRAINT_TOKENS,
             max_decision_tokens=CONTEXT_PACK_DEFAULT_MAX_DECISION_TOKENS,
-
         )
 
         assert "- Constraint 1 (#c-1)" in output
@@ -295,50 +295,46 @@ class TestFormatContextPack:
     def test_omission_note_constraints(self) -> None:
         """When constraints are truncated, an omission note is shown."""
         constraints = [
-            make_constraint(id=f"c-{i}", description=f"Constraint {i}")
-            for i in range(1, 20)
+            make_constraint(id=f"c-{i}", description=f"Constraint {i}") for i in range(1, 20)
         ]
         output = _render_pack(
-            [], constraints, max_constraint_tokens=60,
+            [],
+            constraints,
+            max_constraint_tokens=60,
             max_decision_tokens=9999,
-
         )
         assert "more constraints omitted (token budget)" in output
 
     def test_omission_note_decisions(self) -> None:
         """When decisions are truncated, an omission note is shown."""
-        decisions = [
-            make_decision(id=f"d-{i}", rationale=f"Rationale {i}")
-            for i in range(1, 20)
-        ]
+        decisions = [make_decision(id=f"d-{i}", rationale=f"Rationale {i}") for i in range(1, 20)]
         output = _render_pack(
-            decisions, [], max_constraint_tokens=9999,
+            decisions,
+            [],
+            max_constraint_tokens=9999,
             max_decision_tokens=60,
-
         )
         assert "more decisions omitted (token budget)" in output
 
     def test_no_omission_note_when_all_fit(self) -> None:
         """No omission note when all items fit within the token budget."""
-        constraints = [
-            make_constraint(id="c-1", description="Only one")
-        ]
+        constraints = [make_constraint(id="c-1", description="Only one")]
         output = _render_pack(
-            [], constraints, max_constraint_tokens=9999,
+            [],
+            constraints,
+            max_constraint_tokens=9999,
             max_decision_tokens=9999,
-
         )
         assert "more constraints omitted" not in output
 
     def test_omission_note_when_all_omitted(self) -> None:
         """When ALL items are omitted due to tiny budget, italic note is shown."""
-        constraints = [
-            make_constraint(id="c-1", description="A somewhat long description")
-        ]
+        constraints = [make_constraint(id="c-1", description="A somewhat long description")]
         output = _render_pack(
-            [], constraints, max_constraint_tokens=1,  # impossibly small
+            [],
+            constraints,
+            max_constraint_tokens=1,  # impossibly small
             max_decision_tokens=9999,
-
         )
         assert "_... and 1 constraints omitted (token budget)._" in output
 
@@ -346,17 +342,14 @@ class TestFormatContextPack:
         """Constraints are filled first; decisions get remaining budget."""
         # Many constraints consume most of the budget
         constraints = [
-            make_constraint(id=f"c-{i}", description=f"Constraint {i}")
-            for i in range(1, 10)
+            make_constraint(id=f"c-{i}", description=f"Constraint {i}") for i in range(1, 10)
         ]
-        decisions = [
-            make_decision(id=f"d-{i}", rationale=f"Rationale {i}")
-            for i in range(1, 10)
-        ]
+        decisions = [make_decision(id=f"d-{i}", rationale=f"Rationale {i}") for i in range(1, 10)]
         output = _render_pack(
-            decisions, constraints, max_constraint_tokens=100,
+            decisions,
+            constraints,
+            max_constraint_tokens=100,
             max_decision_tokens=100,
-
         )
 
         # Some constraints should be shown
@@ -380,12 +373,14 @@ class TestFormatEvolution:
     def test_preserves_title_and_date(self) -> None:
         """_compact_evolution_line keeps title and created_at for provenance."""
         decisions = [
-            d(make_decision(
-                id="d-1",
-                title="Use Pydantic",
-                rationale="Strong validation",
-                ts="2025-06-01T12:00:00Z",
-            ))
+            d(
+                make_decision(
+                    id="d-1",
+                    title="Use Pydantic",
+                    rationale="Strong validation",
+                    ts="2025-06-01T12:00:00Z",
+                )
+            )
         ]
         output = format_evolution("test.py", decisions)
 
@@ -413,8 +408,7 @@ class TestFormatEvolution:
     def test_omission_note_when_truncated(self) -> None:
         """Omission note appears when some decisions are dropped due to budget."""
         decisions = [
-            d(make_decision(id=f"d-{i}", rationale=f"Rationale {i}"), 1)
-            for i in range(1, 20)
+            d(make_decision(id=f"d-{i}", rationale=f"Rationale {i}"), 1) for i in range(1, 20)
         ]
         output = format_evolution("test.py", decisions, max_tokens=60)
 
@@ -422,9 +416,7 @@ class TestFormatEvolution:
 
     def test_tiny_budget_reports_omission_not_missing_history(self) -> None:
         """An over-budget decision is omitted, not reported as nonexistent."""
-        decisions = [
-            d(make_decision(id="d-1", rationale="A very long rationale line"))
-        ]
+        decisions = [d(make_decision(id="d-1", rationale="A very long rationale line"))]
         output = format_evolution("test.py", decisions, max_tokens=1)
 
         assert "No architectural decisions found" not in output
@@ -432,9 +424,7 @@ class TestFormatEvolution:
 
     def test_no_omission_note_when_all_fit(self) -> None:
         """No omission note when all decisions fit within budget."""
-        decisions = [
-            d(make_decision(id="d-1", rationale="Short"), 1)
-        ]
+        decisions = [d(make_decision(id="d-1", rationale="Short"), 1)]
         output = format_evolution("test.py", decisions, max_tokens=9999)
 
         assert "more decisions omitted" not in output
@@ -489,9 +479,7 @@ class TestCompactEvolutionLine:
             ts="2024-06-01T00:00:00Z",
         )
         line = _compact_evolution_line(d_obj)
-        assert line == (
-            "- [2024-06-01T00:00:00Z] Use Pydantic: Strong validation (#d-1)"
-        )
+        assert line == ("- [2024-06-01T00:00:00Z] Use Pydantic: Strong validation (#d-1)")
 
     def test_preserves_title_and_date(self) -> None:
         d_obj = make_decision(
@@ -557,9 +545,7 @@ class TestSlugify:
 
 
 class TestTimestamp:
-    ISO_8601_RE = re.compile(
-        r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+(?:\+\d{2}:\d{2}|Z)$"
-    )
+    ISO_8601_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+(?:\+\d{2}:\d{2}|Z)$")
 
     def test_returns_iso8601_format(self) -> None:
         ts = utc_now()
@@ -673,9 +659,11 @@ class TestCompactEntityEnrichment:
         Regression: previously used ``joined[:max_chars]``, which could split
         a path like ``src/modu...`` leaving a partial path that looks real.
         """
-        entities = ["src/very/deep/module/path_one.py",
-                    "src/very/deep/module/path_two.py",
-                    "src/very/deep/module/path_three.py"]
+        entities = [
+            "src/very/deep/module/path_one.py",
+            "src/very/deep/module/path_two.py",
+            "src/very/deep/module/path_three.py",
+        ]
         result = truncate_entity_list(entities, max_chars=50)
         assert result.endswith("...")
         # No partial path token should appear: every comma-delimited segment
@@ -696,8 +684,9 @@ def _corpus() -> list[Constraint | Decision]:
     return [
         make_constraint(id="c-argon", description="hash passwords with argon2"),
         make_constraint(id="c-api", description="api endpoints validate api input"),
-        make_decision(id="d-argon-title", title="argon2 adoption",
-                      rationale="unrelated rationale text"),
+        make_decision(
+            id="d-argon-title", title="argon2 adoption", rationale="unrelated rationale text"
+        ),
     ]
 
 
@@ -710,7 +699,9 @@ class TestDocumentFrequencies:
 
     def test_entry_counts_once_across_fields(self) -> None:
         entry = make_decision(
-            id="d-dup", title="argon2 hashing", rationale="argon2 again",
+            id="d-dup",
+            title="argon2 hashing",
+            rationale="argon2 again",
         )
         df = document_frequencies([entry], ["argon2"])
         assert df["argon2"] == 1
@@ -734,6 +725,7 @@ class TestIdfWeights:
         """Smoothed IDF: a keyword in every document stays positive and
         approaches ln(2) (exact value ln(1 + N/(N+1)) at df == N)."""
         import math
+
         idf = idf_weights(10, {"everywhere": 10})
         assert idf["everywhere"] == pytest.approx(math.log(1 + 10 / 11))
         assert idf["everywhere"] > 0.6  # near ln(2) ~= 0.693, never 0.0
@@ -741,6 +733,7 @@ class TestIdfWeights:
     def test_zero_df_gets_max_idf(self) -> None:
         """df=0 scores the maximum ln(1 + N), above the df=1 weight."""
         import math
+
         idf = idf_weights(5, {"unseen": 0, "seen_once": 1})
         assert idf["unseen"] == pytest.approx(math.log(6))
         assert idf["unseen"] > idf["seen_once"]
@@ -769,14 +762,16 @@ class TestKeywordIdfScore:
     def test_no_false_positive_substring(self) -> None:
         """'test' should NOT match 'contest' or 'protest'."""
         entry = make_constraint(
-            id="c-contest", description="verify contest results and protest handling",
+            id="c-contest",
+            description="verify contest results and protest handling",
         )
         assert self._score(entry, ["test"]) == 0.0
 
     def test_word_boundary_catches_prefix(self) -> None:
         """'auth' SHOULD match 'authentication' (starts at word boundary)."""
         entry = make_constraint(
-            id="c-auth", description="use token-based authentication for endpoints",
+            id="c-auth",
+            description="use token-based authentication for endpoints",
         )
         assert self._score(entry, ["auth"]) > 0.0
 
@@ -786,29 +781,36 @@ class TestKeywordIdfScore:
 
     def test_case_insensitive(self) -> None:
         entry = make_constraint(
-            id="c-case", description="Use TYPE hints and ASYNC functions",
+            id="c-case",
+            description="Use TYPE hints and ASYNC functions",
         )
         assert self._score(entry, ["type", "async"]) > 0.0
 
     def test_multi_word_keyword_matches_phrase(self) -> None:
         entry = make_constraint(
-            id="c-phrase", description="add type hints to all function signatures",
+            id="c-phrase",
+            description="add type hints to all function signatures",
         )
         assert self._score(entry, ["type hints"]) > 0.0
 
     def test_multi_word_keyword_no_false_positive(self) -> None:
         entry = make_constraint(
-            id="c-split", description="the type of these hints matters",
+            id="c-split",
+            description="the type of these hints matters",
         )
         assert self._score(entry, ["type hints"]) == 0.0
 
     def test_title_match_beats_rationale_match(self) -> None:
         """Field weighting: title (3.0) outweighs rationale (1.0)."""
         title_hit = make_decision(
-            id="d-title", title="argon2 everywhere", rationale="nothing relevant",
+            id="d-title",
+            title="argon2 everywhere",
+            rationale="nothing relevant",
         )
         rationale_hit = make_decision(
-            id="d-rationale", title="boring title", rationale="we adopted argon2",
+            id="d-rationale",
+            title="boring title",
+            rationale="we adopted argon2",
         )
         assert self._score(title_hit, ["argon2"]) == pytest.approx(
             3.0 * self._score(rationale_hit, ["argon2"])
@@ -817,17 +819,22 @@ class TestKeywordIdfScore:
     def test_highest_field_weight_counted_once(self) -> None:
         """A keyword in several fields contributes its best weight once."""
         both = make_decision(
-            id="d-both", title="argon2 here", rationale="argon2 there",
+            id="d-both",
+            title="argon2 here",
+            rationale="argon2 there",
         )
         title_only = make_decision(
-            id="d-one", title="argon2 here", rationale="nothing relevant",
+            id="d-one",
+            title="argon2 here",
+            rationale="nothing relevant",
         )
         assert self._score(both, ["argon2"]) == self._score(title_only, ["argon2"])
 
     def test_description_weight_between_title_and_rationale(self) -> None:
         """Constraint description carries weight 2.0."""
         desc_hit = make_constraint(
-            id="c-desc", description="argon2 required for passwords",
+            id="c-desc",
+            description="argon2 required for passwords",
         )
         corpus = [*_corpus(), desc_hit]
         kws = ["argon2"]
@@ -837,8 +844,11 @@ class TestKeywordIdfScore:
 
     def test_field_weight_constants_ordering(self) -> None:
         assert FIELD_WEIGHT_TITLE > FIELD_WEIGHT_DESCRIPTION > FIELD_WEIGHT_RATIONALE
-        assert (FIELD_WEIGHT_TITLE, FIELD_WEIGHT_DESCRIPTION,
-                FIELD_WEIGHT_RATIONALE) == (3.0, 2.0, 1.0)
+        assert (FIELD_WEIGHT_TITLE, FIELD_WEIGHT_DESCRIPTION, FIELD_WEIGHT_RATIONALE) == (
+            3.0,
+            2.0,
+            1.0,
+        )
 
     def test_query_length_normalization(self) -> None:
         """Doubling the query with a non-matching keyword halves the score."""
@@ -857,13 +867,13 @@ class TestIdfOrderingProperties:
 
     def _pack_lines(self, constraints: list[Constraint], kws: list[str]) -> list[str]:
         result = build_pack(
-            [], constraints, max_constraint_tokens=9999, max_decision_tokens=9999,
+            [],
+            constraints,
+            max_constraint_tokens=9999,
+            max_decision_tokens=9999,
             keywords=kws,
         )
-        return [
-            ln for ln in result.text.splitlines()
-            if ln.startswith("- ") and "(#" in ln
-        ]
+        return [ln for ln in result.text.splitlines() if ln.startswith("- ") and "(#" in ln]
 
     def _pack_ids(self, constraints: list[Constraint], kws: list[str]) -> list[str]:
         return [self._id_from_line(ln) for ln in self._pack_lines(constraints, kws)]
@@ -872,8 +882,7 @@ class TestIdfOrderingProperties:
         """The entry matching only the rarer keyword ranks first."""
         rare = make_constraint(id="c-rare", description="argon2 hashing for secrets")
         commons = [
-            make_constraint(id=f"c-common-{i}", description=f"api contract {i}")
-            for i in range(3)
+            make_constraint(id=f"c-common-{i}", description=f"api contract {i}") for i in range(3)
         ]
         ids = self._pack_ids([*commons, rare], ["argon2", "api"])
         # df(argon2)=1 vs df(api)=3 over this corpus: rare match dominates.
@@ -882,7 +891,8 @@ class TestIdfOrderingProperties:
     def test_deterministic_tie_break_recency_then_id(self) -> None:
         """Equal scores order by created_at desc, then id asc."""
         distractor = make_constraint(
-            id="c-zzz", description="an unrelated filler topic",
+            id="c-zzz",
+            description="an unrelated filler topic",
         )
         a = make_constraint(id="c-a", description="argon2 rule", ts="2024-01-01T00:00:00Z")
         b = make_constraint(id="c-b", description="argon2 rule", ts="2025-01-01T00:00:00Z")
@@ -899,11 +909,13 @@ class TestIdfOrderingProperties:
         ("0 of N matched your keywords" over an allegedly-matching corpus).
         """
         constraints = [
-            make_constraint(id=f"c-{i}", description=f"api rule number {i}")
-            for i in range(3)
+            make_constraint(id=f"c-{i}", description=f"api rule number {i}") for i in range(3)
         ]
         result = build_pack(
-            [], constraints, max_constraint_tokens=9999, max_decision_tokens=9999,
+            [],
+            constraints,
+            max_constraint_tokens=9999,
+            max_decision_tokens=9999,
             keywords=["api"],
         )
         assert result.stats.matched_constraints == 3
@@ -916,7 +928,11 @@ class TestIdfOrderingProperties:
         matching = make_constraint(id="c-hit", description="argon2 hashing")
         other = make_constraint(id="c-miss", description="completely different topic")
         result = build_pack(
-            [], [matching, other], 9999, 9999, keywords=["argon2"],
+            [],
+            [matching, other],
+            9999,
+            9999,
+            keywords=["argon2"],
         )
         assert result.stats.matched_constraints == 1
         assert "#c-miss" not in result.text
@@ -934,7 +950,8 @@ class TestFormatContextPackKeywordRanking:
         ]
         task_keywords = ["auth", "token"]
         output = _render_pack(
-            [], constraints,
+            [],
+            constraints,
             max_constraint_tokens=CONTEXT_PACK_DEFAULT_MAX_CONSTRAINT_TOKENS,
             max_decision_tokens=CONTEXT_PACK_DEFAULT_MAX_DECISION_TOKENS,
             keywords=task_keywords,
@@ -960,9 +977,11 @@ class TestFormatContextPackKeywordRanking:
         ]
         task_keywords = ["type", "hints", "function", "csrf", "token", "middleware"]
         output = _render_pack(
-            [], constraints, keywords=task_keywords,
-            max_constraint_tokens=500, max_decision_tokens=500,
-
+            [],
+            constraints,
+            keywords=task_keywords,
+            max_constraint_tokens=500,
+            max_decision_tokens=500,
         )
         # The distinct constraint matches three rarer keywords and outranks
         # the near-duplicate pair; the 500-token budget fits all three.
@@ -971,15 +990,20 @@ class TestFormatContextPackKeywordRanking:
     def test_fallback_without_keywords_still_works(self) -> None:
         """When task_keywords is None, recency ranking is used."""
         old = make_constraint(
-            id="c-old", description="old rule", ts="2023-01-01T00:00:00Z",
+            id="c-old",
+            description="old rule",
+            ts="2023-01-01T00:00:00Z",
         )
         new = make_constraint(
-            id="c-new", description="new rule", ts="2025-01-01T00:00:00Z",
+            id="c-new",
+            description="new rule",
+            ts="2025-01-01T00:00:00Z",
         )
         output = _render_pack(
-            [], [old, new], max_constraint_tokens=9999,
+            [],
+            [old, new],
+            max_constraint_tokens=9999,
             max_decision_tokens=9999,
-
         )
         # Newer constraint should appear first (recency ranking)
         assert output.index("c-new") < output.index("c-old")
@@ -1001,7 +1025,9 @@ class TestDropDeadPathEntries:
             paths=["mementic/graph.py"],
         )
         kept = drop_dead_path_entries(
-            [ghost], path_exists=self._always_missing, now="2026-01-01T00:00:00+00:00",
+            [ghost],
+            path_exists=self._always_missing,
+            now="2026-01-01T00:00:00+00:00",
         )
         assert kept == []
 
@@ -1015,7 +1041,9 @@ class TestDropDeadPathEntries:
             paths=["src/not_committed_yet.py"],
         )
         kept = drop_dead_path_entries(
-            [fresh], path_exists=self._always_missing, now=fresh_ts,
+            [fresh],
+            path_exists=self._always_missing,
+            now=fresh_ts,
         )
         assert kept == [fresh]
 
@@ -1034,10 +1062,14 @@ class TestDropDeadPathEntries:
 
     def test_entry_without_paths_never_dropped(self) -> None:
         unbound = make_decision(
-            id="d-unbound", ts="2020-01-01T00:00:00Z", paths=[],
+            id="d-unbound",
+            ts="2020-01-01T00:00:00Z",
+            paths=[],
         )
         kept = drop_dead_path_entries(
-            [unbound], path_exists=self._always_missing, now="2026-01-01T00:00:00+00:00",
+            [unbound],
+            path_exists=self._always_missing,
+            now="2026-01-01T00:00:00+00:00",
         )
         assert kept == [unbound]
 
@@ -1055,7 +1087,8 @@ class TestDropDeadPathEntries:
             paths=["gone.py"],
         )
         kept = drop_dead_path_entries(
-            [inside, outside], path_exists=self._always_missing,
+            [inside, outside],
+            path_exists=self._always_missing,
             now=now.isoformat(),
         )
         assert [e.id for e in kept] == ["c-inside"]
@@ -1099,7 +1132,9 @@ class TestBaseDirPathResolution:
     """Repo-relative bound paths must resolve against base_dir, not CWD."""
 
     def test_relative_paths_resolve_against_base_dir_not_cwd(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         repo = tmp_path / "repo"
         (repo / "src").mkdir(parents=True)
@@ -1108,22 +1143,30 @@ class TestBaseDirPathResolution:
         elsewhere.mkdir()
         monkeypatch.chdir(elsewhere)  # process CWD deliberately lacks the file
         entry = make_constraint(
-            id="c-bound", ts="2020-01-01T00:00:00Z", paths=["src/foo.py"],
+            id="c-bound",
+            ts="2020-01-01T00:00:00Z",
+            paths=["src/foo.py"],
         )
         kept = drop_dead_path_entries(
-            [entry], base_dir=repo, now="2026-01-01T00:00:00+00:00",
+            [entry],
+            base_dir=repo,
+            now="2026-01-01T00:00:00+00:00",
         )
         assert kept == [entry]
 
     def test_missing_liveness_anchor_is_rejected(self) -> None:
         entry = make_constraint(
-            id="c-bound", ts="2020-01-01T00:00:00Z", paths=["src/foo.py"],
+            id="c-bound",
+            ts="2020-01-01T00:00:00Z",
+            paths=["src/foo.py"],
         )
         with pytest.raises(ValueError, match="path_exists or base_dir"):
             drop_dead_path_entries([entry])
 
     def test_absolute_bound_paths_bypass_base_dir(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         absolute_file = tmp_path / "abs.py"
         absolute_file.write_text("x = 1", encoding="utf-8")
@@ -1131,10 +1174,13 @@ class TestBaseDirPathResolution:
         elsewhere.mkdir()
         monkeypatch.chdir(elsewhere)
         entry = make_constraint(
-            id="c-abs", ts="2020-01-01T00:00:00Z", paths=[str(absolute_file)],
+            id="c-abs",
+            ts="2020-01-01T00:00:00Z",
+            paths=[str(absolute_file)],
         )
         kept = drop_dead_path_entries(
-            [entry], base_dir=tmp_path / "no-such-repo",
+            [entry],
+            base_dir=tmp_path / "no-such-repo",
             now="2026-01-01T00:00:00+00:00",
         )
         assert kept == [entry]
@@ -1149,7 +1195,10 @@ class TestDeadPathDropInPacks:
             paths=["deleted/ghost.py"],
         )
         result = build_pack(
-            [], [ghost], 9999, 9999,
+            [],
+            [ghost],
+            9999,
+            9999,
             keywords=["argon2"],
             path_exists=lambda p: False,
         )
@@ -1159,17 +1208,26 @@ class TestDeadPathDropInPacks:
     def test_ghost_paths_do_not_count_toward_idf_corpus(self) -> None:
         """Dropped ghosts are excluded before document frequencies."""
         live = make_constraint(
-            id="c-live", description="argon2 hashing", ts="2020-01-01T00:00:00Z",
+            id="c-live",
+            description="argon2 hashing",
+            ts="2020-01-01T00:00:00Z",
         )
         other = make_constraint(
-            id="c-other", description="unrelated filler topic", ts="2020-01-01T00:00:00Z",
+            id="c-other",
+            description="unrelated filler topic",
+            ts="2020-01-01T00:00:00Z",
         )
         ghost = make_constraint(
-            id="c-ghost", description="argon2 again", ts="2020-01-01T00:00:00Z",
+            id="c-ghost",
+            description="argon2 again",
+            ts="2020-01-01T00:00:00Z",
             paths=["deleted/ghost.py"],
         )
         result = build_pack(
-            [], [live, other, ghost], 9999, 9999,
+            [],
+            [live, other, ghost],
+            9999,
+            9999,
             keywords=["argon2"],
             path_exists=lambda p: False,
         )
@@ -1189,8 +1247,7 @@ class TestDefaultBudgets:
         ~+40% tokens with sub-1-item junk cost (see Spec 30 Evidence).
         """
         total = (
-            CONTEXT_PACK_DEFAULT_MAX_CONSTRAINT_TOKENS
-            + CONTEXT_PACK_DEFAULT_MAX_DECISION_TOKENS
+            CONTEXT_PACK_DEFAULT_MAX_CONSTRAINT_TOKENS + CONTEXT_PACK_DEFAULT_MAX_DECISION_TOKENS
         )
         assert total == 1000
 
@@ -1221,11 +1278,10 @@ class TestPackSurface:
             )
             for i in range(5)
         ]
-        constraints.append(
-            make_constraint(id="c-other", description="unrelated filler topic")
-        )
+        constraints.append(make_constraint(id="c-other", description="unrelated filler topic"))
         return build_pack(
-            [], constraints,
+            [],
+            constraints,
             max_constraint_tokens=budget,
             max_decision_tokens=9999,
             keywords=["argon2"],
@@ -1258,7 +1314,11 @@ class TestPackSurface:
             make_constraint(id="c-x", description="unrelated topic"),
         ]
         result = build_pack(
-            [], constraints, 9999, 9999, keywords=["argon2"],
+            [],
+            constraints,
+            9999,
+            9999,
+            keywords=["argon2"],
         )
         assert "_0 of 1 constraints matched your keywords._" in result.text
 
@@ -1269,23 +1329,21 @@ class TestPackSurface:
     def test_every_rendered_line_carries_inline_id(self) -> None:
         """Chainability contract: item lines always contain ``(#<id>``."""
         decisions = [
-            make_decision(id=f"d-{i}", rationale=f"argon2 rationale {i}")
-            for i in range(4)
+            make_decision(id=f"d-{i}", rationale=f"argon2 rationale {i}") for i in range(4)
         ]
         constraints = [
-            make_constraint(id=f"c-{i}", description=f"argon2 rule {i}")
-            for i in range(4)
+            make_constraint(id=f"c-{i}", description=f"argon2 rule {i}") for i in range(4)
         ]
         distractor_c = make_constraint(id="c-other", description="filler topic")
         distractor_d = make_decision(id="d-other", rationale="filler topic")
         result = build_pack(
-            [*decisions, distractor_d], [*constraints, distractor_c],
-            9999, 9999, keywords=["argon2"],
+            [*decisions, distractor_d],
+            [*constraints, distractor_c],
+            9999,
+            9999,
+            keywords=["argon2"],
         )
-        item_lines = [
-            ln for ln in result.text.splitlines()
-            if ln.startswith("- ")
-        ]
+        item_lines = [ln for ln in result.text.splitlines() if ln.startswith("- ")]
         assert len(item_lines) == 8
         for line in item_lines:
             assert "(#" in line
@@ -1303,13 +1361,20 @@ class TestTruncateFloorAndBackfill:
     """One long top-ranked line must never starve a matched section."""
 
     def _pack(
-        self, constraints: list[Constraint], budget: int,
+        self,
+        constraints: list[Constraint],
+        budget: int,
     ) -> ContextPackResult:
         distractor = make_constraint(
-            id="c-other", description="unrelated filler topic",
+            id="c-other",
+            description="unrelated filler topic",
         )
         return build_pack(
-            [], [*constraints, distractor], budget, 9999, keywords=["argon2"],
+            [],
+            [*constraints, distractor],
+            budget,
+            9999,
+            keywords=["argon2"],
         )
 
     @staticmethod
@@ -1351,19 +1416,29 @@ class TestTruncateFloorAndBackfill:
         }
         constraints = [
             make_constraint(
-                id="c-r1", description="argon2 short rule one", ts=ts["c-r1"],
+                id="c-r1",
+                description="argon2 short rule one",
+                ts=ts["c-r1"],
             ),
             make_constraint(
-                id="c-r2", description="argon2 short rule two", ts=ts["c-r2"],
+                id="c-r2",
+                description="argon2 short rule two",
+                ts=ts["c-r2"],
             ),
             make_constraint(
-                id="c-r3", description="argon2 short rule three", ts=ts["c-r3"],
+                id="c-r3",
+                description="argon2 short rule three",
+                ts=ts["c-r3"],
             ),
             make_constraint(
-                id="c-r4", description="argon2 " + "long " * 200, ts=ts["c-r4"],
+                id="c-r4",
+                description="argon2 " + "long " * 200,
+                ts=ts["c-r4"],
             ),
             make_constraint(
-                id="c-r5", description="argon2 short rule five", ts=ts["c-r5"],
+                id="c-r5",
+                description="argon2 short rule five",
+                ts=ts["c-r5"],
             ),
         ]
         # Equal scores: deterministic order is created_at desc then id asc,

@@ -5,44 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.4.3] - 2026-10-26
-
-- Merge pull request #73 from pakdelm/feat/sbx-kit-portability
-
-## [0.4.2] - 2026-10-25
-
-- Merge pull request #71 from pakdelm/feat/cli-polish
-- Merge the README rewrite and demo into the stack
-- Merge the -c compact alias into the stack
-- Merge the CLI output consistency pass into the stack
-- Merge pull request #66 from pakdelm/feat/public-cleanup
-- Merge pull request #65 from pakdelm/feat/sbx-support
-- Merge pull request #64 from pakdelm/feat/cleanup-stuff
-
-## [0.4.1] - 2026-10-20
-
-- Merge pull request #62 from pakdelm/feat/performance
-
-## [0.4.0] - 2026-10-19
-
-- Merge pull request #60 from pakdelm/feat/assess-openwiki
-- Merge pull request #59 from pakdelm/feat/research
-
-## [0.3.3] - 2026-08-26
-
-- Merge pull request #57 from pakdelm/feat/spec-31
-
-## [0.3.2] - 2026-08-25
-
-- Merge pull request #55 from pakdelm/feat/spec-30
-
-## [0.3.1] - 2026-08-23
-
-- Merge pull request #53 from pakdelm/feat/spec-29
-
 ## [Unreleased]
 
 ### Added
+- **`mementic --version`** (`-V`) prints the installed package version and
+  exits.
 - **Compact query output (Spec 33)** — `mementic query keywords` and
   `query file` gain `--compact` (`-c`; echo line plus undecorated pack text, no
   Rich panel); the `[mementic: ...]` summary line is compacted across
@@ -51,6 +18,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `|`-separated terms or path).
 
 ### Changed
+- **`mementic init` keeps the graph out of Git.** In a Git work tree, `init`
+  appends `.mementic/` to `.gitignore` (or prints the exact line when the file
+  cannot be written).
 - **CLI and context-pack refactor.** `cli.py` is now a `mementic/cli/`
   package with one module per command group; decision and constraint writes
   (including deterministic auto-resolve) live in `mementic/entries.py` as
@@ -91,11 +61,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`query file <path>`** runs on `entry_paths` with exact match by default
   and opt-in `--prefix`; paths whose files no longer exist are filtered
   lazily via a filesystem check at read time.
-- **Migration:** one-shot `scripts/migrate_v4_to_v5.py` converts v4 databases
-  in place (automatic `.bak` backup, drops legacy proposed-status zombies,
-  materializes entry paths, backfills tombstones). Run
-  `uv run python scripts/migrate_v4_to_v5.py` before using mementic against
-  an existing database.
 - **Task-scoped enforcement (Spec 33)** — the AGENTS.md template now triggers
   queries on actions (the first read, search, or code decision of a task, task
   shifts, after graph writes, after compaction) instead of after every
@@ -108,12 +73,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   context manager, and `clean_dead_references()`.
 - `networkx` and `types-networkx` dependencies.
 - `add decision --rejected` flag.
+- **LLM extraction** — the OpenAI SDK, JSON5 parsing, keyring-backed API keys,
+  provider configuration, and the extraction pipeline. mementic performs no
+  inference; decisions and constraints are written with `mementic add`.
+- **`mementic capture`** and the session providers.
+- **OS keychain storage** and the old `.mementic/config.json` model.
+- **The v4-to-v5 migration path.** `scripts/migrate_v4_to_v5.py` is not
+  restored. Schema v5 is the only supported schema; a pre-launch v4 graph
+  must be replaced with a fresh graph.
+
+## [0.4.3] - 2026-10-26
+
+- sbx kit portability: the kit builds from a staged checkout and runs on
+  Windows hosts.
+
+## [0.4.2] - 2026-10-25
+
+- CLI output consistency pass across `query`, `list`, `log`, `history`, and
+  `init`.
+- `-c` / `--compact` alias for compact query output.
+- README rewrite and terminal demo.
+
+## [0.4.1] - 2026-10-20
+
+- Performance improvements across query and context-pack paths.
+- Release script refreshes and stages `uv.lock` with the version bump.
+- sbx kit builds from a staged checkout instead of a tag archive.
+
+## [0.4.0] - 2026-10-19
+
+- Internal research and cleanup; no user-facing changes.
+
+## [0.3.3] - 2026-08-26
+
+- Merge pull request #57 from pakdelm/feat/spec-31
+
+## [0.3.2] - 2026-08-25
+
+- Merge pull request #55 from pakdelm/feat/spec-30
+
+## [0.3.1] - 2026-08-23
+
+- Merge pull request #53 from pakdelm/feat/spec-29
 
 ## [0.3.0] - 2026-08-23
 
-- Merge pull request #51 from pakdelm/feat/specs-23-27## [0.2.5] - 2026-08-06
+- Merge pull request #51 from pakdelm/feat/specs-23-27
 
-- Merge pull request #49 from pakdelm/feat/improve-spec-20## [0.2.4] - 2026-07-17
+## [0.2.5] - 2026-08-06
+
+- Merge pull request #49 from pakdelm/feat/improve-spec-20
+
+## [0.2.4] - 2026-07-17
 
 - Merge pull request #47 from pakdelm/fix/more-release-fixes
 - Merge pull request #46 from pakdelm/fix/release-bugs

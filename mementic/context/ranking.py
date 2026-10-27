@@ -97,8 +97,7 @@ def idf_weights(n_docs: int, doc_freq: dict[str, int]) -> dict[str, float]:
     if n_docs <= 0:
         return dict.fromkeys(doc_freq, 0.0)
     return {
-        keyword: math.log(1 + n_docs / (frequency + 1))
-        for keyword, frequency in doc_freq.items()
+        keyword: math.log(1 + n_docs / (frequency + 1)) for keyword, frequency in doc_freq.items()
     }
 
 
