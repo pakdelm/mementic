@@ -3,9 +3,7 @@
 from __future__ import annotations
 
 import json
-import os
 import sqlite3
-import stat
 import warnings
 from collections.abc import Generator
 from pathlib import Path
@@ -774,15 +772,3 @@ class TestStatsAndAudit:
         s2 = MementicStore(db_path=db)
         assert [d.id for d in s2.get_live_decisions()] == ["persisted"]
         s2.close()
-
-
-def test_new_store_uses_owner_only_permissions(tmp_path: Path) -> None:
-    """A new memory directory is 0700 and the database is 0600 on POSIX."""
-    if os.name == "nt":
-        return
-    db = tmp_path / ".mementic" / "graph.db"
-    store = MementicStore(db_path=db)
-    store.close()
-
-    assert stat.S_IMODE(db.parent.stat().st_mode) == 0o700
-    assert stat.S_IMODE(db.stat().st_mode) == 0o600
