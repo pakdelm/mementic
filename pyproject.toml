@@ -6,7 +6,7 @@ readme = "README.md"
 requires-python = ">=3.11"
 license = "Apache-2.0"
 authors = [
-    { name = "Mehrshad Pakdel" },
+    { name = "pakdelm", email = "mehrshad.pakdel@posteo.de" },
 ]
 keywords = ["ai", "agents", "architecture", "memory", "llm"]
 classifiers = [
