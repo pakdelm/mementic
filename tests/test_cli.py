@@ -1030,15 +1030,14 @@ class TestInitStub:
 
 
 class TestVersion:
-    """Version reporting through the root callback and python -m."""
+    """Version reporting through the root callback."""
 
-    def test_version_flag(self) -> None:
-        """mementic --version prints the installed package version."""
+    @pytest.mark.parametrize("flag", ["--version", "-V"])
+    def test_version_flag(self, flag: str) -> None:
+        """The version flag prints the installed package version."""
         from mementic import __version__
 
-        result = runner.invoke(app, ["--version"])
+        result = runner.invoke(app, [flag])
 
         assert result.exit_code == 0, f"stderr: {result.stderr}"
         assert __version__ in result.stdout
-
-
