@@ -9,6 +9,16 @@ build/
 
 # Secrets
 .env
+.env.*
+!.env.example
+
+# Caches
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+
+# OpenCode
+/.opencode/node_modules/
 
 # Mementic runtime (graph.db lives in the repo-root .mementic/ directory)
 /.mementic/
