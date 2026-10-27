@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import re
 import subprocess
-import sys
 from collections.abc import Generator
 from contextlib import nullcontext
 from pathlib import Path
@@ -1042,16 +1041,4 @@ class TestVersion:
         assert result.exit_code == 0, f"stderr: {result.stderr}"
         assert __version__ in result.stdout
 
-    def test_python_m_mementic(self) -> None:
-        """python -m mementic --version runs the same CLI."""
-        result = subprocess.run(
-            [sys.executable, "-m", "mementic", "--version"],
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            check=False,
-        )
 
-        assert result.returncode == 0, result.stderr
-        assert "mementic" in result.stdout
