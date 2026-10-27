@@ -321,7 +321,7 @@ def main() -> None:
     )
     staged = [path for path in release_paths if (ROOT / path).exists()]
     run("git", "add", *staged)
-    run("git", "commit", "--signoff", "-m", f"Release {tag}")
+    run("git", "commit", "-m", f"Release {tag}")
     ok(f"Committed: Release {tag}")
     run("git", "tag", tag)
     ok(f"Tagged: {tag}")

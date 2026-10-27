@@ -12,9 +12,9 @@ only adds mementic.
 
 ## Use
 
-A published image follows the next release. Until then, stage the kit from the
-checkout and run it from the workspace root — the directory that should own
-`.mementic/` (Docker with Buildx required):
+The kit image is not published. Stage the kit from the checkout and run it from
+the workspace root — the directory that should own `.mementic/` (Docker with
+Buildx required):
 
 ```sh
 uv run python scripts/kit.py stage .sbx-kit
@@ -32,7 +32,7 @@ The graph lives at `<workspace>/.mementic/graph.db` and persists on the host.
 Use direct mode, not `--clone`: a clone breaks graph persistence because the
 agent edits the clone while the graph stays in the original workspace.
 
-The mixin does not set `MEMENTIC_WORKSPACE_ROOT` or change the agent's working
+The mixin does not set a workspace-root variable or change the agent's working
 directory. The primary workspace is the scope: run mementic from the directory
 that owns `.mementic`. If the agent starts in a child repository, that child
 has no graph until it is initialized there.
@@ -51,21 +51,12 @@ package source, and the license to the context. `sbx` builds the staged
 directory on demand and caches it by source hash; create a new sandbox after
 editing the kit, because an existing one keeps its recorded kits.
 
-## Version pin and publishing
+## Version pin
 
-`mementic.yaml` pins `args.version`, which the published descriptor exposes as
+`mementic.yaml` pins `args.version`, which the descriptor exposes as
 `provides: mementic@<version>`. The recipe verifies the staged source reports
-that exact distribution version, so a pin that drifts from `pyproject.toml`
-fails the build.
+that exact distribution version, so a pin that drifts from `pyproject.toml` fails
+the build. `scripts/release.py` bumps the pin in the release commit.
 
-`scripts/release.py` bumps the pin in the release commit and, after pushing the
-tag, publishes a multi-arch image (`linux/amd64,linux/arm64`) to
-`docker.io/pakdelm/sbx-kit-mementic:<version>`. The first published image ships
-with the next release.
-
-Publishing needs a buildx builder backed by the `docker-container` driver; the
-default `docker` driver refuses multi-platform pushes. Create one once with:
-
-```sh
-docker buildx create --name mementic-kit --driver docker-container --use
-```
+The image is not published at launch. Building it locally is supported; pushing
+to a registry is deferred.

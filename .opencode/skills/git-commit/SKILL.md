@@ -28,16 +28,11 @@ description: Use when preparing a git commit. Reviews the diff, writes a convent
 5. Only stage and commit when the user explicitly says to:
    ```
    git add <files>
-   git commit -s -m "<message>"
+   git commit -m "<message>"
    ```
-   The `-s` flag adds the `Signed-off-by` trailer required by the DCO
-   (`.github/workflows/dco.yml` fails any PR commit without it). Never omit it.
 
 ## Rules
 
-- Every commit must carry a Signed-off-by trailer (`git commit -s`). If a
-  push is rejected or the DCO check fails, amend with `git commit --amend -s`
-  only after the user asks.
 - Never commit without explicit user instruction.
 - Never commit secrets or generated artifacts.
 - Never amend commits or force-push unless the user explicitly asks.

@@ -18,10 +18,11 @@ Steps to reproduce the behavior:
 What you expected to happen.
 
 **Environment:**
-- OS: [e.g. macOS 15, Windows 11, Ubuntu 24.04]
+- Install method: [e.g. uv tool install from a pinned tag, source checkout]
+- mementic version: [output of `mementic --version`]
+- OS: [e.g. Windows 11, macOS 15, Ubuntu 24.04]
 - Python version: [e.g. 3.11, 3.12]
-- mementic version: [e.g. 0.2.4]
-- LLM provider: [e.g. openrouter, openai, deepseek]
+- Command that failed: [`mementic ...` and the exact error]
 
 **Additional context**
 Any other context about the problem.
