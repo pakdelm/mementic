@@ -46,9 +46,7 @@ uv tool install git+https://github.com/pakdelm/mementic.git
 ```
 
 That gives you a `mementic` binary. Upgrade later with `uv tool upgrade mementic`.
-For a reproducible install, pin a release tag:
-`uv tool install git+https://github.com/pakdelm/mementic.git@v0.5.0`. There is no
-PyPI package, and no configuration file to write.
+There is no PyPI package, and no configuration file to write.
 
 ## Quick start
 

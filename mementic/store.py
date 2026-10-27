@@ -108,7 +108,9 @@ class MementicStore:
 
         In-memory databases are read-write only. File-backed read-only
         stores open through a ``mode=ro`` URI so SQLite itself refuses
-        writes and never creates directories or database files.
+        writes and never creates directories or database files. New
+        file-backed stores create the parent directory with owner-only
+        permissions (0700) and the database with 0600 on POSIX.
 
         Returns:
             An unconfigured connection; the caller sets row access and
