@@ -35,18 +35,44 @@ def _rendered_block() -> str:
     return load_template().strip()
 
 
+def _current_umask() -> int:
+    """Return the process umask without permanently changing it."""
+    current = os.umask(0)
+    os.umask(current)
+    return current
+
+
+def _read_text_preserving_newlines(path: Path) -> str:
+    """Read UTF-8 text without translating line endings.
+
+    ``surrogateescape`` keeps bytes that are not valid UTF-8 intact, so a
+    rewrite round-trips the original file instead of raising.
+    """
+    with path.open("r", encoding="utf-8", errors="surrogateescape", newline="") as handle:
+        return handle.read()
+
+
 def _write_text_atomic(path: Path, content: str) -> None:
     """Write text through a temporary file in the same directory.
 
     ``os.replace`` swaps the finished file into place, and a failed write
-    removes the temporary file. The existing mode is preserved when the
-    target already exists.
+    removes the temporary file. Line endings and invalid UTF-8 bytes are
+    preserved, and an existing target keeps its mode.
     """
     fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
     try:
-        if path.exists():
-            os.chmod(tmp_name, path.stat().st_mode)
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        try:
+            mode = path.stat().st_mode
+        except FileNotFoundError:
+            mode = 0o666 & ~_current_umask()
+        os.chmod(tmp_name, mode)
+        with os.fdopen(
+            fd,
+            "w",
+            encoding="utf-8",
+            errors="surrogateescape",
+            newline="",
+        ) as handle:
             handle.write(content)
         os.replace(tmp_name, path)
     except BaseException:
@@ -72,6 +98,26 @@ def _is_git_work_tree(directory: Path) -> bool:
     return result.returncode == 0 and result.stdout.strip() == "true"
 
 
+def _ignore_pattern(line: str) -> str | None:
+    """Return the path a non-negated ignore line covers, if any.
+
+    Leading ``**/`` and trailing ``/**`` or ``/*`` are removed, so
+    ``/.mementic/``, ``.mementic``, and ``.mementic/**`` all compare equal.
+    """
+    stripped = line.strip()
+    if not stripped or stripped.startswith(("#", "!")):
+        return None
+    pattern = stripped
+    while pattern.startswith("**/"):
+        pattern = pattern[3:]
+    pattern = pattern.strip("/")
+    for suffix in ("/**", "/*"):
+        if pattern.endswith(suffix):
+            pattern = pattern[: -len(suffix)]
+            break
+    return pattern.rstrip("/")
+
+
 def sync_gitignore(base_dir: Path, *, label: str | None = None) -> str | None:
     """Ensure the memory directory is ignored by Git.
 
@@ -95,20 +141,20 @@ def sync_gitignore(base_dir: Path, *, label: str | None = None) -> str | None:
     shown = label or str(gitignore)
 
     try:
-        content = gitignore.read_text(encoding="utf-8") if gitignore.exists() else ""
+        content = _read_text_preserving_newlines(gitignore) if gitignore.exists() else ""
     except OSError as exc:
         return f"Warning: could not read {shown}: {exc}. Add '{entry}' manually."
 
-    existing = {line.strip() for line in content.splitlines()}
-    if entry in existing or MEMORY_DIR_NAME in existing:
+    if any(_ignore_pattern(line) == MEMORY_DIR_NAME for line in content.splitlines()):
         return None
 
+    newline = "\r\n" if "\r\n" in content else "\n"
     separator = ""
     if content:
-        separator = "\n" if content.endswith("\n") else "\n\n"
+        separator = newline if content.endswith("\n") else newline * 2
 
     try:
-        _write_text_atomic(gitignore, f"{content}{separator}{entry}\n")
+        _write_text_atomic(gitignore, f"{content}{separator}{entry}{newline}")
     except OSError as exc:
         return f"Warning: could not write {shown}: {exc}. Add '{entry}' manually."
 
@@ -139,7 +185,9 @@ def sync_enforcement(agents_md_path: Path, *, label: str | None = None) -> str:
             _write_text_atomic(agents_md_path, f"{block}\n")
             return f"Created {shown} with enforcement block."
 
-        content = agents_md_path.read_text(encoding="utf-8")
+        content = _read_text_preserving_newlines(agents_md_path)
+        newline = "\r\n" if "\r\n" in content else "\n"
+        section = block.replace("\n", newline) if newline != "\n" else block
 
         if START_MARKER in content:
             if END_MARKER not in content:
@@ -149,17 +197,17 @@ def sync_enforcement(agents_md_path: Path, *, label: str | None = None) -> str:
                 )
             head, _, tail = content.partition(START_MARKER)
             _, _, tail = tail.partition(END_MARKER)
-            new_content = f"{head}{block}{tail}"
+            new_content = f"{head}{section}{tail}"
             if new_content == content:
                 return f"Enforcement section already up to date in {shown}."
             _write_text_atomic(agents_md_path, new_content)
             return f"Updated enforcement section in {shown}."
 
-        if content and not content.endswith("\n\n"):
-            separator = "\n" if content.endswith("\n") else "\n\n"
-            new_content = f"{content}{separator}{block}\n"
+        if content and not content.endswith(newline * 2):
+            separator = newline if content.endswith(newline) else newline * 2
+            new_content = f"{content}{separator}{section}{newline}"
         else:
-            new_content = f"{content}{block}\n"
+            new_content = f"{content}{section}{newline}"
         _write_text_atomic(agents_md_path, new_content)
         return f"Appended enforcement block to {shown}."
     except OSError as exc:

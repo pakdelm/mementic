@@ -21,9 +21,9 @@ from mementic.store import MementicStore
 def init() -> None:
     """Initialize mementic in the current directory.
 
-    Creates the graph database when missing (idempotent) and syncs the
-    enforcement section in AGENTS.md. The graph is CWD-local: subdirectories
-    do not see it.
+    Creates the graph database when missing (idempotent), syncs the
+    enforcement section in AGENTS.md, and ignores ``.mementic/`` in a Git
+    work tree. The graph is CWD-local: subdirectories do not see it.
     """
     paths = context.resolve_paths()
     created = False
