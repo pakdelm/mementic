@@ -1,11 +1,10 @@
-"""Static and staging checks for the sbx mixin kit (no Docker required)."""
+"""Static checks for the sbx mixin kit; they require no Docker."""
 
 from __future__ import annotations
 
 import importlib.util
 import re
 import subprocess
-import sys
 import tomllib
 from pathlib import Path
 from types import ModuleType
@@ -79,53 +78,53 @@ def test_descriptor_has_a_stem_matched_companion_recipe() -> None:
     )
 
 
-def test_recipe_installs_from_the_staged_context() -> None:
+def test_recipe_installs_from_the_pinned_tag_archive() -> None:
+    """The committed kit downloads the protected tag; nothing is staged locally."""
     recipe = _companion_recipe().read_text(encoding="utf-8")
 
     assert "ARG MEMENTIC_VERSION" in recipe
-    assert "COPY pyproject.toml /src/pyproject.toml" in recipe
-    assert "COPY README.md /src/README.md" in recipe
-    assert "COPY LICENSE /src/LICENSE" in recipe
-    assert "COPY src/mementic /src/mementic" in recipe
-    assert "pip install --no-cache-dir --target /opt/mementic /src" in recipe
+    assert (
+        "https://github.com/pakdelm/mementic/archive/refs/tags/v${MEMENTIC_VERSION}.tar.gz"
+    ) in recipe
+    assert "pip install --no-cache-dir --target /opt/mementic" in recipe
     assert 'test -d "/opt/mementic/mementic-${MEMENTIC_VERSION}.dist-info"' in recipe
     assert "/opt/mementic/entry.py" in recipe
     assert "FROM scratch" in recipe
-    assert "archive/refs/tags" not in recipe
+    assert "COPY pyproject.toml" not in recipe
+    assert "COPY README.md" not in recipe
+    assert "COPY LICENSE" not in recipe
+    assert "COPY src/mementic" not in recipe
+    assert "pip install --no-cache-dir --target /opt/mementic /src" not in recipe
 
 
-def test_stage_produces_the_recipe_sources(tmp_path: Path) -> None:
-    dest = tmp_path / "kit"
-
-    subprocess.run(
-        [sys.executable, str(KIT_SCRIPT), "stage", str(dest)],
-        cwd=REPO_ROOT,
-        check=True,
-    )
-
-    assert (dest / "mementic.yaml").is_file()
-    assert (dest / "mementic.dockerfile").is_file()
-    assert (dest / "mementic").is_file()
-    assert (dest / "pyproject.toml").is_file()
-    assert (dest / "README.md").is_file()
-    assert (dest / "LICENSE").is_file()
-    assert (dest / "src" / "mementic" / "__init__.py").is_file()
-    assert not (dest / "src" / "mementic" / ".venv").exists()
-    assert not (dest / "src" / "mementic" / "__pycache__").exists()
-
-
-def test_stage_normalizes_the_wrapper_to_lf(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def test_build_kit_passes_kit_version_override(
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A CRLF shebang makes the sandbox kernel look for ``/bin/sh\\r``."""
+    """A release PR builds a released tag before the new tag exists."""
     module = _load_kit_module()
-    source = tmp_path / "mementic"
-    source.write_bytes(b'#!/bin/sh\r\nexec python3 /opt/mementic/entry.py "$@"\r\n')
-    monkeypatch.setattr(module, "WRAPPER", source)
+    commands: list[list[str]] = []
 
-    staged = module.stage(tmp_path / "kit") / "mementic"
+    def fake_run(command: list[str], *, cwd: Path, check: bool) -> subprocess.CompletedProcess[str]:
+        commands.append(command)
+        return subprocess.CompletedProcess(command, 0)
 
-    assert staged.read_bytes() == b'#!/bin/sh\nexec python3 /opt/mementic/entry.py "$@"\n'
+    monkeypatch.setattr(module.subprocess, "run", fake_run)
+
+    module.build_kit(output="cacheonly", tag=None, platform=None, version="0.5.0")
+
+    assert "--build-arg" in commands[0]
+    assert "version=0.5.0" in commands[0]
+
+
+def test_wrapper_is_lf_pinned() -> None:
+    """The wrapper runs inside a Linux sandbox.
+
+    A CRLF checkout would store the shebang as ``#!/bin/sh\\r``, so the kernel
+    would look for an interpreter path that does not exist.
+    """
+    attributes = (REPO_ROOT / ".gitattributes").read_text(encoding="utf-8")
+
+    assert "docker/sbx-mementic/mementic text eol=lf" in attributes
 
 
 def test_wrapper_checks_python_and_invokes_entry_point() -> None:

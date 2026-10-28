@@ -41,24 +41,23 @@ uv run pytest -m docker -n 0
 uv run python scripts/sbx_smoke.py --layout both
 ```
 
-It requires the `sbx` CLI and Docker with Buildx. Pass `--keep` to retain the
-sandbox and temporary workspace for inspection.
+It requires the `sbx` CLI with kit builder support; the builder sandbox handles
+the image build, so a host Docker CLI is not required. Pass `--keep` to retain
+the sandbox and temporary workspace for inspection.
 
 The kit lives in `docker/sbx-mementic/`: `mementic.yaml` is the descriptor and
-`mementic.dockerfile` is its content recipe. The recipe installs mementic from
-the build context, so `scripts/kit.py` stages the kit files plus
-`pyproject.toml` and the package source before building:
-
-```sh
-uv run python scripts/kit.py stage .sbx-kit
-```
+`mementic.dockerfile` is its content recipe. The committed directory is a
+standalone build context; the recipe downloads the pinned public tag archive and
+installs from it, so nothing has to be staged first.
 
 The Kit frontend resolves the recipe by the descriptor's filename stem, so keep
 the two names in sync; a recipe under any other name is ignored and the kit
-builds without content. The CI `docker` job stages and builds the kit.
+builds without content. The CI `docker` job builds the latest released tag from
+the committed kit directory, because a release PR's new pin is not tagged yet.
 
-The kit image is not published. Stage it from the checkout and build it
-locally; `scripts/release.py` does not push an image.
+The kit image is not published. Build it locally with
+`uv run python scripts/kit.py build --output cacheonly`;
+`scripts/release.py` does not push an image.
 
 ## Pull Request Checklist
 

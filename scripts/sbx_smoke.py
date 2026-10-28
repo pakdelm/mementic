@@ -4,11 +4,12 @@ Run from the repository root:
 
     uv run python scripts/sbx_smoke.py --layout both
 
-Requires the ``sbx`` CLI and Docker with Buildx. The script creates a temporary
-workspace, starts a sandbox with the local mixin, initializes the graph, writes
-one decision, and checks that the root graph persists on the host while a child
-repository reports no graph. It removes the sandbox and temporary workspace unless
-``--keep`` is given.
+Requires the ``sbx`` CLI with kit builder support. The builder sandbox downloads
+the pinned tag archive and builds the kit, so a host Docker CLI is not required.
+The script creates a temporary workspace, starts a sandbox from the committed kit
+directory, initializes the graph, writes one decision, and checks that the root
+graph persists on the host while a child repository reports no graph. It removes
+the sandbox and temporary workspace unless ``--keep`` is given.
 """
 
 from __future__ import annotations
@@ -22,7 +23,7 @@ import tempfile
 from pathlib import Path
 
 DEFAULT_WORKLOAD = "docker.io/docker/sbx-kit-shell:1.0.0"
-KIT_SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "kit.py"
+KIT_DIR = Path(__file__).resolve().parents[1] / "docker" / "sbx-mementic"
 
 
 def _run(
@@ -181,8 +182,8 @@ def main() -> None:
     parser.add_argument(
         "--kit",
         type=Path,
-        default=None,
-        help="Pre-staged mixin directory (default: stage the checkout).",
+        default=KIT_DIR,
+        help="Mixin kit directory (default: docker/sbx-mementic).",
     )
     parser.add_argument(
         "--keep",
@@ -195,20 +196,17 @@ def main() -> None:
         raise SystemExit("sbx is required for this smoke test")
 
     layouts = ("single", "multi") if args.layout == "both" else (args.layout,)
+    if not args.kit.is_dir():
+        raise SystemExit(f"mixin directory not found: {args.kit}")
+    kit = args.kit.resolve()
     root = Path(tempfile.mkdtemp(prefix="mementic-sbx-"))
     try:
-        kit = args.kit
-        if kit is None:
-            kit = root / "kit"
-            _run([sys.executable, str(KIT_SCRIPT), "stage", str(kit)])
-        elif not kit.exists():
-            raise SystemExit(f"mixin directory not found: {kit}")
         for layout in layouts:
             _smoke_one(
                 root=root,
                 layout=layout,
                 workload=args.workload,
-                kit=kit.resolve(),
+                kit=kit,
                 keep=args.keep,
             )
         if args.keep:

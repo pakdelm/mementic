@@ -103,12 +103,12 @@ substring search and not a glob.
 ## Docker Sandboxes (sbx)
 
 The v3 mixin in `docker/sbx-mementic/` installs the CLI into a workload. The kit
-image is not published. Stage it from a checkout and run it from the workspace
-root that should own `.mementic/`:
+image is not published. The committed kit directory is self-contained: the recipe
+downloads the pinned public release tag archive, so no staging step is required.
+Run it from the workspace root that should own `.mementic/`:
 
 ```sh
-uv run python scripts/kit.py stage .sbx-kit
-sbx run docker.io/docker/sbx-kit-shell:1.0.0 --kit .sbx-kit --name mementic
+sbx run docker.io/docker/sbx-kit-shell:1.0.0 --kit docker/sbx-mementic --name mementic
 mementic init
 ```
 

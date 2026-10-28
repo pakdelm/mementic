@@ -12,13 +12,12 @@ only adds mementic.
 
 ## Use
 
-The kit image is not published. Stage the kit from the checkout and run it from
-the workspace root — the directory that should own `.mementic/` (Docker with
-Buildx required):
+The kit image is not published. Run the committed kit directory from the
+workspace root — the directory that should own `.mementic/` (the sbx kit
+builder handles the image build):
 
 ```sh
-uv run python scripts/kit.py stage .sbx-kit
-sbx run docker.io/docker/sbx-kit-shell:1.0.0 --kit .sbx-kit --name mementic
+sbx run docker.io/docker/sbx-kit-shell:1.0.0 --kit docker/sbx-mementic --name mementic
 ```
 
 Inside the sandbox, initialize the graph once:
@@ -45,18 +44,27 @@ by the descriptor's filename stem, so keep the two names in sync. A mixin with
 no discoverable companion builds successfully but is declaration-only and
 installs nothing.
 
-The recipe installs mementic from its build context, so the committed directory
-alone is not a buildable kit: `scripts/kit.py stage` adds `pyproject.toml`, the
-package source, and the license to the context. `sbx` builds the staged
-directory on demand and caches it by source hash; create a new sandbox after
-editing the kit, because an existing one keeps its recorded kits.
+The committed directory is the build context, and the recipe installs mementic
+from the pinned public tag archive, so nothing has to be staged first.
+`scripts/kit.py build` builds the descriptor locally or in CI:
+
+```sh
+uv run python scripts/kit.py build --output cacheonly
+```
+
+`sbx` builds the kit on demand and caches it by source hash; create a new
+sandbox after editing the kit, because an existing one keeps its recorded kits.
 
 ## Version pin
 
 `mementic.yaml` pins `args.version`, which the descriptor exposes as
-`provides: mementic@<version>`. The recipe verifies the staged source reports
-that exact distribution version, so a pin that drifts from `pyproject.toml` fails
-the build. `scripts/release.py` bumps the pin in the release commit.
+`provides: mementic@<version>`. The recipe downloads
+`v<version>.tar.gz` from the public repository and verifies the installed
+dist-info reports that exact version, so a pin that drifts from `pyproject.toml`
+or a missing tag fails the build. `scripts/release.py` bumps the pin in the
+release commit. CI builds the latest released tag with
+`scripts/kit.py build --version <tag>`, so a release PR does not try to fetch
+the untagged pin.
 
 The image is not published at launch. Building it locally is supported; pushing
 to a registry is deferred.
