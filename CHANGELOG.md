@@ -78,9 +78,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   inference; decisions and constraints are written with `mementic add`.
 - **`mementic capture`** and the session providers.
 - **OS keychain storage** and the old `.mementic/config.json` model.
-- **The v4-to-v5 migration path.** `scripts/migrate_v4_to_v5.py` is not
-  restored. Schema v5 is the only supported schema; a pre-launch v4 graph
-  must be replaced with a fresh graph.
+- **The v4-to-v5 migration path.** No migration is provided. Schema v5 is the
+  only supported schema; a pre-launch v4 graph must be replaced with a fresh
+  graph.
 
 ## [0.4.3] - 2026-10-26
 

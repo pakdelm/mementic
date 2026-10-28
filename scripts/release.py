@@ -1,12 +1,14 @@
 """Deterministic release script for mementic.
 
-Creates a release branch from main, bumps the version, updates the changelog,
-commits, tags, and pushes. You then create a PR for review and merge. The sbx
-kit image is not published; the script only bumps its local version pin.
+Prepares a release branch from main: bumps the version, updates the changelog,
+refreshes the lockfile, commits, and pushes the branch. The tag is created only
+after the release pull request merges, with ``--tag-only``. The sbx kit image is
+not published; the script only bumps its local version pin.
 
 Usage:
-    python scripts/release.py 0.2.3          # full release
-    python scripts/release.py 0.2.3 --dry-run  # preview only
+    python scripts/release.py 0.5.0 --notes-file notes.md  # prepare the branch
+    python scripts/release.py 0.5.0 --tag-only              # tag merged main
+    python scripts/release.py 0.5.0 --dry-run               # preview
 """
 
 from __future__ import annotations
@@ -99,6 +101,14 @@ def check_tag_absent(version: str) -> None:
         die(f"Tag '{tag}' already exists locally.")
 
 
+def check_remote_tag_absent(version: str) -> None:
+    """Fail when the release tag already exists on origin."""
+    tag = f"v{version}"
+    result = run("git", "ls-remote", "--tags", "origin", f"refs/tags/{tag}", capture=True)
+    if result.stdout.strip():
+        die(f"Tag '{tag}' already exists on origin.")
+
+
 def check_branch_absent(branch: str) -> None:
     result = run("git", "branch", "--list", branch, capture=True)
     if result.stdout.strip():
@@ -177,33 +187,59 @@ def get_merge_messages_since(tag: str) -> list[str]:
     return messages
 
 
-def update_changelog(version: str, dry_run: bool) -> None:
+def _resolve_notes_file(notes_file: Path) -> Path:
+    """Resolve a notes path relative to the repository root."""
+    return notes_file if notes_file.is_absolute() else ROOT / notes_file
+
+
+def _read_notes(notes_file: Path) -> str:
+    """Read curated release notes, failing on a missing or empty file."""
+    notes_path = _resolve_notes_file(notes_file)
+    if not notes_path.exists():
+        die(f"Release notes file not found: {notes_path}")
+    notes = notes_path.read_text(encoding="utf-8").strip()
+    if not notes:
+        die(f"Release notes file is empty: {notes_path}")
+    return notes
+
+
+def update_changelog(version: str, dry_run: bool, notes_file: Path | None = None) -> None:
+    """Insert the release section at the top of the changelog.
+
+    Curated notes from ``notes_file`` take precedence over merge-commit
+    subjects. Without a notes file, the section is generated from merge commits
+    since the last reachable version tag.
+    """
     if not CHANGELOG.exists():
         die("CHANGELOG.md not found.")
 
-    last_tag = get_last_version_tag()
-    if last_tag is None:
-        die("No previous version tag found; can't determine which commits to include.")
-    merge_messages = get_merge_messages_since(last_tag)
-    if not merge_messages:
-        die(f"No merge commits found since {last_tag}. Nothing to include in changelog.")
-
     today = date.today().isoformat()
     header = f"## [{version}] - {today}"
+    count: int | None
+
+    if notes_file is not None:
+        body = _read_notes(notes_file)
+        count = None
+    else:
+        last_tag = get_last_version_tag()
+        if last_tag is None:
+            die("No previous version tag found; can't determine which commits to include.")
+        merge_messages = get_merge_messages_since(last_tag)
+        if not merge_messages:
+            die(f"No merge commits found since {last_tag}. Nothing to include in changelog.")
+        body = "\n".join(f"- {msg}" for msg in merge_messages)
+        count = len(merge_messages)
 
     if dry_run:
         print()
         print("[DRY RUN] Would add changelog section:")
         print(f"  {header}")
-        for msg in merge_messages:
-            print(f"  - {msg}")
+        for line in body.splitlines():
+            print(f"  {line}")
         return
 
-    # Build section and insert after preamble, before first existing version header.
     content = CHANGELOG.read_text(encoding="utf-8")
-    section_lines = [header, ""] + [f"- {msg}" for msg in merge_messages]
-    new_section = "\n".join(section_lines) + "\n\n"
-
+    new_section = f"{header}\n\n{body}\n\n"
     first_version = re.search(r"^## \[", content, re.MULTILINE)
     if first_version:
         new_content = (
@@ -213,14 +249,61 @@ def update_changelog(version: str, dry_run: bool) -> None:
         new_content = content.rstrip() + "\n\n" + new_section
 
     CHANGELOG.write_text(new_content, encoding="utf-8")
-    ok(f"CHANGELOG.md -> [{version}] - {today} ({len(merge_messages)} merge commits)")
+    suffix = f" ({count} merge commits)" if count is not None else ""
+    ok(f"CHANGELOG.md -> {header}{suffix}")
+
+
+def tag_release(version: str, dry_run: bool) -> None:
+    """Create and push the annotated release tag on merged main."""
+    tag = f"v{version}"
+    print("Pre-flight checks")
+    check_main_branch(dry_run=dry_run)
+    check_clean_tree()
+    ok("Working tree clean")
+
+    current = get_current_version()
+    if current != version:
+        die(f"pyproject.toml is {current}, not {version}.")
+    ok(f"Version: {current}")
+
+    run("git", "fetch", "origin", "main")
+    head = run("git", "rev-parse", "HEAD", capture=True).stdout.strip()
+    remote = run("git", "rev-parse", "origin/main", capture=True).stdout.strip()
+    if head != remote:
+        die("HEAD is not origin/main. Merge the release PR and pull first.")
+    ok("HEAD matches origin/main")
+
+    check_tag_absent(version)
+    check_remote_tag_absent(version)
+    ok(f"Tag {tag} does not exist")
+
+    if dry_run:
+        dry(f"Would create annotated tag {tag} on HEAD")
+        dry(f"Would push tag {tag} to origin")
+        return
+
+    run("git", "tag", "-a", tag, "-m", f"Release {tag}")
+    ok(f"Tagged: {tag}")
+    run("git", "push", "origin", tag)
+    ok(f"Pushed tag: {tag}")
+    print(f"\nRelease {tag} tagged and pushed.")
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Release mementic to a new version.")
-    parser.add_argument("version", help="New version, e.g. 0.2.3")
+    parser.add_argument("version", help="New version, e.g. 0.5.0")
     parser.add_argument(
         "--dry-run", action="store_true", help="Preview actions without making changes"
+    )
+    parser.add_argument(
+        "--tag-only",
+        action="store_true",
+        help="Create and push the release tag on merged main.",
+    )
+    parser.add_argument(
+        "--notes-file",
+        type=Path,
+        help="Markdown file with curated release notes.",
     )
     args = parser.parse_args()
 
@@ -228,6 +311,10 @@ def main() -> None:
     tag = f"v{version}"
     branch = f"release/{tag}"
     dry_run: bool = args.dry_run
+
+    if args.tag_only:
+        tag_release(version, dry_run)
+        return
 
     # -- Pre-flight --
     print("Pre-flight checks")
@@ -256,15 +343,16 @@ def main() -> None:
     bump_pyproject(version, dry_run)
     refresh_lockfile(dry_run)
     update_kit_pin(version, dry_run)
-    update_changelog(version, dry_run)
+    update_changelog(version, dry_run, args.notes_file)
 
     if dry_run:
         print()
-        print(f"[DRY RUN] Would commit on {branch}, tag {tag}, and push.")
+        print(f"[DRY RUN] Would commit on {branch} and push the branch.")
+        print("[DRY RUN] No tag is created; run --tag-only after the PR merges.")
         print("[DRY RUN] Done -- no changes made.")
         return
 
-    # -- Commit & tag --
+    # -- Commit --
     release_paths = (
         "pyproject.toml",
         "uv.lock",
@@ -275,28 +363,26 @@ def main() -> None:
     run("git", "add", *staged)
     run("git", "commit", "-m", f"Release {tag}")
     ok(f"Committed: Release {tag}")
-    run("git", "tag", tag)
-    ok(f"Tagged: {tag}")
 
-    # -- Push --
+    # -- Push branch --
     run("git", "push", "-u", "origin", branch)
     ok(f"Pushed branch: {branch}")
-    run("git", "push", "origin", tag)
-    ok(f"Pushed tag: {tag}")
 
     # -- Done --
     print(f"""
 +--- Release {version} prepared! ---+
 
   Branch : {branch}
-  Tag    : {tag}
+  Tag    : {tag} (not created yet)
 
   Next steps:
     1. Create a PR: {branch} -> main
     2. Review & merge using MERGE COMMIT (not squash or rebase)
     3. Delete {branch} after merge
+    4. Pull main, then create and push the tag:
+       python scripts/release.py {version} --tag-only
 
-  !  Squash/rebase will orphan the tag -- use merge commit only.
+  ! The tag is created only after merge; do not tag the release branch.
 """)
 
 
