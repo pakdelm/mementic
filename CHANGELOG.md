@@ -5,84 +5,9 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.5.0] - 2026-10-28
-
-### Added
-- **`mementic --version`** (`-V`) prints the installed package version and
-  exits.
-- **Compact query output (Spec 33)** — `mementic query keywords` and
-  `query file` gain `--compact` (`-c`; echo line plus undecorated pack text, no
-  Rich panel); the `[mementic: ...]` summary line is compacted across
-  `query keywords`, `query file`, and `query search` (keywords keeps
-  shown-of-matched counts as `N of M`; file/search use plain counts;
-  `|`-separated terms or path).
-
-### Changed
-- **`mementic init` keeps the graph out of Git.** In a Git work tree, `init`
-  appends `.mementic/` to `.gitignore` (or prints the exact line when the file
-  cannot be written).
-- **CLI and context-pack refactor.** `cli.py` is now a `mementic/cli/`
-  package with one module per command group; decision and constraint writes
-  (including deterministic auto-resolve) live in `mementic/entries.py` as
-  `EntryWriter`; context-pack ranking and rendering moved to
-  `mementic/context/`; schema constants moved to `mementic/schema.py`.
-  `count_tokens` is now `estimate_tokens` to distinguish budget estimation
-  from the removed usage metrics. Auto-resolve and the successor write now run
-  in one SQLite transaction, so a failed re-add cannot orphan a tombstone.
-- **Output noise reduction.** `history` without an ID is capped at 20 records
-  (`-n`), `status` renders hints on passing checks (an empty graph is healthy),
-  `add` no longer appends `(accepted)`/`(active)`, and `deprecate` prints one
-  line per result (`Deprecated x: reason`) with a summary only for multi-ID runs.
-- **Consistent CLI language.** `query search` prints a sentence when nothing
-  matches, `list entities` marks path liveness, `log` reports shown and total
-  records (and `No changes recorded yet.` when empty), and `init` prints
-  project-relative paths. Timestamps in `log` and `history` render in UTC and
-  are labelled as such.
-- **Path liveness fix.** `query file` and `list entities --stale` resolve
-  repo-relative paths against the repo root instead of the process CWD.
-- **Dead code removed.** Legacy `audit.jsonl` fallback and path helpers,
-  `format_memory_context`, `resolve_repo_name`, `timestamp`, `inject.dry_run`,
-  and the `scripts/probe_packs.py` context-pack probe harness.
-- **Relational storage simplification (Spec 29, schema v5).** Replaced the
-  GraphStore hybrid (in-memory NetworkX graph serialized into SQLite payloads,
-  full-graph rewrite per change) with a pure relational schema accessed
-  through a thin `sqlite3` module (`mementic/store.py`). Decisions and
-  constraints are flat tables; file associations live in `entry_paths` rows;
-  entry lifecycle moved from cached status columns to a `deprecations`
-  tombstone table — liveness is derived at query time, never stored.
-  NetworkX dependency removed.
-- **New `mementic history [id]` command** — shows deprecation records;
-  with an ID it prints the entry's replacement chain (reasons, successors).
-- **`mementic deprecate` writes structured tombstones** (reason + optional
-  successor in the `deprecations` table) instead of appending
-  `[DEPRECATED: ...]` prose to rationale text.
-- **`list decisions|constraints`** gained a "Superseded by" column for dead
-  entries (successor ID or "none").
-- **`query file <path>`** runs on `entry_paths` with exact match by default
-  and opt-in `--prefix`; paths whose files no longer exist are filtered
-  lazily via a filesystem check at read time.
-- **Task-scoped enforcement (Spec 33)** — the AGENTS.md template now triggers
-  queries on actions (the first read, search, or code decision of a task, task
-  shifts, after graph writes, after compaction) instead of after every
-  message; acknowledgement, ops, and meta messages need no query, and the
-  per-file gate remains absolute.
-
-### Removed
-- `mementic/graph.py`, `mementic/lint.py`, code-entity/edge machinery
-  (`CodeEntity`, `EntityType`, `GraphEdge`, `GraphPayload`), the `batch()`
-  context manager, and `clean_dead_references()`.
-- `networkx` and `types-networkx` dependencies.
-- `add decision --rejected` flag.
-- **LLM extraction** — the OpenAI SDK, JSON5 parsing, keyring-backed API keys,
-  provider configuration, and the extraction pipeline. mementic performs no
-  inference; decisions and constraints are written with `mementic add`.
-- **`mementic capture`** and the session providers.
-- **OS keychain storage** and the old `.mementic/config.json` model.
-- **The v4-to-v5 migration path.** No migration is provided. Schema v5 is the
-  only supported schema; a pre-launch v4 graph must be replaced with a fresh
-  graph.
-
 ## [Unreleased]
+
+## [0.5.0] - 2026-10-28
 
 ### Added
 - **`mementic --version`** (`-V`) prints the installed package version and
