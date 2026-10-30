@@ -55,6 +55,26 @@ def test_update_changelog_uses_curated_notes(
     assert "- Fixed the release flow.\n\n## [0.4.3]" in content
 
 
+def test_update_changelog_keeps_unreleased_first(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``[Unreleased]`` stays above the newest release section."""
+    changelog = tmp_path / "CHANGELOG.md"
+    changelog.write_text(
+        "# Changelog\n\n## [Unreleased]\n\n## [0.4.3] - 2026-10-26\n\n- old entry\n",
+        encoding="utf-8",
+    )
+    notes = tmp_path / "notes.md"
+    notes.write_text("- Shipped the kit.\n", encoding="utf-8")
+    monkeypatch.setattr(release, "CHANGELOG", changelog)
+
+    release.update_changelog("0.5.0", dry_run=False, notes_file=notes)
+
+    content = changelog.read_text(encoding="utf-8")
+    assert content.index("## [Unreleased]") < content.index("## [0.5.0]")
+    assert content.index("## [0.5.0]") < content.index("## [0.4.3]")
+
+
 def test_tag_release_refuses_version_mismatch(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(release, "check_main_branch", lambda **_: None)
     monkeypatch.setattr(release, "check_clean_tree", lambda: None)
