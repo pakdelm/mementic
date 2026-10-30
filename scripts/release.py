@@ -204,11 +204,12 @@ def _read_notes(notes_file: Path) -> str:
 
 
 def update_changelog(version: str, dry_run: bool, notes_file: Path | None = None) -> None:
-    """Insert the release section at the top of the changelog.
+    """Insert the release section below ``[Unreleased]``.
 
     Curated notes from ``notes_file`` take precedence over merge-commit
     subjects. Without a notes file, the section is generated from merge commits
-    since the last reachable version tag.
+    since the last reachable version tag. ``[Unreleased]`` stays first; the new
+    section goes above the newest release.
     """
     if not CHANGELOG.exists():
         die("CHANGELOG.md not found.")
@@ -240,10 +241,10 @@ def update_changelog(version: str, dry_run: bool, notes_file: Path | None = None
 
     content = CHANGELOG.read_text(encoding="utf-8")
     new_section = f"{header}\n\n{body}\n\n"
-    first_version = re.search(r"^## \[", content, re.MULTILINE)
-    if first_version:
+    next_release = re.search(r"^## \[(?!Unreleased\])", content, re.MULTILINE)
+    if next_release:
         new_content = (
-            content[: first_version.start()] + new_section + content[first_version.start() :]
+            content[: next_release.start()] + new_section + content[next_release.start() :]
         )
     else:
         new_content = content.rstrip() + "\n\n" + new_section
