@@ -55,17 +55,14 @@ jobs:
       - name: Docker contract tests
         run: uv run pytest -m docker -n 0
 
-      # A tag push builds that tag. Otherwise the pin is what users build, so
-      # build it whenever its tag exists; a release PR bumps the pin before the
-      # tag is pushed, so fall back to the latest released tag until then.
+      # The pin is what users build, so build it whenever its tag exists. A
+      # release PR bumps the pin before the tag is pushed, so fall back to the
+      # latest released tag until then; the recipe check would otherwise 404.
       - name: Resolve the kit version
         id: kit
         run: |
           pin="$(sed -n 's/^ *default: *"\([^"]*\)"/\1/p' docker/sbx-mementic/mementic.yaml)"
-          if [[ "${GITHUB_REF_TYPE}" == "tag" ]] \
-            && [[ "${GITHUB_REF_NAME}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            version="${GITHUB_REF_NAME#v}"
-          elif [ -n "$pin" ] \
+          if [ -n "$pin" ] \
             && git ls-remote --exit-code --tags origin "refs/tags/v${pin}" >/dev/null 2>&1; then
             version="$pin"
           else
