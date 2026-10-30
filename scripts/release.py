@@ -2,32 +2,27 @@
 
 Prepares a release branch from main: bumps the version, updates the changelog,
 refreshes the lockfile, commits, and pushes the branch. The tag is created only
-after the release pull request merges, with ``--tag-only``, which also creates
-the GitHub Release and attaches the wheel and sdist. Publishing needs
-``GH_TOKEN`` or ``GITHUB_TOKEN`` with ``Contents: Read and write`` on the
-repository. The sbx kit image is not published; the script only bumps its local
-version pin.
+after the release pull request merges, with ``--tag-only``. Pushing the tag
+triggers CI, which builds the wheel and sdist and creates the GitHub Release
+from the version's ``CHANGELOG.md`` section. The sbx kit image is not
+published; the script only bumps its local version pin.
 
 Usage:
     python scripts/release.py 0.5.0 --notes-file notes.md  # prepare the branch
-    python scripts/release.py 0.5.0 --tag-only              # tag and publish
-    python scripts/release.py 0.5.0 --publish-only          # retry the Release
+    python scripts/release.py 0.5.0 --tag-only              # tag merged main
+    python scripts/release.py 0.5.0 --print-notes           # CI: extract notes
     python scripts/release.py 0.5.0 --dry-run               # preview
 """
 
 from __future__ import annotations
 
 import argparse
-import json
-import os
 import re
 import subprocess
 import sys
-import urllib.error
-import urllib.request
 from datetime import date
 from pathlib import Path
-from typing import Any, NoReturn
+from typing import NoReturn
 
 ROOT = Path(__file__).resolve().parent.parent
 PYPROJECT = ROOT / "pyproject.toml"
@@ -38,8 +33,6 @@ KIT_DESCRIPTOR = KIT_DIR / "mementic.yaml"
 
 SEMVER_RE = re.compile(r"^\d+\.\d+\.\d+$")
 VERSION_RE = re.compile(r'^version\s*=\s*"([^"]+)"', re.MULTILINE)
-API_ROOT = "https://api.github.com"
-TOKEN_VARS = ("GH_TOKEN", "GITHUB_TOKEN")
 
 
 def die(msg: str) -> NoReturn:
@@ -264,27 +257,6 @@ def update_changelog(version: str, dry_run: bool, notes_file: Path | None = None
     ok(f"CHANGELOG.md -> {header}{suffix}")
 
 
-def github_token() -> str:
-    """Return the release token, naming the accepted variables on failure."""
-    for name in TOKEN_VARS:
-        token = os.environ.get(name)
-        if token:
-            return token
-    die(
-        "Creating the GitHub Release needs a token: set GH_TOKEN or GITHUB_TOKEN to a "
-        "token with 'Contents: Read and write' on the repository."
-    )
-
-
-def repository_slug() -> str:
-    """Return ``owner/repo`` parsed from the origin remote."""
-    url = run("git", "remote", "get-url", "origin", capture=True).stdout.strip()
-    match = re.search(r"github\.com[:/](?P<owner>[^/]+)/(?P<repo>[^/]+?)(?:\.git)?$", url)
-    if match is None:
-        die(f"Cannot derive the GitHub repository from origin: {url}")
-    return f"{match.group('owner')}/{match.group('repo')}"
-
-
 def changelog_section(version: str) -> str:
     """Return the changelog body for ``version`` without its heading."""
     content = CHANGELOG.read_text(encoding="utf-8")
@@ -299,104 +271,6 @@ def changelog_section(version: str) -> str:
     if not body:
         die(f"The '## [{version}]' changelog section is empty.")
     return body
-
-
-def _api(
-    method: str,
-    url: str,
-    token: str,
-    *,
-    payload: dict[str, Any] | None = None,
-    body: bytes | None = None,
-    content_type: str = "application/json",
-    missing_ok: bool = False,
-) -> tuple[int, dict[str, Any]]:
-    """Call the GitHub API and return the status and decoded JSON body."""
-    data = json.dumps(payload).encode("utf-8") if payload is not None else body
-    request = urllib.request.Request(url, data=data, method=method)
-    request.add_header("Accept", "application/vnd.github+json")
-    request.add_header("Authorization", f"Bearer {token}")
-    request.add_header("Content-Type", content_type)
-    request.add_header("User-Agent", "mementic-release")
-    request.add_header("X-GitHub-Api-Version", "2022-11-28")
-    try:
-        with urllib.request.urlopen(request) as response:
-            raw = response.read()
-            return response.status, json.loads(raw) if raw else {}
-    except urllib.error.HTTPError as error:
-        if missing_ok and error.code == 404:
-            return 404, {}
-        detail = error.read().decode("utf-8", errors="replace")
-        die(f"GitHub API {method} {url} failed ({error.code}): {detail}")
-    except urllib.error.URLError as error:
-        die(f"GitHub API {method} {url} failed: {error.reason}")
-
-
-def check_remote_tag_present(version: str) -> None:
-    """Fail when the release tag is missing on origin."""
-    tag = f"v{version}"
-    result = run("git", "ls-remote", "--tags", "origin", f"refs/tags/{tag}", capture=True)
-    if not result.stdout.strip():
-        die(f"Tag '{tag}' does not exist on origin. Run --tag-only first.")
-    ok(f"Tag {tag} exists on origin")
-
-
-def build_artifacts(version: str) -> list[Path]:
-    """Build the wheel and sdist for ``version`` into dist/."""
-    run("uv", "build", "--out-dir", "dist")
-    artifacts = sorted((ROOT / "dist").glob(f"mementic-{version}*"))
-    if len(artifacts) != 2:
-        die(f"Expected a wheel and an sdist in dist/ for {version}, found {artifacts}.")
-    return artifacts
-
-
-def create_release(version: str, token: str, slug: str) -> dict[str, Any]:
-    """Create the GitHub Release for the tag, or reuse an existing one."""
-    tag = f"v{version}"
-    status, existing = _api(
-        "GET", f"{API_ROOT}/repos/{slug}/releases/tags/{tag}", token, missing_ok=True
-    )
-    if status == 200:
-        warn(f"Release {tag} already exists; reusing it")
-        return existing
-    payload = {
-        "tag_name": tag,
-        "name": tag,
-        "body": changelog_section(version),
-        "draft": False,
-        "prerelease": False,
-    }
-    _, release = _api("POST", f"{API_ROOT}/repos/{slug}/releases", token, payload=payload)
-    ok(f"Created GitHub Release {tag}")
-    return release
-
-
-def upload_asset(release: dict[str, Any], artifact: Path, token: str) -> None:
-    """Attach ``artifact`` to the release unless an asset of that name exists."""
-    attached = {asset.get("name") for asset in release.get("assets") or []}
-    if artifact.name in attached:
-        warn(f"Asset {artifact.name} already attached")
-        return
-    upload_url = str(release["upload_url"]).split("{")[0]
-    _api(
-        "POST",
-        f"{upload_url}?name={artifact.name}",
-        token,
-        body=artifact.read_bytes(),
-        content_type="application/octet-stream",
-    )
-    ok(f"Uploaded {artifact.name}")
-
-
-def publish_release(version: str, token: str) -> None:
-    """Create the GitHub Release and attach the built wheel and sdist."""
-    slug = repository_slug()
-    check_remote_tag_present(version)
-    artifacts = build_artifacts(version)
-    release = create_release(version, token, slug)
-    for artifact in artifacts:
-        upload_asset(release, artifact, token)
-    ok(f"Published https://github.com/{slug}/releases/tag/v{version}")
 
 
 def tag_release(version: str, dry_run: bool) -> None:
@@ -425,17 +299,14 @@ def tag_release(version: str, dry_run: bool) -> None:
 
     if dry_run:
         dry(f"Would create annotated tag {tag} on HEAD")
-        dry(f"Would push tag {tag} to origin")
-        dry(f"Would publish the GitHub Release {tag} with the wheel and sdist")
+        dry(f"Would push tag {tag} to origin (CI publishes the GitHub Release)")
         return
 
-    token = github_token()
     run("git", "tag", "-a", tag, "-m", f"Release {tag}")
     ok(f"Tagged: {tag}")
     run("git", "push", "origin", tag)
     ok(f"Pushed tag: {tag}")
-    publish_release(version, token)
-    print(f"\nRelease {tag} tagged and published.")
+    print(f"\nRelease {tag} tagged and pushed. CI will publish the GitHub Release.")
 
 
 def main() -> None:
@@ -444,15 +315,16 @@ def main() -> None:
     parser.add_argument(
         "--dry-run", action="store_true", help="Preview actions without making changes"
     )
-    parser.add_argument(
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument(
         "--tag-only",
         action="store_true",
-        help="Create and push the release tag on merged main, then publish the GitHub Release.",
+        help="Create and push the release tag on merged main; CI publishes the release.",
     )
-    parser.add_argument(
-        "--publish-only",
+    mode.add_argument(
+        "--print-notes",
         action="store_true",
-        help="Create the GitHub Release for an existing tag and upload artifacts.",
+        help="Print the changelog section for the version and exit (used by CI).",
     )
     parser.add_argument(
         "--notes-file",
@@ -466,15 +338,15 @@ def main() -> None:
     branch = f"release/{tag}"
     dry_run: bool = args.dry_run
 
-    if args.tag_only:
-        tag_release(version, dry_run)
+    if args.notes_file and (args.tag_only or args.print_notes):
+        parser.error("--notes-file is only used when preparing a release branch")
+
+    if args.print_notes:
+        print(changelog_section(version))
         return
 
-    if args.publish_only:
-        if dry_run:
-            dry(f"Would publish the GitHub Release v{version} for an existing tag")
-            return
-        publish_release(version, github_token())
+    if args.tag_only:
+        tag_release(version, dry_run)
         return
 
     # -- Pre-flight --
@@ -540,11 +412,11 @@ def main() -> None:
     1. Create a PR: {branch} -> main
     2. Review & merge using MERGE COMMIT (not squash or rebase)
     3. Delete {branch} after merge
-    4. Pull main, then tag and publish the GitHub Release:
+    4. Pull main, then create and push the tag:
        python scripts/release.py {version} --tag-only
 
   ! The tag is created only after merge; do not tag the release branch.
-  ! Publishing needs GH_TOKEN or GITHUB_TOKEN with Contents: Read and write.
+  ! Pushing the tag triggers CI to publish the GitHub Release.
 """)
 
 

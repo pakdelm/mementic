@@ -96,42 +96,26 @@ def test_changelog_section_returns_the_version_body(
     assert "## [0.5.1]" not in body
 
 
-@pytest.mark.parametrize(
-    "url",
-    [
-        "https://github.com/pakdelm/mementic.git",
-        "git@github.com:pakdelm/mementic.git",
-    ],
-)
-def test_repository_slug_reads_the_origin_remote(url: str, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(release, "run", lambda *args, **kwargs: _completed((), f"{url}\n"))
-
-    assert release.repository_slug() == "pakdelm/mementic"
-
-
-def test_upload_asset_skips_an_attached_asset(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def test_print_notes_outputs_the_version_section(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    artifact = tmp_path / "mementic-0.5.1-py3-none-any.whl"
-    artifact.write_bytes(b"wheel")
-    release_data = {"assets": [{"name": artifact.name}], "upload_url": "https://example"}
+    monkeypatch.setattr(release, "changelog_section", lambda version: f"notes for {version}")
+    monkeypatch.setattr(release.sys, "argv", ["release.py", "v0.5.1", "--print-notes"])
 
-    def fail(*args: object, **kwargs: object) -> None:
-        raise AssertionError("upload should be skipped")
+    release.main()
 
-    monkeypatch.setattr(release, "_api", fail)
-
-    release.upload_asset(release_data, artifact, "token")
+    assert capsys.readouterr().out.strip() == "notes for 0.5.1"
 
 
-def test_github_token_requires_an_environment_variable(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.delenv("GH_TOKEN", raising=False)
-    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+def test_notes_file_is_rejected_outside_prepare_mode(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        release.sys,
+        "argv",
+        ["release.py", "0.5.1", "--tag-only", "--notes-file", "notes.md"],
+    )
 
     with pytest.raises(SystemExit):
-        release.github_token()
+        release.main()
 
 
 def test_tag_release_refuses_version_mismatch(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -175,50 +159,15 @@ def test_tag_release_creates_and_pushes_annotated_tag(
             return _completed(args, "same\n")
         return _completed(args)
 
-    published: list[tuple[str, str]] = []
     monkeypatch.setattr(release, "check_main_branch", lambda **_: None)
     monkeypatch.setattr(release, "check_clean_tree", lambda: None)
     monkeypatch.setattr(release, "get_current_version", lambda: "0.5.0")
     monkeypatch.setattr(release, "run", fake_run)
-    monkeypatch.setattr(release, "github_token", lambda: "token")
-    monkeypatch.setattr(
-        release, "publish_release", lambda version, token: published.append((version, token))
-    )
 
     release.tag_release("0.5.0", dry_run=False)
 
     assert ("git", "tag", "-a", "v0.5.0", "-m", "Release v0.5.0") in calls
     assert ("git", "push", "origin", "v0.5.0") in calls
-    assert published == [("0.5.0", "token")]
-
-
-def test_tag_release_checks_the_token_before_tagging(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    calls: list[tuple[str, ...]] = []
-
-    def fake_run(*args: str, capture: bool = False) -> subprocess.CompletedProcess[str]:
-        calls.append(args)
-        if args[:3] == ("git", "rev-parse", "HEAD"):
-            return _completed(args, "same\n")
-        if args[:3] == ("git", "rev-parse", "origin/main"):
-            return _completed(args, "same\n")
-        return _completed(args)
-
-    def no_token() -> str:
-        release.die("no token")
-        raise AssertionError("unreachable")
-
-    monkeypatch.setattr(release, "check_main_branch", lambda **_: None)
-    monkeypatch.setattr(release, "check_clean_tree", lambda: None)
-    monkeypatch.setattr(release, "get_current_version", lambda: "0.5.0")
-    monkeypatch.setattr(release, "run", fake_run)
-    monkeypatch.setattr(release, "github_token", no_token)
-
-    with pytest.raises(SystemExit):
-        release.tag_release("0.5.0", dry_run=False)
-
-    assert not any(call[:3] == ("git", "tag", "-a") for call in calls)
 
 
 def test_prepare_dry_run_does_not_tag(

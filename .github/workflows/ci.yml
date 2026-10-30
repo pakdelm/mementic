@@ -63,3 +63,43 @@ jobs:
     uses: ./.github/workflows/build-kit.yml
     with:
       version: ${{ needs.resolve-kit-version.outputs.version }}
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: ci
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Build artifacts
+        run: uv build --out-dir dist
+
+      - name: Extract release notes
+        run: python3 scripts/release.py "$GITHUB_REF_NAME" --print-notes > release-notes.md
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" dist/* --clobber
+            gh release edit "$GITHUB_REF_NAME" \
+              --title "$GITHUB_REF_NAME" \
+              --notes-file release-notes.md \
+              --draft=false
+          else
+            gh release create "$GITHUB_REF_NAME" dist/* \
+              --title "$GITHUB_REF_NAME" \
+              --notes-file release-notes.md \
+              --verify-tag
+          fi
