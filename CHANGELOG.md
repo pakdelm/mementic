@@ -7,10 +7,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.5.1] - 2026-10-30
 
-- Merge pull request #2 from pakdelm/feat/sbx-kit-public-archive
-
-## [Unreleased]
-
 ### Changed
 
 - **sbx kit builds from the public tag archive.** `docker/sbx-mementic/` is a
@@ -18,6 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the public repository. Staging is gone: `scripts/kit.py` is replaced by
   `scripts/build_kit.py`, a single build command. Use
   `sbx run ... --kit <checkout>/docker/sbx-mementic`.
+
+## [Unreleased]
 
 ## [0.5.0] - 2026-10-28
 
