@@ -103,23 +103,22 @@ substring search and not a glob.
 ## Docker Sandboxes (sbx)
 
 The v3 mixin in `docker/sbx-mementic/` installs the CLI into a workload. The kit
-image is not published. Stage it from a checkout and run it from the workspace
-root that should own `.mementic/`:
+image is not published. The committed kit directory is self-contained: the recipe
+downloads the pinned public release tag archive, so no staging step is required.
+Pass that directory from your mementic checkout as `--kit` and run `sbx` from the
+workspace root that should own `.mementic/`:
 
 ```sh
-uv run python scripts/kit.py stage .sbx-kit
-sbx run docker.io/docker/sbx-kit-shell:1.0.0 --kit .sbx-kit --name mementic
+sbx run docker.io/docker/sbx-kit-shell:1.0.0 \
+  --kit /path/to/mementic/docker/sbx-mementic --name mementic
 mementic init
 ```
 
 See `docker/sbx-mementic/README.md` for the details.
 
-Use direct mode, not `--clone`. The graph lives in the mounted workspace at
-`.mementic/graph.db` and persists on the host. The mixin does not set a scope
-variable or change the working directory, so run mementic from the directory that
-owns `.mementic`. The workload has to provide `python3`. Docker's default agent
-templates do; the `*-minimal` variants may not. On Windows the guest path shows up
-under `/c/...`.
+Use direct mode, not `--clone`, because a clone breaks graph persistence. The
+workload has to provide `python3`; Docker's default agent templates do, the
+`*-minimal` variants may not. On Windows the guest path shows up under `/c/...`.
 
 ## Agent setup
 

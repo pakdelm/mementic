@@ -3,6 +3,7 @@ name: CI
 on:
   push:
     branches: [main]
+    tags: ["v*"]
   pull_request:
     branches: [main]
 
@@ -54,5 +55,11 @@ jobs:
       - name: Docker contract tests
         run: uv run pytest -m docker -n 0
 
-      - name: Build the sbx kit artifact
-        run: uv run python scripts/kit.py build --output cacheonly
+  resolve-kit-version:
+    uses: ./.github/workflows/resolve-kit-version.yml
+
+  build-sbx-kit:
+    needs: resolve-kit-version
+    uses: ./.github/workflows/build-kit.yml
+    with:
+      version: ${{ needs.resolve-kit-version.outputs.version }}
