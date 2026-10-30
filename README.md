@@ -116,12 +116,9 @@ mementic init
 
 See `docker/sbx-mementic/README.md` for the details.
 
-Use direct mode, not `--clone`. The graph lives in the mounted workspace at
-`.mementic/graph.db` and persists on the host. The mixin does not set a scope
-variable or change the working directory, so run mementic from the directory that
-owns `.mementic`. The workload has to provide `python3`. Docker's default agent
-templates do; the `*-minimal` variants may not. On Windows the guest path shows up
-under `/c/...`.
+Use direct mode, not `--clone`, because a clone breaks graph persistence. The
+workload has to provide `python3`; Docker's default agent templates do, the
+`*-minimal` variants may not. On Windows the guest path shows up under `/c/...`.
 
 ## Agent setup
 
