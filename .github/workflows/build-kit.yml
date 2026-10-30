@@ -1,0 +1,28 @@
+name: Build the sbx kit artifact
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: Kit version to install from the public tag archive.
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Build the sbx kit artifact
+        run: |
+          python scripts/build_kit.py --output cacheonly \
+            --version "${{ inputs.version }}"
