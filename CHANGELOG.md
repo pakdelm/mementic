@@ -15,6 +15,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   both artifacts attached. Re-running the workflow replaces the assets. No
   local token is required.
 
+## [0.5.2] - 2026-10-31
+
+### Added
+
+- **Tag pushes publish the GitHub Release.** Pushing a `v*` tag runs the
+  Release workflow, which verifies the tag, builds the wheel and sdist, and
+  creates the GitHub Release from the version's `CHANGELOG.md` section with
+  both artifacts attached. Re-running the workflow replaces the assets. No
+  local token is required.
+
 ## [0.5.1] - 2026-10-30
 
 ### Changed
