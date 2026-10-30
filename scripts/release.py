@@ -2,12 +2,16 @@
 
 Prepares a release branch from main: bumps the version, updates the changelog,
 refreshes the lockfile, commits, and pushes the branch. The tag is created only
-after the release pull request merges, with ``--tag-only``. The sbx kit image is
-not published; the script only bumps its local version pin.
+after the release pull request merges, with ``--tag-only``. Pushing the tag
+triggers the Release workflow, which verifies the tag, builds the wheel and
+sdist, and creates the GitHub Release from the version's ``CHANGELOG.md``
+section. The sbx kit image is not published; the script only bumps its local
+version pin.
 
 Usage:
     python scripts/release.py 0.5.0 --notes-file notes.md  # prepare the branch
     python scripts/release.py 0.5.0 --tag-only              # tag merged main
+    python scripts/release.py 0.5.0 --print-notes           # extract release notes
     python scripts/release.py 0.5.0 --dry-run               # preview
 """
 
@@ -254,6 +258,22 @@ def update_changelog(version: str, dry_run: bool, notes_file: Path | None = None
     ok(f"CHANGELOG.md -> {header}{suffix}")
 
 
+def changelog_section(version: str) -> str:
+    """Return the changelog body for ``version`` without its heading."""
+    content = CHANGELOG.read_text(encoding="utf-8")
+    pattern = re.compile(
+        rf"^## \[{re.escape(version)}\][^\n]*\n(.*?)(?=^## \[|\Z)",
+        re.MULTILINE | re.DOTALL,
+    )
+    match = pattern.search(content)
+    if match is None:
+        die(f"CHANGELOG.md has no '## [{version}]' section to use as release notes.")
+    body = match.group(1).strip()
+    if not body:
+        die(f"The '## [{version}]' changelog section is empty.")
+    return body
+
+
 def tag_release(version: str, dry_run: bool) -> None:
     """Create and push the annotated release tag on merged main."""
     tag = f"v{version}"
@@ -280,14 +300,14 @@ def tag_release(version: str, dry_run: bool) -> None:
 
     if dry_run:
         dry(f"Would create annotated tag {tag} on HEAD")
-        dry(f"Would push tag {tag} to origin")
+        dry(f"Would push tag {tag} to origin (the Release workflow publishes it)")
         return
 
     run("git", "tag", "-a", tag, "-m", f"Release {tag}")
     ok(f"Tagged: {tag}")
     run("git", "push", "origin", tag)
     ok(f"Pushed tag: {tag}")
-    print(f"\nRelease {tag} tagged and pushed.")
+    print(f"\nRelease {tag} tagged and pushed. The Release workflow will publish it.")
 
 
 def main() -> None:
@@ -296,10 +316,16 @@ def main() -> None:
     parser.add_argument(
         "--dry-run", action="store_true", help="Preview actions without making changes"
     )
-    parser.add_argument(
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument(
         "--tag-only",
         action="store_true",
-        help="Create and push the release tag on merged main.",
+        help="Create and push the release tag; the Release workflow publishes it.",
+    )
+    mode.add_argument(
+        "--print-notes",
+        action="store_true",
+        help="Print the changelog section for the version and exit.",
     )
     parser.add_argument(
         "--notes-file",
@@ -312,6 +338,13 @@ def main() -> None:
     tag = f"v{version}"
     branch = f"release/{tag}"
     dry_run: bool = args.dry_run
+
+    if args.notes_file and (args.tag_only or args.print_notes):
+        parser.error("--notes-file is only used when preparing a release branch")
+
+    if args.print_notes:
+        print(changelog_section(version))
+        return
 
     if args.tag_only:
         tag_release(version, dry_run)
@@ -384,6 +417,7 @@ def main() -> None:
        python scripts/release.py {version} --tag-only
 
   ! The tag is created only after merge; do not tag the release branch.
+  ! Pushing the tag triggers the Release workflow to publish it.
 """)
 
 

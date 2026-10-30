@@ -75,6 +75,49 @@ def test_update_changelog_keeps_unreleased_first(
     assert content.index("## [0.5.0]") < content.index("## [0.4.3]")
 
 
+def test_changelog_section_returns_the_version_body(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    changelog = tmp_path / "CHANGELOG.md"
+    changelog.write_text(
+        "# Changelog\n\n"
+        "## [Unreleased]\n\n"
+        "## [0.5.1] - 2026-10-30\n\n"
+        "### Changed\n\n- Shipped the kit.\n\n"
+        "## [0.5.0] - 2026-10-28\n\n- old entry\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(release, "CHANGELOG", changelog)
+
+    body = release.changelog_section("0.5.1")
+
+    assert "Shipped the kit." in body
+    assert "old entry" not in body
+    assert "## [0.5.1]" not in body
+
+
+def test_print_notes_outputs_the_version_section(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(release, "changelog_section", lambda version: f"notes for {version}")
+    monkeypatch.setattr(release.sys, "argv", ["release.py", "v0.5.1", "--print-notes"])
+
+    release.main()
+
+    assert capsys.readouterr().out.strip() == "notes for 0.5.1"
+
+
+def test_notes_file_is_rejected_outside_prepare_mode(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        release.sys,
+        "argv",
+        ["release.py", "0.5.1", "--tag-only", "--notes-file", "notes.md"],
+    )
+
+    with pytest.raises(SystemExit):
+        release.main()
+
+
 def test_tag_release_refuses_version_mismatch(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(release, "check_main_branch", lambda **_: None)
     monkeypatch.setattr(release, "check_clean_tree", lambda: None)
