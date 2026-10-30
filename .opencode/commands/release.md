@@ -35,6 +35,7 @@ After the PR merges, pull `main` and tag the release:
 uv run python scripts/release.py <version> --tag-only
 ```
 
-Pushing the tag triggers CI to build the wheel and sdist and publish the
-GitHub Release from the version's `CHANGELOG.md` section. No local token is
-required; re-run the workflow to retry.
+Pushing the tag triggers the Release workflow to verify the tag, build the
+wheel and sdist, and publish the GitHub Release from the version's
+`CHANGELOG.md` section. No local token is required; re-run the workflow to
+retry.

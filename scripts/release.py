@@ -3,14 +3,15 @@
 Prepares a release branch from main: bumps the version, updates the changelog,
 refreshes the lockfile, commits, and pushes the branch. The tag is created only
 after the release pull request merges, with ``--tag-only``. Pushing the tag
-triggers CI, which builds the wheel and sdist and creates the GitHub Release
-from the version's ``CHANGELOG.md`` section. The sbx kit image is not
-published; the script only bumps its local version pin.
+triggers the Release workflow, which verifies the tag, builds the wheel and
+sdist, and creates the GitHub Release from the version's ``CHANGELOG.md``
+section. The sbx kit image is not published; the script only bumps its local
+version pin.
 
 Usage:
     python scripts/release.py 0.5.0 --notes-file notes.md  # prepare the branch
     python scripts/release.py 0.5.0 --tag-only              # tag merged main
-    python scripts/release.py 0.5.0 --print-notes           # CI: extract notes
+    python scripts/release.py 0.5.0 --print-notes           # extract release notes
     python scripts/release.py 0.5.0 --dry-run               # preview
 """
 
@@ -299,14 +300,14 @@ def tag_release(version: str, dry_run: bool) -> None:
 
     if dry_run:
         dry(f"Would create annotated tag {tag} on HEAD")
-        dry(f"Would push tag {tag} to origin (CI publishes the GitHub Release)")
+        dry(f"Would push tag {tag} to origin (the Release workflow publishes it)")
         return
 
     run("git", "tag", "-a", tag, "-m", f"Release {tag}")
     ok(f"Tagged: {tag}")
     run("git", "push", "origin", tag)
     ok(f"Pushed tag: {tag}")
-    print(f"\nRelease {tag} tagged and pushed. CI will publish the GitHub Release.")
+    print(f"\nRelease {tag} tagged and pushed. The Release workflow will publish it.")
 
 
 def main() -> None:
@@ -319,12 +320,12 @@ def main() -> None:
     mode.add_argument(
         "--tag-only",
         action="store_true",
-        help="Create and push the release tag on merged main; CI publishes the release.",
+        help="Create and push the release tag; the Release workflow publishes it.",
     )
     mode.add_argument(
         "--print-notes",
         action="store_true",
-        help="Print the changelog section for the version and exit (used by CI).",
+        help="Print the changelog section for the version and exit.",
     )
     parser.add_argument(
         "--notes-file",
@@ -416,7 +417,7 @@ def main() -> None:
        python scripts/release.py {version} --tag-only
 
   ! The tag is created only after merge; do not tag the release branch.
-  ! Pushing the tag triggers CI to publish the GitHub Release.
+  ! Pushing the tag triggers the Release workflow to publish it.
 """)
 
 
