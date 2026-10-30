@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`scripts/release.py` publishes the GitHub Release.** `--tag-only` now
+  creates the release with the changelog section as notes and uploads the wheel
+  and sdist; `--publish-only` retries publishing for an existing tag. Requires
+  `GH_TOKEN` or `GITHUB_TOKEN` with `Contents: Read and write`.
+
 ## [0.5.1] - 2026-10-30
 
 ### Changed
