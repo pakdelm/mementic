@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib.util
 import re
 import subprocess
+import sys
 import tomllib
 from pathlib import Path
 from types import ModuleType
@@ -13,7 +14,7 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 KIT = REPO_ROOT / "docker" / "sbx-mementic"
-KIT_SCRIPT = REPO_ROOT / "scripts" / "kit.py"
+BUILD_SCRIPT = REPO_ROOT / "scripts" / "build_kit.py"
 
 
 def _descriptor_path() -> Path:
@@ -34,8 +35,8 @@ def _companion_recipe() -> Path:
 
 
 def _load_kit_module() -> ModuleType:
-    """Import ``scripts/kit.py`` without putting it on ``sys.path``."""
-    spec = importlib.util.spec_from_file_location("kit_script", KIT_SCRIPT)
+    """Import ``scripts/build_kit.py`` without putting it on ``sys.path``."""
+    spec = importlib.util.spec_from_file_location("kit_script", BUILD_SCRIPT)
 
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
@@ -116,6 +117,20 @@ def test_build_kit_passes_kit_version_override(
     assert "version=0.5.0" in commands[0]
 
 
+def test_build_script_is_flat_and_keeps_tag_validation() -> None:
+    """A subcommand layer would reject the flat invocation; load still needs --tag."""
+    result = subprocess.run(
+        [sys.executable, str(BUILD_SCRIPT), "--output", "load"],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 2
+    assert "--tag is required" in result.stderr
+
+
 def test_wrapper_is_lf_pinned() -> None:
     """The wrapper runs inside a Linux sandbox.
 
@@ -125,6 +140,15 @@ def test_wrapper_is_lf_pinned() -> None:
     attributes = (REPO_ROOT / ".gitattributes").read_text(encoding="utf-8")
 
     assert "docker/sbx-mementic/mementic text eol=lf" in attributes
+
+
+def test_committed_wrapper_has_no_crlf() -> None:
+    """The recipe copies the wrapper into the image unchanged.
+
+    ``.gitattributes`` only converts at checkout time, so a clone made before the
+    rule landed can still hold CRLF and build a wrapper the kernel cannot exec.
+    """
+    assert b"\r\n" not in (KIT / "mementic").read_bytes()
 
 
 def test_wrapper_checks_python_and_invokes_entry_point() -> None:

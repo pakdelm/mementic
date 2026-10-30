@@ -11,8 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **sbx kit builds from the public tag archive.** `docker/sbx-mementic/` is a
   standalone build context; the recipe installs the pinned release tag from
-  the public repository. `scripts/kit.py stage` is removed. Use
-  `sbx run ... --kit docker/sbx-mementic`.
+  the public repository. Staging is gone: `scripts/kit.py` is replaced by
+  `scripts/build_kit.py`, a single build command. Use
+  `sbx run ... --kit <checkout>/docker/sbx-mementic`.
 
 ## [0.5.0] - 2026-10-28
 

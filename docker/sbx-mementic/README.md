@@ -12,12 +12,13 @@ only adds mementic.
 
 ## Use
 
-The kit image is not published. Run the committed kit directory from the
-workspace root — the directory that should own `.mementic/` (the sbx kit
-builder handles the image build):
+The kit image is not published. Pass this directory from your mementic checkout
+as `--kit` and run `sbx` from the workspace root — the directory that should own
+`.mementic/` (the sbx kit builder handles the image build):
 
 ```sh
-sbx run docker.io/docker/sbx-kit-shell:1.0.0 --kit docker/sbx-mementic --name mementic
+sbx run docker.io/docker/sbx-kit-shell:1.0.0 \
+  --kit /path/to/mementic/docker/sbx-mementic --name mementic
 ```
 
 Inside the sandbox, initialize the graph once:
@@ -46,10 +47,10 @@ installs nothing.
 
 The committed directory is the build context, and the recipe installs mementic
 from the pinned public tag archive, so nothing has to be staged first.
-`scripts/kit.py build` builds the descriptor locally or in CI:
+`scripts/build_kit.py` builds the descriptor locally or in CI:
 
 ```sh
-uv run python scripts/kit.py build --output cacheonly
+uv run python scripts/build_kit.py --output cacheonly
 ```
 
 `sbx` builds the kit on demand and caches it by source hash; create a new
@@ -60,11 +61,13 @@ sandbox after editing the kit, because an existing one keeps its recorded kits.
 `mementic.yaml` pins `args.version`, which the descriptor exposes as
 `provides: mementic@<version>`. The recipe downloads
 `v<version>.tar.gz` from the public repository and verifies the installed
-dist-info reports that exact version, so a pin that drifts from `pyproject.toml`
-or a missing tag fails the build. `scripts/release.py` bumps the pin in the
-release commit. CI builds the latest released tag with
-`scripts/kit.py build --version <tag>`, so a release PR does not try to fetch
-the untagged pin.
+dist-info reports that exact version, so a pin with no matching tag fails the
+build. Drift between the pin and `pyproject.toml` is caught by
+`tests/test_sbx_kit.py`, not by the build: a pin behind the release installs the
+older tagged source cleanly. `scripts/release.py` bumps the pin in the release
+commit. CI builds the pin when its tag exists and falls back to the latest
+released tag with `scripts/build_kit.py --version <tag>` only when it does not,
+so a release PR never fetches an untagged pin.
 
 The image is not published at launch. Building it locally is supported; pushing
 to a registry is deferred.

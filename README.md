@@ -105,10 +105,12 @@ substring search and not a glob.
 The v3 mixin in `docker/sbx-mementic/` installs the CLI into a workload. The kit
 image is not published. The committed kit directory is self-contained: the recipe
 downloads the pinned public release tag archive, so no staging step is required.
-Run it from the workspace root that should own `.mementic/`:
+Pass that directory from your mementic checkout as `--kit` and run `sbx` from the
+workspace root that should own `.mementic/`:
 
 ```sh
-sbx run docker.io/docker/sbx-kit-shell:1.0.0 --kit docker/sbx-mementic --name mementic
+sbx run docker.io/docker/sbx-kit-shell:1.0.0 \
+  --kit /path/to/mementic/docker/sbx-mementic --name mementic
 mementic init
 ```
 

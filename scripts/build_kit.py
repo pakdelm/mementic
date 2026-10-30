@@ -5,9 +5,9 @@ and the recipe installs mementic from the pinned public tag archive, so the
 directory is a complete build context on its own.
 
 Usage:
-    python scripts/kit.py build --output cacheonly
-    python scripts/kit.py build --output cacheonly --version 0.5.0
-    python scripts/kit.py build --output push --tag docker.io/pakdelm/sbx-kit-mementic:0.5.0
+    python scripts/build_kit.py --output cacheonly
+    python scripts/build_kit.py --output cacheonly --version 0.5.0
+    python scripts/build_kit.py --output push --tag docker.io/pakdelm/sbx-kit-mementic:0.5.0
 """
 
 from __future__ import annotations
@@ -50,18 +50,15 @@ def build_kit(*, output: str, tag: str | None, platform: str | None, version: st
 def main() -> None:
     """Parse arguments and build the kit image."""
     parser = argparse.ArgumentParser(description=__doc__)
-    subparsers = parser.add_subparsers(dest="command", required=True)
-
-    build_parser = subparsers.add_parser("build", help="Build the kit image")
-    build_parser.add_argument(
+    parser.add_argument(
         "--output",
         choices=("cacheonly", "load", "push"),
         default="cacheonly",
         help="Build output (default: cacheonly)",
     )
-    build_parser.add_argument("--tag", help="Image reference for load or push")
-    build_parser.add_argument("--platform", help="Comma-separated platform list")
-    build_parser.add_argument(
+    parser.add_argument("--tag", help="Image reference for load or push")
+    parser.add_argument("--platform", help="Comma-separated platform list")
+    parser.add_argument(
         "--version",
         help="Kit version override for args.version (default: descriptor pin)",
     )

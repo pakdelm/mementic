@@ -43,7 +43,10 @@ uv run python scripts/sbx_smoke.py --layout both
 
 It requires the `sbx` CLI with kit builder support; the builder sandbox handles
 the image build, so a host Docker CLI is not required. Pass `--keep` to retain
-the sandbox and temporary workspace for inspection.
+the sandbox and temporary workspace for inspection. The kit installs the pinned
+release tag, not the working tree, so the smoke test exercises the released
+package; unreleased source changes are covered by `pytest` and the `-m docker`
+contract tests.
 
 The kit lives in `docker/sbx-mementic/`: `mementic.yaml` is the descriptor and
 `mementic.dockerfile` is its content recipe. The committed directory is a
@@ -56,7 +59,7 @@ builds without content. The CI `docker` job builds the latest released tag from
 the committed kit directory, because a release PR's new pin is not tagged yet.
 
 The kit image is not published. Build it locally with
-`uv run python scripts/kit.py build --output cacheonly`;
+`uv run python scripts/build_kit.py --output cacheonly`;
 `scripts/release.py` does not push an image.
 
 ## Pull Request Checklist
