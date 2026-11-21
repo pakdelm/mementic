@@ -166,6 +166,7 @@ def canonical_entity_path(base_dir: Path, raw: str) -> str:
         absolute path.
 
     Raises:
+        ForeignGraphPathError: When the path belongs to another directory's graph.
         ValueError: When a Windows drive-absolute path is used on POSIX.
     """
     cleaned = clean_entity_path(raw)
@@ -180,6 +181,9 @@ def canonical_entity_path(base_dir: Path, raw: str) -> str:
         absolute = Path(os.path.normpath(str(candidate)))
     else:
         absolute = Path(os.path.normpath(str(base_dir / candidate)))
+    owner = _owning_graph_dir(absolute, base_dir)
+    if owner is not None:
+        raise ForeignGraphPathError(owner, absolute, base_dir)
     try:
         return absolute.relative_to(base_dir).as_posix()
     except ValueError:
@@ -229,6 +233,90 @@ def display_path(path: Path, base_dir: Path) -> str:
         return path.relative_to(base_dir).as_posix()
     except ValueError:
         return path.as_posix()
+
+
+def _cwd_relative_display(path: Path, base_dir: Path) -> str:
+    """Return ``path`` relative to ``base_dir``, keeping ``..`` segments.
+
+    Unlike :func:`display_path`, a path outside ``base_dir`` is rendered as a
+    relative reference such as ``../repo-b`` rather than an absolute path, so
+    the refusal message names a directory the user can reach from here.
+
+    Args:
+        path: Path to render.
+        base_dir: Directory to render relative to.
+
+    Returns:
+        A POSIX-relative path, or the absolute POSIX path when the two paths
+        sit on different Windows drives and no relative form exists.
+    """
+    try:
+        return Path(os.path.relpath(path, base_dir)).as_posix()
+    except ValueError:
+        return path.as_posix()
+
+
+def _owning_graph_dir(absolute: Path, base_dir: Path) -> Path | None:
+    """Return the nearest directory around ``absolute`` that owns a graph.
+
+    The walk starts at the target itself, so a directory input is checked as a
+    directory, and moves to its parents. It stops before ``base_dir`` and its
+    ancestors: paths owned by the current graph are never refused, and an
+    uninitialized sibling cannot inherit a graph from a parent directory. A
+    ``.mementic`` directory without ``graph.db`` does not own anything.
+
+    Args:
+        absolute: Normalized absolute target path; the target need not exist.
+        base_dir: Directory that owns the current invocation's graph.
+
+    Returns:
+        The nearest directory whose ``.mementic/graph.db`` exists, or ``None``
+        when no directory between the target and ``base_dir`` owns a graph.
+    """
+    candidate = absolute
+    while True:
+        if candidate == base_dir or base_dir.is_relative_to(candidate):
+            return None
+        if (memory_dir(candidate) / GRAPH_DB_NAME).exists():
+            return candidate
+        parent = candidate.parent
+        if parent == candidate:
+            return None
+        candidate = parent
+
+
+class ForeignGraphPathError(ValueError):
+    """A path input belongs to another directory's graph.
+
+    The message names the owning graph and the command to run from there.
+    Existing CLI handlers catch ``ValueError`` and print the message to stderr
+    with exit code 1, so refusing never writes to either graph.
+
+    Attributes:
+        owning_dir: Absolute directory that contains ``.mementic/graph.db``.
+        relative_path: POSIX path of the target relative to ``owning_dir``.
+    """
+
+    owning_dir: Path
+    relative_path: str
+
+    def __init__(self, owning_dir: Path, target: Path, base_dir: Path) -> None:
+        """Build the refusal message for a target owned by another graph.
+
+        Args:
+            owning_dir: Absolute directory that owns the target's graph.
+            target: Normalized absolute target path.
+            base_dir: Directory that owns the current invocation's graph.
+        """
+        self.owning_dir = owning_dir
+        self.relative_path = target.relative_to(owning_dir).as_posix()
+        owner_display = _cwd_relative_display(owning_dir, base_dir)
+        target_display = _cwd_relative_display(target, base_dir)
+        message = (
+            f"{target_display} belongs to the graph at {owner_display}.\n"
+            f"Run: cd {owner_display}; mementic query file {self.relative_path}"
+        )
+        super().__init__(message)
 
 
 @dataclass(frozen=True, kw_only=True)

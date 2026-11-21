@@ -10,6 +10,7 @@ import pytest
 from mementic.paths import (
     GRAPH_DB_NAME,
     MEMORY_DIR_NAME,
+    ForeignGraphPathError,
     ProjectPaths,
     canonical_entity_path,
     clean_entity_path,
@@ -244,3 +245,129 @@ def test_project_paths_canonical_entity_path_method(tmp_path: Path) -> None:
     paths = ProjectPaths(base_dir=tmp_path, store_root=tmp_path)
 
     assert paths.canonical_entity_path("src/auth.py:handler") == "src/auth.py"
+
+
+def _write_graph(directory: Path) -> None:
+    """Create a minimal ``.mementic/graph.db`` marker under ``directory``."""
+    graph_db_path(directory).parent.mkdir(parents=True, exist_ok=True)
+    graph_db_path(directory).write_text("", encoding="utf-8")
+
+
+def test_foreign_graph_path_error_is_value_error(tmp_path: Path) -> None:
+    """The refusal subclasses ValueError so existing CLI handlers print it."""
+    repo_a = tmp_path / "repo-a"
+    repo_b = tmp_path / "repo-b"
+    repo_a.mkdir()
+    target = repo_b / "x.py"
+
+    error = ForeignGraphPathError(repo_b, target, repo_a)
+
+    assert isinstance(error, ValueError)
+
+
+def test_canonical_entity_path_refuses_sibling_graph(tmp_path: Path) -> None:
+    """A sibling graph owns its paths, and its refusal names the graph and command."""
+    repo_a = tmp_path / "repo-a"
+    repo_b = tmp_path / "repo-b"
+    repo_a.mkdir()
+    _write_graph(repo_b)
+
+    with pytest.raises(ForeignGraphPathError) as excinfo:
+        canonical_entity_path(repo_a, "../repo-b/x.py")
+
+    error = excinfo.value
+    assert error.owning_dir == repo_b
+    assert error.relative_path == "x.py"
+    assert str(error).splitlines() == [
+        "../repo-b/x.py belongs to the graph at ../repo-b.",
+        "Run: cd ../repo-b; mementic query file x.py",
+    ]
+
+
+def test_canonical_entity_path_accepts_own_graph(tmp_path: Path) -> None:
+    """A path under the current graph keeps its current relative key."""
+    repo = tmp_path / "repo-a"
+    _write_graph(repo)
+
+    assert canonical_entity_path(repo, "src/auth.py") == "src/auth.py"
+    assert canonical_entity_path(repo, str(repo / "src" / "auth.py")) == "src/auth.py"
+
+
+def test_canonical_entity_path_accepts_unowned_outside_path(tmp_path: Path) -> None:
+    """A path outside the project that no graph owns stays absolute as before."""
+    repo = tmp_path / "repo-a"
+    _write_graph(repo)
+    outside = tmp_path / "unowned" / "x.py"
+
+    assert canonical_entity_path(repo, str(outside)) == outside.as_posix()
+
+
+def test_canonical_entity_path_ignores_memory_dir_without_graph(tmp_path: Path) -> None:
+    """A ``.mementic`` directory without ``graph.db`` does not own paths."""
+    repo_a = tmp_path / "repo-a"
+    repo_b = tmp_path / "repo-b"
+    _write_graph(repo_a)
+    (repo_b / MEMORY_DIR_NAME).mkdir(parents=True)
+
+    assert canonical_entity_path(repo_a, "../repo-b/x.py") == (repo_b / "x.py").as_posix()
+
+
+def test_canonical_entity_path_refuses_nonexistent_target_under_foreign_graph(
+    tmp_path: Path,
+) -> None:
+    """Ownership is decided by the directory layout, not by the target's presence."""
+    repo_a = tmp_path / "repo-a"
+    repo_b = tmp_path / "repo-b"
+    repo_a.mkdir()
+    _write_graph(repo_b)
+
+    with pytest.raises(ForeignGraphPathError):
+        canonical_entity_path(repo_a, "../repo-b/never-created.py")
+
+
+def test_canonical_entity_path_refuses_nested_graph(tmp_path: Path) -> None:
+    """A child directory with its own graph owns its paths too."""
+    workspace = tmp_path / "workspace"
+    repo_a = workspace / "repo-a"
+    _write_graph(workspace)
+    _write_graph(repo_a)
+
+    with pytest.raises(ForeignGraphPathError) as excinfo:
+        canonical_entity_path(workspace, "repo-a/src/auth.py")
+
+    assert excinfo.value.owning_dir == repo_a
+    assert excinfo.value.relative_path == "src/auth.py"
+
+
+def test_canonical_entity_path_accepts_child_without_graph(tmp_path: Path) -> None:
+    """A child directory of base_dir without its own graph does not own its paths."""
+    workspace = tmp_path / "workspace"
+    _write_graph(workspace)
+
+    assert canonical_entity_path(workspace, "repo-a/src/auth.py") == "repo-a/src/auth.py"
+
+
+def test_canonical_entity_path_ignores_ancestor_of_base_dir_graph(tmp_path: Path) -> None:
+    """A graph in an ancestor of base_dir never owns paths outside base_dir."""
+    _write_graph(tmp_path)
+    repo_a = tmp_path / "repo-a"
+    _write_graph(repo_a)
+    sibling = tmp_path / "repo-b" / "x.py"
+
+    assert graph_db_path(tmp_path).exists()
+    assert canonical_entity_path(repo_a, "../repo-b/x.py") == sibling.as_posix()
+
+
+def test_canonical_entity_path_refuses_directory_target(tmp_path: Path) -> None:
+    """A directory input is checked with the same ownership walk from itself."""
+    repo_a = tmp_path / "repo-a"
+    repo_b = tmp_path / "repo-b"
+    repo_a.mkdir()
+    _write_graph(repo_b)
+    (repo_b / "src").mkdir()
+
+    with pytest.raises(ForeignGraphPathError) as excinfo:
+        canonical_entity_path(repo_a, "../repo-b/src")
+
+    assert excinfo.value.owning_dir == repo_b
+    assert excinfo.value.relative_path == "src"

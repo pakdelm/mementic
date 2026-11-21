@@ -232,3 +232,171 @@ def test_query_file_prefix_keeps_symbol_and_line_suffixes(
     data = json.loads(result.stdout)
     assert data["file"] == "repo-a/src/auth.py"
     assert [decision["id"] for decision in data["decisions"]] == ["repo-a-auth"]
+
+
+def _begin_repo(directory: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    directory.mkdir(parents=True, exist_ok=True)
+    _init(directory, monkeypatch)
+
+
+def _decision_ids(directory: Path) -> list[str]:
+    store = MementicStore(db_path=directory / ".mementic" / "graph.db")
+    try:
+        return [decision.id for decision in store.get_all_decisions()]
+    finally:
+        store.close()
+
+
+def _constraint_ids(directory: Path) -> list[str]:
+    store = MementicStore(db_path=directory / ".mementic" / "graph.db")
+    try:
+        return [constraint.id for constraint in store.get_all_constraints()]
+    finally:
+        store.close()
+
+
+def test_query_file_refuses_sibling_graph(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    repo_a = tmp_path / "repo-a"
+    repo_b = tmp_path / "repo-b"
+    _begin_repo(repo_a, monkeypatch)
+    _begin_repo(repo_b, monkeypatch)
+    monkeypatch.chdir(repo_a)
+
+    result = _run("query", "file", "../repo-b/x.py")
+
+    assert result.exit_code == 1
+    stderr = _strip_ansi(result.stderr)
+    assert "Error: ../repo-b/x.py belongs to the graph at ../repo-b." in stderr
+    assert "Run: cd ../repo-b; mementic query file x.py" in stderr
+
+
+def test_add_decision_refuses_sibling_graph(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo_a = tmp_path / "repo-a"
+    repo_b = tmp_path / "repo-b"
+    _begin_repo(repo_a, monkeypatch)
+    _begin_repo(repo_b, monkeypatch)
+    monkeypatch.chdir(repo_a)
+
+    result = _run("add", "decision", "Use X", "-r", "Reason", "-e", "../repo-b/x.py")
+
+    assert result.exit_code == 1
+    stderr = _strip_ansi(result.stderr)
+    assert "Error: ../repo-b/x.py belongs to the graph at ../repo-b." in stderr
+    assert "Run: cd ../repo-b; mementic query file x.py" in stderr
+    assert _decision_ids(repo_a) == []
+    assert _decision_ids(repo_b) == []
+
+
+def test_add_constraint_refuses_sibling_graph(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo_a = tmp_path / "repo-a"
+    repo_b = tmp_path / "repo-b"
+    _begin_repo(repo_a, monkeypatch)
+    _begin_repo(repo_b, monkeypatch)
+    monkeypatch.chdir(repo_a)
+
+    result = _run("add", "constraint", "Keep X stable", "-e", "../repo-b/x.py")
+
+    assert result.exit_code == 1
+    assert "belongs to the graph at ../repo-b." in _text(result)
+    assert _constraint_ids(repo_a) == []
+    assert _constraint_ids(repo_b) == []
+
+
+def test_add_with_mixed_entities_writes_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo_a = tmp_path / "repo-a"
+    repo_b = tmp_path / "repo-b"
+    _begin_repo(repo_a, monkeypatch)
+    _begin_repo(repo_b, monkeypatch)
+    own = repo_a / "src" / "auth.py"
+    own.parent.mkdir(parents=True)
+    own.write_text("x = 1", encoding="utf-8")
+    monkeypatch.chdir(repo_a)
+
+    result = _run(
+        "add",
+        "decision",
+        "Mixed Entities",
+        "-r",
+        "Reason",
+        "-e",
+        "src/auth.py",
+        "-e",
+        "../repo-b/x.py",
+    )
+
+    assert result.exit_code == 1
+    assert "belongs to the graph at ../repo-b." in _text(result)
+    assert _decision_ids(repo_a) == []
+    assert _decision_ids(repo_b) == []
+
+
+def test_query_file_prefix_refuses_foreign_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workspace = tmp_path / "workspace"
+    repo_a = workspace / "repo-a"
+    _begin_repo(workspace, monkeypatch)
+    _begin_repo(repo_a, monkeypatch)
+    monkeypatch.chdir(workspace)
+
+    result = _run("query", "file", "repo-a", "--prefix")
+
+    assert result.exit_code == 1
+    assert "belongs to the graph at repo-a." in _text(result)
+
+
+def test_query_file_allows_unowned_outside_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo_a = tmp_path / "repo-a"
+    _begin_repo(repo_a, monkeypatch)
+    outside = tmp_path / "unowned" / "x.py"
+    outside.parent.mkdir(parents=True)
+    outside.write_text("x = 1", encoding="utf-8")
+    monkeypatch.chdir(repo_a)
+
+    result = _run("query", "file", "../unowned/x.py", "--json")
+
+    assert result.exit_code == 0, _text(result)
+    assert json.loads(result.stdout)["file"] == outside.as_posix()
+
+
+def test_stored_outside_path_round_trips(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    repo_a = tmp_path / "repo-a"
+    _begin_repo(repo_a, monkeypatch)
+    outside = tmp_path / "unowned" / "x.py"
+    outside.parent.mkdir(parents=True)
+    outside.write_text("x = 1", encoding="utf-8")
+    monkeypatch.chdir(repo_a)
+    assert (
+        _run(
+            "add",
+            "decision",
+            "Outside Path",
+            "-r",
+            "Reason",
+            "-e",
+            "../unowned/x.py",
+        ).exit_code
+        == 0
+    )
+
+    store = MementicStore(db_path=repo_a / ".mementic" / "graph.db")
+    try:
+        decision = store.get_decision("outside-path")
+    finally:
+        store.close()
+    result = _run("query", "file", "../unowned/x.py", "--json")
+
+    assert decision is not None
+    assert decision.paths == [outside.as_posix()]
+    assert result.exit_code == 0, _text(result)
+    data = json.loads(result.stdout)
+    assert data["file"] == outside.as_posix()
+    assert [entry["id"] for entry in data["decisions"]] == ["outside-path"]
