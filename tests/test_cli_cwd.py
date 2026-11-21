@@ -15,6 +15,8 @@ from mementic.store import MementicStore
 
 runner = CliRunner()
 
+CRLF_AGENTS_MD: str = "# House rules\r\n\r\nKeep lines short.\r\n"
+
 
 def _strip_ansi(text: str) -> str:
     return re.sub(r"\x1b\[[0-9;]*[a-zA-Z]", "", text)
@@ -419,7 +421,7 @@ def test_init_graph_only_leaves_existing_agents_md_byte_identical(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     agents_md = tmp_path / "AGENTS.md"
-    agents_md.write_text("# House rules\r\n\r\nKeep lines short.\r\n", encoding="utf-8", newline="")
+    agents_md.write_text(CRLF_AGENTS_MD, encoding="utf-8", newline="")
     before = agents_md.read_bytes()
     monkeypatch.chdir(tmp_path)
 

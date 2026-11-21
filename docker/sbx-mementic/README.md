@@ -28,7 +28,7 @@ mementic init
 mementic query keywords auth session
 ```
 
-The graph lives at `<workspace>/.mementic/graph.db` and persists on the host.
+Each graph lives at `<repo>/.mementic/graph.db` and persists on the host.
 Use direct mode, not `--clone`: a clone breaks graph persistence because the
 agent edits the clone while the graph stays in the original workspace.
 

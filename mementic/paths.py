@@ -1,8 +1,10 @@
 """Project path constants and CWD-local graph resolution for mementic.
 
 The graph is directory-local: the process working directory owns
-``.mementic/graph.db``. There is no ancestor walk, no Git lookup, and no
+``.mementic/graph.db``. Resolution has no ancestor walk, no Git lookup, and no
 environment override. Entity paths are interpreted relative to that directory.
+Ancestors of an entity-path input are inspected only to refuse paths owned by
+another directory's graph; resolution never walks.
 """
 
 from __future__ import annotations
@@ -277,7 +279,7 @@ def _owning_graph_dir(absolute: Path, base_dir: Path) -> Path | None:
     while True:
         if candidate == base_dir or base_dir.is_relative_to(candidate):
             return None
-        if (memory_dir(candidate) / GRAPH_DB_NAME).exists():
+        if graph_db_path(candidate).exists():
             return candidate
         parent = candidate.parent
         if parent == candidate:
