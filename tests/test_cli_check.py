@@ -300,8 +300,10 @@ def test_check_without_matching_rules_exits_zero(
 def test_check_with_no_changed_files_reports_and_exits_zero(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A clean work tree lists nothing and still exits 0."""
-    _repo(tmp_path, monkeypatch)
+    """A clean work tree with an untracked file lists nothing and exits 0."""
+    repo = _repo(tmp_path, monkeypatch)
+    (repo / "src").mkdir()
+    (repo / "src" / "untracked.py").write_text("x = 1\n", encoding="utf-8")
 
     result = _run("check")
 
@@ -309,6 +311,19 @@ def test_check_with_no_changed_files_reports_and_exits_zero(
     output = _text(result)
     assert "No changed files to check." in output
     assert "[mementic: 0 constraints | no changed files]" in output
+
+
+def test_check_without_commits_reports_unreadable_diff(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A repository with no commits cannot produce a diff and exits 1."""
+    _git_repo(tmp_path, monkeypatch)
+    _ok("init")
+
+    result = _run("check")
+
+    assert result.exit_code == 1
+    assert "Error: " in _text(result)
 
 
 def test_check_output_states_it_does_not_verify(
