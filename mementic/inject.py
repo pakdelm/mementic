@@ -14,10 +14,10 @@ from __future__ import annotations
 
 import importlib.resources
 import os
-import subprocess
 import tempfile
 from pathlib import Path
 
+from mementic.git import is_git_work_tree
 from mementic.paths import MEMORY_DIR_NAME
 
 START_MARKER = "<!-- mementic:start -->"
@@ -83,21 +83,6 @@ def _write_text_atomic(path: Path, content: str) -> None:
         raise
 
 
-def _is_git_work_tree(directory: Path) -> bool:
-    """Return True when ``directory`` is inside a Git work tree."""
-    try:
-        result = subprocess.run(
-            ["git", "rev-parse", "--is-inside-work-tree"],
-            cwd=directory,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-    except OSError:
-        return False
-    return result.returncode == 0 and result.stdout.strip() == "true"
-
-
 def _ignore_pattern(line: str) -> str | None:
     """Return the path a non-negated ignore line covers, if any.
 
@@ -133,7 +118,7 @@ def sync_gitignore(base_dir: Path, *, label: str | None = None) -> str | None:
         ``None`` when the directory is not a Git work tree or the entry is
         already present.
     """
-    if not _is_git_work_tree(base_dir):
+    if not is_git_work_tree(base_dir):
         return None
 
     gitignore = base_dir / ".gitignore"
