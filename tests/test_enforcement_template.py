@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from mementic.cli import _LAZY_COMMANDS
-from mementic.inject import load_template
+from mementic.inject import END_MARKER, START_MARKER, load_template
 
 _REPO = Path(__file__).resolve().parents[1]
 
@@ -84,3 +84,22 @@ def test_readme_names_only_registered_commands() -> None:
     commands = named_commands((_REPO / "README.md").read_text(encoding="utf-8"))
     assert commands
     assert commands - set(_LAZY_COMMANDS) == set()
+
+
+def test_repository_agents_md_matches_template() -> None:
+    """The marker block in AGENTS.md equals the template block after newline normalization."""
+    text = (_REPO / "AGENTS.md").read_text(encoding="utf-8")
+    start = text.index(START_MARKER)
+    end = text.index(END_MARKER) + len(END_MARKER)
+    assert text[start:end] == load_template().strip()
+
+
+def test_readme_drops_token_goal_framing() -> None:
+    """The README motivation rests on repeated discovery work, not on token savings."""
+    readme = " ".join((_REPO / "README.md").read_text(encoding="utf-8").split())
+    sentence = (
+        "Without it, agents reread the same ADRs and instruction files before every task, "
+        "and every agent repeats the same work."
+    )
+    assert sentence in readme
+    assert "That burns tokens" not in readme

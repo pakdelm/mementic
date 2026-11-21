@@ -17,6 +17,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Spec 42: entity paths owned by another repository's graph are refused with
   an error naming the owning graph and the command to run.
 
+### Fixed
+
+- Spec 43: the enforcement block and the README summary now describe entity
+  paths relative to the repository that owns the graph instead of a foreign
+  repository's path, and the README motivation no longer frames token savings
+  as the goal.
+
 ## [0.5.2] - 2026-10-31
 
 ### Added
