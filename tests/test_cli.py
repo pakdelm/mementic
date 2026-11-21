@@ -279,6 +279,62 @@ class TestDeprecateCommand:
         output = result.stdout + result.stderr
         assert "Skipped already-dep: already deprecated" in output
 
+    def test_deprecate_replaced_by_writes_successor(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        store = _make_store()
+        _seed_decision(store, "use-old-auth", rationale="Basic session auth")
+        _seed_decision(store, "use-new-auth", rationale="Token auth")
+
+        with patch("mementic.cli.context.resolve_store", return_value=nullcontext(store)):
+            result = runner.invoke(
+                app,
+                ["deprecate", "use-old-auth", "--replaced-by", "use-new-auth", "-r", "moved"],
+            )
+
+        assert result.exit_code == 0
+        output = _strip_ansi(result.stdout)
+        assert "Deprecated use-old-auth (superseded by use-new-auth): moved" in output
+        records = store.get_deprecations_for_entry("decision", "use-old-auth")
+        assert len(records) == 1
+        assert records[0]["replaced_by"] == "use-new-auth"
+
+    def test_deprecate_missing_successor_exits_one(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        store = _make_store()
+        _seed_decision(store, "use-old-auth", rationale="Basic session auth")
+
+        with patch("mementic.cli.context.resolve_store", return_value=nullcontext(store)):
+            result = runner.invoke(app, ["deprecate", "use-old-auth", "--replaced-by", "ghost"])
+
+        assert result.exit_code == 1
+        output = result.stdout + result.stderr
+        assert "Error: successor 'ghost' not found" in output
+        assert store.is_deprecated("decision", "use-old-auth") is False
+
+    def test_deprecate_repeat_with_second_successor_reports_also_superseded(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        store = _make_store()
+        _seed_decision(store, "old-a", rationale="Old A")
+        _seed_decision(store, "old-b", rationale="Old B")
+        _seed_decision(store, "first-successor", rationale="First")
+        _seed_decision(store, "second-successor", rationale="Second")
+
+        with patch("mementic.cli.context.resolve_store", return_value=nullcontext(store)):
+            runner.invoke(app, ["deprecate", "old-a", "old-b", "--replaced-by", "first-successor"])
+            result = runner.invoke(
+                app,
+                ["deprecate", "old-a", "old-b", "--replaced-by", "second-successor", "-r", "split"],
+            )
+
+        assert result.exit_code == 0
+        output = _strip_ansi(result.stdout)
+        assert "Recorded successor second-successor for old-a: split" in output
+        assert "Recorded successor second-successor for old-b: split" in output
+        assert "Summary: 2 also superseded" in output
+
 
 class TestHistoryCommand:
     """Tests for the mementic history command."""

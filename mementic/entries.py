@@ -15,6 +15,9 @@ DECISION_ID_MAX_LENGTH: int = 40
 CONSTRAINT_ID_MAX_LENGTH: int = 40
 DUPLICATE_OVERLAP_THRESHOLD: float = 0.8
 MISSING_DECISION_MESSAGE: str = "enforcing decision '{decision_id}' does not exist"
+MISSING_SUCCESSOR_DETAIL: str = "not found"
+DEPRECATED_SUCCESSOR_DETAIL: str = "is deprecated; name a live entry"
+SELF_SUCCESSOR_DETAIL: str = "is being deprecated in the same command"
 
 
 class EntryKind(StrEnum):
@@ -37,6 +40,7 @@ class DeprecateOutcome(StrEnum):
     """What happened when an entry was deprecated."""
 
     DEPRECATED = "deprecated"
+    SUCCESSOR_ADDED = "successor_added"
     ALREADY_DEPRECATED = "already_deprecated"
     NOT_FOUND = "not_found"
 
@@ -58,6 +62,7 @@ class DeprecateResult:
     entry_id: str
     outcome: DeprecateOutcome
     message: str = ""
+    replaced_by: str | None = None
 
 
 class MissingDecisionError(ValueError):
@@ -66,6 +71,20 @@ class MissingDecisionError(ValueError):
     def __init__(self, decision_id: str) -> None:
         super().__init__(MISSING_DECISION_MESSAGE.format(decision_id=decision_id))
         self.decision_id = decision_id
+
+
+class InvalidSuccessorError(ValueError):
+    """Raised when a deprecation names a successor that cannot be recorded."""
+
+    def __init__(self, successor_id: str, detail: str) -> None:
+        """Record the rejected successor ID and why it was refused.
+
+        Args:
+            successor_id: The successor ID that failed validation.
+            detail: The reason, phrased to follow ``successor '<id>'``.
+        """
+        super().__init__(f"successor '{successor_id}' {detail}")
+        self.successor_id = successor_id
 
 
 def word_overlap(text_a: str, text_b: str) -> float:
@@ -197,37 +216,90 @@ class EntryWriter:
         self,
         entry_ids: Sequence[str],
         reason: str = "",
+        replaced_by: str | None = None,
     ) -> list[DeprecateResult]:
-        """Deprecate each entry.
+        """Deprecate each entry, optionally recording one shared successor.
 
         Args:
             entry_ids: Decision or constraint IDs to deprecate.
             reason: Optional human-readable reason.
+            replaced_by: Optional live entry ID that supersedes every ID. When
+                given, it is validated before any write and recorded on each
+                tombstone; an entry already deprecated gains an extra
+                successor row rather than being skipped.
 
         Returns:
             One result per input ID, in input order.
+
+        Raises:
+            InvalidSuccessorError: If ``replaced_by`` does not exist, is
+                itself deprecated, or appears in ``entry_ids``. Nothing is
+                written in that case.
         """
-        results: list[DeprecateResult] = []
-        for entry_id in entry_ids:
-            entry_type = self._store.get_entry_type(entry_id)
-            if entry_type is None:
-                results.append(
-                    DeprecateResult(
-                        entry_id=entry_id,
-                        outcome=DeprecateOutcome.NOT_FOUND,
-                        message=f"Entity '{entry_id}' not found.",
-                    )
-                )
-                continue
-            result = self._store.deprecate(entry_type, entry_id, reason)
-            results.append(
-                DeprecateResult(
-                    entry_id=entry_id,
-                    outcome=DeprecateOutcome(result["status"]),
-                    message=result.get("message", ""),
-                )
+        if replaced_by is None:
+            return [self._deprecate_one(entry_id, reason, None) for entry_id in entry_ids]
+        self._validate_successor(replaced_by, entry_ids)
+        with self._store.transaction():
+            return [self._deprecate_one(entry_id, reason, replaced_by) for entry_id in entry_ids]
+
+    def _validate_successor(self, replaced_by: str, entry_ids: Sequence[str]) -> None:
+        """Refuse a successor that is unknown, retired, or being deprecated.
+
+        The order is existence, then self-membership, then liveness, so a
+        successor that names one of the inputs reports self-succession.
+
+        Args:
+            replaced_by: The successor ID named on the command line.
+            entry_ids: The entries being deprecated in the same command.
+
+        Raises:
+            InvalidSuccessorError: With the reason the successor was refused.
+        """
+        successor_type = self._store.get_entry_type(replaced_by)
+        if successor_type is None:
+            raise InvalidSuccessorError(replaced_by, MISSING_SUCCESSOR_DETAIL)
+        if replaced_by in entry_ids:
+            raise InvalidSuccessorError(replaced_by, SELF_SUCCESSOR_DETAIL)
+        if self._store.is_deprecated(successor_type, replaced_by):
+            raise InvalidSuccessorError(replaced_by, DEPRECATED_SUCCESSOR_DETAIL)
+
+    def _deprecate_one(
+        self,
+        entry_id: str,
+        reason: str,
+        replaced_by: str | None,
+    ) -> DeprecateResult:
+        """Deprecate one entry and wrap the store outcome.
+
+        Args:
+            entry_id: The entry ID to deprecate.
+            reason: Optional human-readable reason stored with the tombstone.
+            replaced_by: Optional live successor ID recorded on the tombstone.
+
+        Returns:
+            The outcome for this ID, carrying ``replaced_by`` when one was
+            requested.
+        """
+        entry_type = self._store.get_entry_type(entry_id)
+        if entry_type is None:
+            return DeprecateResult(
+                entry_id=entry_id,
+                outcome=DeprecateOutcome.NOT_FOUND,
+                message=f"Entity '{entry_id}' not found.",
             )
-        return results
+        result = self._store.deprecate(
+            entry_type,
+            entry_id,
+            reason,
+            replaced_by=replaced_by,
+            additional_successor=replaced_by is not None,
+        )
+        return DeprecateResult(
+            entry_id=entry_id,
+            outcome=DeprecateOutcome(result["status"]),
+            message=result.get("message", ""),
+            replaced_by=replaced_by,
+        )
 
     def _auto_resolve(
         self,

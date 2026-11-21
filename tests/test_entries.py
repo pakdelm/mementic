@@ -209,3 +209,70 @@ def test_deprecate_many_reports_each_outcome(store: MementicStore) -> None:
         DeprecateOutcome.NOT_FOUND,
     ]
     assert "not found" in results[-1].message.lower()
+
+
+def test_deprecate_many_rejects_missing_successor_before_writing(store: MementicStore) -> None:
+    from mementic.entries import InvalidSuccessorError
+
+    _seed_decision(store, "old-rule")
+    audit_before = store.count_audit_entries()
+
+    with pytest.raises(InvalidSuccessorError) as excinfo:
+        EntryWriter(store).deprecate_many(["old-rule"], reason="cleanup", replaced_by="ghost")
+
+    assert excinfo.value.successor_id == "ghost"
+    assert str(excinfo.value) == "successor 'ghost' not found"
+    assert store.is_deprecated("decision", "old-rule") is False
+    assert store.get_deprecations_for_entry("decision", "old-rule") == []
+    assert store.count_audit_entries() == audit_before
+
+
+def test_deprecate_many_rejects_self_successor(store: MementicStore) -> None:
+    from mementic.entries import InvalidSuccessorError
+
+    _seed_decision(store, "alpha-rule")
+    _seed_decision(store, "beta-rule")
+    audit_before = store.count_audit_entries()
+
+    with pytest.raises(InvalidSuccessorError) as excinfo:
+        EntryWriter(store).deprecate_many(["alpha-rule", "beta-rule"], replaced_by="beta-rule")
+
+    assert excinfo.value.successor_id == "beta-rule"
+    assert str(excinfo.value) == ("successor 'beta-rule' is being deprecated in the same command")
+    assert store.is_deprecated("decision", "alpha-rule") is False
+    assert store.is_deprecated("decision", "beta-rule") is False
+    assert store.count_audit_entries() == audit_before
+
+
+def test_deprecate_many_reports_successor_added_for_repeat(store: MementicStore) -> None:
+    _seed_decision(store, "old-rule")
+    _seed_decision(store, "new-rule")
+    _seed_decision(store, "other-rule")
+    writer = EntryWriter(store)
+
+    first = writer.deprecate_many(["old-rule"], reason="first", replaced_by="new-rule")
+    second = writer.deprecate_many(["old-rule"], reason="second", replaced_by="other-rule")
+
+    assert [result.outcome for result in first] == [DeprecateOutcome.DEPRECATED]
+    assert first[0].replaced_by == "new-rule"
+    assert [result.outcome for result in second] == [DeprecateOutcome.SUCCESSOR_ADDED]
+    assert second[0].replaced_by == "other-rule"
+    assert "also superseded" in second[0].message
+
+
+def test_deprecate_many_plain_path_unchanged(store: MementicStore) -> None:
+    _seed_decision(store, "use-jwt-auth")
+    _seed_decision(store, "use-sessions")
+
+    results = EntryWriter(store).deprecate_many(
+        ["use-jwt-auth", "use-sessions", "no-such-id"],
+        reason="cleanup",
+    )
+
+    assert [result.outcome for result in results] == [
+        DeprecateOutcome.DEPRECATED,
+        DeprecateOutcome.DEPRECATED,
+        DeprecateOutcome.NOT_FOUND,
+    ]
+    assert [result.replaced_by for result in results] == [None, None, None]
+    assert results[-1].message == "Entity 'no-such-id' not found."

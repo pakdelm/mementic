@@ -903,3 +903,128 @@ def test_deprecated_entry_excluded_from_context_pack(project_dir: Path) -> None:
     assert "zebra-protocol" not in output
     # Compact echo (Spec 33 Phase 1): nothing live, nothing shown.
     assert "[mementic: 0 of 0 constraints, 0 of 0 decisions | zebra]" in output
+
+
+def test_deprecate_with_replaced_by_records_successor(project_dir: Path) -> None:
+    """A single successor lands in deprecations.replaced_by and the audit log."""
+    import json
+
+    _ok("add", "decision", "Old Rule", "-r", "Old rationale")
+    _ok("add", "decision", "New Rule", "-r", "New rationale")
+    result = _ok("deprecate", "old-rule", "--replaced-by", "new-rule", "-r", "moved")
+
+    output = _text(result)
+    assert "Deprecated old-rule (superseded by new-rule): moved" in output
+    store = _store()
+    try:
+        records = store.get_deprecations_for_entry("decision", "old-rule")
+        assert [record["replaced_by"] for record in records] == ["new-rule"]
+        assert [record["reason"] for record in records] == ["moved"]
+        assert json.loads(store.get_audit_entries(limit=1)[0]["details"])["replaced_by"] == (
+            "new-rule"
+        )
+    finally:
+        store.close()
+
+
+def test_deprecate_missing_successor_exits_one_without_writing(project_dir: Path) -> None:
+    _ok("add", "decision", "Old Rule", "-r", "Old rationale")
+    store = _store()
+    try:
+        audit_before = store.count_audit_entries()
+    finally:
+        store.close()
+
+    result = _run("deprecate", "old-rule", "--replaced-by", "ghost")
+
+    assert result.exit_code == 1
+    assert "Error: successor 'ghost' not found" in _text(result)
+    store = _store()
+    try:
+        assert store.is_deprecated("decision", "old-rule") is False
+        assert store.get_deprecations_for_entry("decision", "old-rule") == []
+        assert store.count_audit_entries() == audit_before
+    finally:
+        store.close()
+
+
+def test_deprecate_deprecated_successor_exits_one_without_writing(project_dir: Path) -> None:
+    _ok("add", "decision", "Old Rule", "-r", "Old rationale")
+    _ok("add", "decision", "New Rule", "-r", "New rationale")
+    _ok("deprecate", "new-rule")
+    store = _store()
+    try:
+        audit_before = store.count_audit_entries()
+    finally:
+        store.close()
+
+    result = _run("deprecate", "old-rule", "--replaced-by", "new-rule")
+
+    assert result.exit_code == 1
+    assert "Error: successor 'new-rule' is deprecated; name a live entry" in _text(result)
+    store = _store()
+    try:
+        assert store.is_deprecated("decision", "old-rule") is False
+        assert store.get_deprecations_for_entry("decision", "old-rule") == []
+        assert store.count_audit_entries() == audit_before
+    finally:
+        store.close()
+
+
+def test_deprecate_self_successor_exits_one_without_writing(project_dir: Path) -> None:
+    _ok("add", "decision", "Alpha Rule", "-r", "Alpha rationale")
+    _ok("add", "decision", "Beta Rule", "-r", "Beta rationale")
+    store = _store()
+    try:
+        audit_before = store.count_audit_entries()
+    finally:
+        store.close()
+
+    result = _run("deprecate", "alpha-rule", "beta-rule", "--replaced-by", "beta-rule")
+
+    assert result.exit_code == 1
+    assert "Error: successor 'beta-rule' is being deprecated in the same command" in _text(result)
+    store = _store()
+    try:
+        assert store.is_deprecated("decision", "alpha-rule") is False
+        assert store.is_deprecated("decision", "beta-rule") is False
+        assert store.count_audit_entries() == audit_before
+    finally:
+        store.close()
+
+
+def test_deprecate_merge_several_ids_one_successor(project_dir: Path) -> None:
+    _ok("add", "decision", "Alpha Rule", "-r", "Alpha rationale")
+    _ok("add", "decision", "Beta Rule", "-r", "Beta rationale")
+    _ok("add", "decision", "New Rule", "-r", "New rationale")
+    result = _ok(
+        "deprecate", "alpha-rule", "beta-rule", "--replaced-by", "new-rule", "-r", "merged"
+    )
+
+    output = _text(result)
+    assert "Deprecated alpha-rule (superseded by new-rule): merged" in output
+    assert "Deprecated beta-rule (superseded by new-rule): merged" in output
+    assert "Summary: 2 deprecated" in output
+    store = _store()
+    try:
+        alpha = store.get_deprecations_for_entry("decision", "alpha-rule")
+        beta = store.get_deprecations_for_entry("decision", "beta-rule")
+        assert [record["replaced_by"] for record in alpha] == ["new-rule"]
+        assert [record["replaced_by"] for record in beta] == ["new-rule"]
+        assert [record["reason"] for record in alpha] == ["merged"]
+        assert [record["reason"] for record in beta] == ["merged"]
+    finally:
+        store.close()
+
+
+def test_deprecate_plain_output_unchanged(project_dir: Path) -> None:
+    """Without --replaced-by the output shape is byte-identical to today."""
+    _ok("add", "decision", "Alpha Rule", "-r", "Alpha rationale")
+    _ok("add", "decision", "Beta Rule", "-r", "Beta rationale")
+    result = _ok("deprecate", "alpha-rule", "beta-rule", "-r", "obsolete")
+
+    output = _text(result)
+    assert "Deprecated alpha-rule: obsolete" in output
+    assert "Deprecated beta-rule: obsolete" in output
+    assert "Summary: 2 deprecated" in output
+    assert "superseded" not in output.lower()
