@@ -835,3 +835,128 @@ class TestStatsAndAudit:
         s2 = MementicStore(db_path=db)
         assert [d.id for d in s2.get_live_decisions()] == ["persisted"]
         s2.close()
+
+
+class TestSuccessorLink:
+    def test_additional_successor_appends_second_row(self, store: MementicStore) -> None:
+        _add_decision(store, "old")
+        _add_decision(store, "new-a")
+        _add_decision(store, "new-b")
+        store.deprecate("decision", "old", reason="split", replaced_by="new-a")
+        result = store.deprecate(
+            "decision",
+            "old",
+            reason="split",
+            replaced_by="new-b",
+            additional_successor=True,
+        )
+        assert result["status"] == "successor_added"
+        assert result["message"] == "Deprecated decision 'old' (also superseded by 'new-b')"
+        assert "at" in result
+        rows = store.get_deprecations_for_entry("decision", "old")
+        assert [row["replaced_by"] for row in rows] == ["new-a", "new-b"]
+
+    def test_additional_successor_same_target_is_idempotent(self, store: MementicStore) -> None:
+        _add_decision(store, "old")
+        _add_decision(store, "new-a")
+        store.deprecate("decision", "old", replaced_by="new-a")
+        result = store.deprecate(
+            "decision",
+            "old",
+            replaced_by="new-a",
+            additional_successor=True,
+        )
+        assert result["status"] == "already_deprecated"
+        assert len(store.get_deprecations_for_entry("decision", "old")) == 1
+
+    def test_additional_successor_with_none_reports_already_deprecated(
+        self, store: MementicStore
+    ) -> None:
+        _add_decision(store, "old")
+        store.deprecate("decision", "old", reason="retired")
+        result = store.deprecate("decision", "old", reason="again", additional_successor=True)
+        assert result["status"] == "already_deprecated"
+        assert len(store.get_deprecations_for_entry("decision", "old")) == 1
+
+    def test_deprecate_logs_successor_in_audit_details(self, store: MementicStore) -> None:
+        _add_decision(store, "old")
+        _add_decision(store, "new-a")
+        store.deprecate("decision", "old", reason="replaced", replaced_by="new-a")
+        latest = store.get_audit_entries(limit=1)[0]
+        assert latest["action"] == "deprecate"
+        assert json.loads(latest["details"]) == {
+            "description": "Title old",
+            "reason": "replaced",
+            "replaced_by": "new-a",
+        }
+
+    def test_split_successor_logs_second_audit_entry(self, store: MementicStore) -> None:
+        _add_decision(store, "old")
+        _add_decision(store, "new-a")
+        _add_decision(store, "new-b")
+        store.deprecate("decision", "old", replaced_by="new-a")
+        store.deprecate("decision", "old", replaced_by="new-b", additional_successor=True)
+        deprecations = [
+            entry for entry in store.get_audit_entries(limit=10) if entry["action"] == "deprecate"
+        ]
+        assert [json.loads(entry["details"])["replaced_by"] for entry in deprecations] == [
+            "new-b",
+            "new-a",
+        ]
+
+    def test_get_successor_map_returns_current_incarnation_only(self, store: MementicStore) -> None:
+        _add_decision(store, "old", created_at="2024-01-01T00:00:00Z")
+        _add_decision(store, "new-a", created_at="2024-02-01T00:00:00Z")
+        stamp = store.deprecate("decision", "old", replaced_by="new-a")["at"]
+        assert store.get_successor_map("decision", ["old"]) == {"old": [("new-a", "Title new-a")]}
+        _add_decision(
+            store,
+            "old",
+            rationale="again",
+            created_at=successor_timestamp(stamp),
+        )
+        assert store.get_successor_map("decision", ["old"]) == {}
+
+    def test_get_successor_map_orders_successors_by_stamp(self, store: MementicStore) -> None:
+        _add_decision(store, "old", created_at="2024-01-01T00:00:00Z")
+        _add_decision(store, "alpha", created_at="2024-02-01T00:00:00Z")
+        _add_decision(store, "zulu", created_at="2024-02-01T00:00:00Z")
+        store.deprecate("decision", "old", replaced_by="zulu")
+        store.deprecate("decision", "old", replaced_by="alpha", additional_successor=True)
+        assert store.get_successor_map("decision", ["old"]) == {
+            "old": [("zulu", "Title zulu"), ("alpha", "Title alpha")]
+        }
+
+    def test_get_successor_map_ignores_retired_without_successor(
+        self, store: MementicStore
+    ) -> None:
+        _add_decision(store, "old")
+        _add_decision(store, "new-a")
+        _add_decision(store, "retired")
+        store.deprecate("decision", "retired")
+        store.deprecate("decision", "old", replaced_by="new-a")
+        assert store.get_successor_map("decision", ["old", "retired"]) == {
+            "old": [("new-a", "Title new-a")]
+        }
+
+    def test_get_successor_map_empty_input_returns_empty(self, store: MementicStore) -> None:
+        assert store._conn is not None
+        statements: list[str] = []
+        store._conn.set_trace_callback(statements.append)
+        try:
+            result = store.get_successor_map("decision", [])
+        finally:
+            store._conn.set_trace_callback(None)
+        assert result == {}
+        assert statements == []
+
+    def test_get_successor_map_labels_missing_successor_empty(self, store: MementicStore) -> None:
+        _add_decision(store, "old")
+        store.deprecate("decision", "old", replaced_by="ghost")
+        assert store.get_successor_map("decision", ["old"]) == {"old": [("ghost", "")]}
+
+    def test_get_successor_map_resolves_cross_type_successor(self, store: MementicStore) -> None:
+        _add_decision(store, "old")
+        _add_constraint(store, "new-c", description="Newest rule")
+        store.deprecate("decision", "old", replaced_by="new-c")
+        assert store.get_successor_map("decision", ["old"]) == {"old": [("new-c", "Newest rule")]}
