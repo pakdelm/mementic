@@ -6,6 +6,7 @@ import sqlite3
 
 import typer
 
+from mementic import staleness
 from mementic.cli import context
 from mementic.cli.views import add_summary
 from mementic.console import console, text
@@ -31,7 +32,10 @@ def decision(
     paths = context.resolve_paths()
     with context.resolve_store(paths) as store:
         try:
-            result = EntryWriter(store).add_decision(
+            result = EntryWriter(
+                store,
+                hash_path=staleness.hash_provider(paths.entity_path),
+            ).add_decision(
                 title=title,
                 rationale=rationale,
                 paths=[paths.canonical_entity_path(p) for p in (entities or [])],
@@ -64,7 +68,10 @@ def constraint(
     paths = context.resolve_paths()
     with context.resolve_store(paths) as store:
         try:
-            result = EntryWriter(store).add_constraint(
+            result = EntryWriter(
+                store,
+                hash_path=staleness.hash_provider(paths.entity_path),
+            ).add_constraint(
                 description=description,
                 paths=[paths.canonical_entity_path(p) for p in entities],
                 enforced_by=decision_id or "",

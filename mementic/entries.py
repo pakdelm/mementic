@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 
@@ -96,8 +96,22 @@ class EntryWriter:
     before the successor is written.
     """
 
-    def __init__(self, store: MementicStore) -> None:
+    def __init__(
+        self,
+        store: MementicStore,
+        *,
+        hash_path: Callable[[str], str | None] | None = None,
+    ) -> None:
+        """Bind the writer to a store.
+
+        Args:
+            store: Store that receives the writes.
+            hash_path: Optional write-time hash function mapping a stored
+                path to its content digest. Without one, bindings record a
+                null hash.
+        """
         self._store = store
+        self._hash_path = hash_path
 
     def add_decision(
         self,
@@ -133,6 +147,7 @@ class EntryWriter:
                     rationale=rationale,
                     created_at=self._successor_created_at(tombstone_at),
                     paths=list(paths),
+                    path_hashes=self._path_hashes(paths),
                 )
         return AddResult(
             kind=EntryKind.DECISION,
@@ -185,6 +200,7 @@ class EntryWriter:
                     enforced_by=enforced_by,
                     created_at=self._successor_created_at(tombstone_at),
                     paths=list(paths),
+                    path_hashes=self._path_hashes(paths),
                 )
         return AddResult(
             kind=EntryKind.CONSTRAINT,
@@ -278,3 +294,25 @@ class EntryWriter:
         if tombstone_at is None:
             return utc_now()
         return successor_timestamp(tombstone_at)
+
+    def _path_hashes(self, paths: Sequence[str]) -> dict[str, str] | None:
+        """Return the content hashes to record with an entry's path bindings.
+
+        None means hashing is not configured, so every binding stores a null
+        hash. Paths whose digest is None (missing or not a regular file) are
+        omitted and likewise store a null hash.
+
+        Args:
+            paths: Stored paths about to be bound.
+
+        Returns:
+            Map of path to digest, or None when no hash provider is set.
+        """
+        if self._hash_path is None:
+            return None
+        hashes: dict[str, str] = {}
+        for path in paths:
+            digest = self._hash_path(path)
+            if digest is not None:
+                hashes[path] = digest
+        return hashes

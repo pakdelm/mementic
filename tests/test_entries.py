@@ -209,3 +209,35 @@ def test_deprecate_many_reports_each_outcome(store: MementicStore) -> None:
         DeprecateOutcome.NOT_FOUND,
     ]
     assert "not found" in results[-1].message.lower()
+
+
+def test_add_constraint_records_path_hashes(store: MementicStore) -> None:
+    writer = EntryWriter(store, hash_path=lambda path: "abc123")
+    writer.add_constraint(
+        description="All I/O must be async",
+        paths=["src/a.py", "src/b.py"],
+    )
+    assert [(b.path, b.content_hash) for b in store.get_path_bindings("src/", prefix=True)] == [
+        ("src/a.py", "abc123"),
+        ("src/b.py", "abc123"),
+    ]
+
+
+def test_add_decision_records_path_hashes(store: MementicStore) -> None:
+    digests = {"src/a.py": "aaa111", "src/b.py": "bbb222"}
+    writer = EntryWriter(store, hash_path=digests.get)
+    writer.add_decision(
+        title="Use JWT Auth",
+        rationale="Token-based authentication for APIs",
+        paths=["src/a.py", "src/b.py"],
+    )
+    assert [(b.path, b.content_hash) for b in store.get_all_bindings()] == [
+        ("src/a.py", "aaa111"),
+        ("src/b.py", "bbb222"),
+    ]
+
+
+def test_missing_file_binding_records_null_hash(store: MementicStore) -> None:
+    writer = EntryWriter(store, hash_path=lambda path: None)
+    writer.add_constraint(description="All I/O must be async", paths=["src/gone.py"])
+    assert [b.content_hash for b in store.get_path_bindings("src/gone.py")] == [None]

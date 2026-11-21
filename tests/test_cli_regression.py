@@ -8,6 +8,7 @@ opened directly only to assert resulting state, never to seed it.
 
 from __future__ import annotations
 
+import hashlib
 import re
 from pathlib import Path
 
@@ -903,3 +904,17 @@ def test_deprecated_entry_excluded_from_context_pack(project_dir: Path) -> None:
     assert "zebra-protocol" not in output
     # Compact echo (Spec 33 Phase 1): nothing live, nothing shown.
     assert "[mementic: 0 of 0 constraints, 0 of 0 decisions | zebra]" in output
+
+
+def test_add_constraint_records_content_hash(project_dir: Path) -> None:
+    """The write path records the sha256 of the bound file's bytes."""
+    target = project_dir / "src" / "auth.py"
+    target.parent.mkdir(parents=True)
+    target.write_bytes(b"def handler():\n    return 1\n")
+    _ok("add", "constraint", "Handlers return ints", "-e", "src/auth.py")
+    store = _store()
+    try:
+        bindings = store.get_path_bindings("src/auth.py")
+    finally:
+        store.close()
+    assert [b.content_hash for b in bindings] == [hashlib.sha256(target.read_bytes()).hexdigest()]
