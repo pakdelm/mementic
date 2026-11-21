@@ -5,6 +5,11 @@
 - Use `git` for version control.
 - Write concise, imperative commit messages (e.g., "Add user authentication").
 - Never commit secrets, `.env` files, or generated artifacts.
+- Commit or push only with explicit user approval. Exception: a user-launched autonomous spec
+  run (`/ship`, `/integrate`, the `orchestrator` agent) is that approval for the `spec-lead`
+  and `integrator` agents to commit inside spec worktrees and push `spec/*` branches. They
+  never push `main`, never rebase or force-push, and never merge. The human reviews and merges
+  each PR.
 
 ## Dependency Management
 
