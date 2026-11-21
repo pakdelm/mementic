@@ -20,6 +20,10 @@ class GitDiffError(RuntimeError):
     """The change list cannot be read from this directory."""
 
 
+class NotAWorkTreeError(GitDiffError):
+    """The directory is not inside a Git work tree."""
+
+
 @dataclass(frozen=True, kw_only=True)
 class ChangedFile:
     """One changed path reported by ``git diff --name-status``.
@@ -68,12 +72,13 @@ def changed_files(directory: Path) -> list[ChangedFile]:
         One entry per changed path, in the order Git reports them.
 
     Raises:
-        GitDiffError: When ``directory`` is not a Git work tree, has no
-            commits yet, or the diff cannot be read.
+        NotAWorkTreeError: When ``directory`` is not a Git work tree.
+        GitDiffError: When ``directory`` has no commits yet, or the diff
+            cannot be read.
     """
     inside = _run_git(["rev-parse", "--is-inside-work-tree"], directory)
     if inside.returncode != 0 or inside.stdout.strip() != b"true":
-        raise GitDiffError(f"{directory} is not a Git work tree; cannot read changes")
+        raise NotAWorkTreeError(f"{directory} is not a Git work tree; cannot read changes")
     head = _run_git(["rev-parse", "--verify", "--quiet", "HEAD"], directory)
     if head.returncode != 0:
         raise GitDiffError(f"{directory} has no commits; there is nothing to diff against")

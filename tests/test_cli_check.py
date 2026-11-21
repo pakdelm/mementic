@@ -340,6 +340,38 @@ def test_check_output_states_it_does_not_verify(
     assert "It does not verify the change." in output
 
 
+def test_check_renders_changed_files_at_narrow_width(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A narrow terminal folds cells instead of dropping the changed files."""
+    repo = _repo(tmp_path, monkeypatch)
+    _commit(repo, "src/auth.py", "x = 1\n")
+    _add_rule("Auth handlers must validate tokens", "src/auth.py", rule_id="validate-tokens")
+    (repo / "src" / "auth.py").write_text("x = 2\n", encoding="utf-8")
+    monkeypatch.setattr("mementic.console.console._width", 72)
+
+    output = _text(_ok("check"))
+
+    assert "validate-tokens" in output
+    assert "src/auth.py" in output
+    assert "Changed files" in output
+
+
+def test_check_reports_missing_git_instead_of_work_tree(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Without a git binary the error names git, not the work tree."""
+    _repo(tmp_path, monkeypatch)
+    monkeypatch.setenv("PATH", "")
+
+    result = _run("check")
+
+    assert result.exit_code == 1
+    output = _text(result)
+    assert "git is not installed" in output
+    assert "is not inside a Git work tree" not in output
+
+
 def test_check_hides_enforcing_decision_by_default(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

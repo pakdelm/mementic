@@ -14,12 +14,8 @@ from mementic.console import (
     table,
     text,
 )
-from mementic.git import ChangedFile, GitDiffError, changed_files, is_git_work_tree
+from mementic.git import ChangedFile, GitDiffError, NotAWorkTreeError, changed_files
 from mementic.paths import ProjectPaths
-
-_RULE_WIDTH: int = 40
-_ID_WIDTH: int = 26
-_DECISION_WIDTH: int = 22
 
 _SUMMARY_FORMAT: str = "[mementic: {rules} constraints | {changed}]"
 _NO_CHANGED_FILES: str = "no changed files"
@@ -92,14 +88,14 @@ def check(
     """
     paths = context.resolve_paths()
     with context.resolve_store(paths) as store:
-        if not is_git_work_tree(paths.base_dir):
+        try:
+            changes = changed_files(paths.base_dir)
+        except NotAWorkTreeError as exc:
             typer.echo(
                 _NOT_A_WORK_TREE.format(base=paths.base_dir.as_posix()),
                 err=True,
             )
-            raise typer.Exit(code=1)
-        try:
-            changes = changed_files(paths.base_dir)
+            raise typer.Exit(code=1) from exc
         except GitDiffError as exc:
             typer.echo(f"Error: {exc}", err=True)
             raise typer.Exit(code=1) from exc
@@ -123,8 +119,8 @@ def check(
         return
 
     check_table = table()
-    check_table.add_column("Rule", no_wrap=True, overflow="ellipsis", width=_RULE_WIDTH)
-    check_table.add_column("ID", style=COLOR_ID, no_wrap=True, overflow="ellipsis", width=_ID_WIDTH)
+    check_table.add_column("Rule", overflow="fold")
+    check_table.add_column("ID", style=COLOR_ID, overflow="fold")
     check_table.add_column(
         "Changed files",
         style=COLOR_DIM,
@@ -134,9 +130,7 @@ def check(
         check_table.add_column(
             "Decision",
             style=COLOR_DIM,
-            no_wrap=True,
-            overflow="ellipsis",
-            width=_DECISION_WIDTH,
+            overflow="fold",
         )
     for constraint, matched_paths in matches:
         row = [

@@ -7,7 +7,13 @@ from pathlib import Path
 
 import pytest
 
-from mementic.git import ChangedFile, GitDiffError, changed_files, is_git_work_tree
+from mementic.git import (
+    ChangedFile,
+    GitDiffError,
+    NotAWorkTreeError,
+    changed_files,
+    is_git_work_tree,
+)
 
 _GIT_IDENTITY = (
     "-c",
@@ -139,6 +145,18 @@ def test_changed_files_raises_git_diff_error_outside_work_tree(
     _pin_ceiling(monkeypatch, tmp_path)
 
     with pytest.raises(GitDiffError, match="not a Git work tree"):
+        changed_files(outside)
+
+
+def test_changed_files_raises_not_a_work_tree_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A plain directory fails with the distinct not-a-work-tree error."""
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    _pin_ceiling(monkeypatch, tmp_path)
+
+    with pytest.raises(NotAWorkTreeError, match="not a Git work tree"):
         changed_files(outside)
 
 
