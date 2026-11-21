@@ -1,4 +1,4 @@
-"""Relational storage layer for mementic (schema v5).
+"""Relational storage layer for mementic (schema v6).
 
 A thin data-access module over raw ``sqlite3``. No ORM, no in-memory graph:
 every read is a SQL query and every write is an INSERT/REPLACE on flat
@@ -19,13 +19,13 @@ from __future__ import annotations
 import json
 import sqlite3
 from collections import deque
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from pathlib import Path
 from types import TracebackType
 from urllib.parse import quote
 
-from mementic.models import Constraint, Decision
+from mementic.models import Constraint, Decision, PathBinding
 from mementic.schema import (
     DEFAULT_AUDIT_LIMIT,
     LIVE_WHERE,
@@ -37,6 +37,33 @@ from mementic.schema import (
 )
 
 _MAX_STAMP_RETRIES = 10
+
+
+def _prefix_pattern(path: str) -> str:
+    """Return an escaped LIKE pattern matching stored paths under ``path``.
+
+    Escaping the LIKE metacharacters keeps ``_`` and ``%`` literal, and the
+    trailing wildcard forces the prefix to match at the start of the stored
+    path, never as a substring of it.
+
+    Args:
+        path: Query path used as the prefix.
+
+    Returns:
+        The LIKE pattern for a start-anchored prefix match.
+    """
+    escaped = path.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return escaped + "%"
+
+
+def _to_binding(row: sqlite3.Row) -> PathBinding:
+    """Build a PathBinding from one entry_paths row."""
+    return PathBinding(
+        entry_type=row["entry_type"],
+        entry_id=row["entry_id"],
+        path=row["path"],
+        content_hash=row["content_hash"],
+    )
 
 
 def _insert_deprecation(conn: sqlite3.Connection, row: tuple) -> str:
@@ -78,7 +105,7 @@ class MementicStore:
     """SQLite-backed memory store for decisions and constraints.
 
     Opens (creating if necessary) the database at ``db_path``, applies the
-    schema-v5 DDL to fresh databases, and refuses databases from older
+    schema-v6 DDL to fresh databases, and refuses databases from older
     schema versions — those predate the relational store; start fresh with
     ``mementic init`` or recover data from a pre-upgrade backup.
 
@@ -251,6 +278,7 @@ class MementicStore:
         rationale: str,
         created_at: str,
         paths: list[str] | tuple[str, ...] = (),
+        path_hashes: Mapping[str, str] | None = None,
     ) -> str:
         """Insert or update a decision and its paths.
 
@@ -266,6 +294,8 @@ class MementicStore:
                 deprecations rows for prior incarnations of this ID so the
                 new incarnation derives as live.
             paths: Affected file paths (replaces any existing set).
+            path_hashes: Optional map of path to content hash recorded with
+                the binding; paths absent from it store a NULL hash.
 
         Returns:
             ``"add"`` when newly created, ``"modify"`` when overwriting.
@@ -290,7 +320,7 @@ class MementicStore:
                 "created_at=excluded.created_at",
                 (entry_id, title, rationale, created_at),
             )
-            self._replace_paths("decision", entry_id, paths)
+            self._replace_paths("decision", entry_id, paths, path_hashes)
             self._log_audit(
                 "decision",
                 entry_id,
@@ -307,6 +337,7 @@ class MementicStore:
         enforced_by: str = "",
         created_at: str,
         paths: list[str] | tuple[str, ...] = (),
+        path_hashes: Mapping[str, str] | None = None,
     ) -> str:
         """Insert or update a constraint and its paths.
 
@@ -322,6 +353,8 @@ class MementicStore:
             created_at: ISO 8601 creation timestamp. Must postdate any
                 deprecations rows for prior incarnations of this ID.
             paths: Bound file paths (replaces any existing set).
+            path_hashes: Optional map of path to content hash recorded with
+                the binding; paths absent from it store a NULL hash.
 
         Returns:
             ``"add"`` when newly created, ``"modify"`` when overwriting.
@@ -350,7 +383,7 @@ class MementicStore:
                 # constraints as NULL so only real references are enforced.
                 (entry_id, description, enforced_by or None, created_at),
             )
-            self._replace_paths("constraint", entry_id, paths)
+            self._replace_paths("constraint", entry_id, paths, path_hashes)
             self._log_audit(
                 "constraint",
                 entry_id,
@@ -364,8 +397,13 @@ class MementicStore:
         entry_type: str,
         entry_id: str,
         paths: list[str] | tuple[str, ...],
+        path_hashes: Mapping[str, str] | None = None,
     ) -> None:
-        """Replace the entry_paths rows for one entry inside an open transaction."""
+        """Replace the entry_paths rows for one entry inside an open transaction.
+
+        Duplicate paths are collapsed by first occurrence, and each row
+        stores the content hash supplied for its path (NULL when none).
+        """
         conn = self._conn_or_raise()
         conn.execute(
             "DELETE FROM entry_paths WHERE entry_type = ? AND entry_id = ?",
@@ -373,8 +411,9 @@ class MementicStore:
         )
         for path in dict.fromkeys(paths):
             conn.execute(
-                "INSERT OR IGNORE INTO entry_paths (entry_type, entry_id, path) VALUES (?, ?, ?)",
-                (entry_type, entry_id, path),
+                "INSERT OR IGNORE INTO entry_paths "
+                "(entry_type, entry_id, path, content_hash) VALUES (?, ?, ?, ?)",
+                (entry_type, entry_id, path, (path_hashes or {}).get(path)),
             )
 
     def deprecate(
@@ -783,9 +822,9 @@ class MementicStore:
     ) -> dict[str, set[str]]:
         """Map matching entry IDs to the set of their paths that matched.
 
-        This is the single definition of path-overlap semantics for the
-        whole codebase: callers filtering on filesystem liveness pass a
-        ``path_exists`` predicate here rather than re-filtering results.
+        This delegates matching to :meth:`_matching_binding_rows`, which owns
+        the single definition of path-overlap semantics, and adds only the
+        ``path_exists`` liveness filter and the entry-id grouping.
 
         Args:
             entry_type: ``"decision"`` or ``"constraint"``.
@@ -800,30 +839,78 @@ class MementicStore:
             Map of entry ID to the set of its stored paths that matched
             (and survived ``path_exists``, when given).
         """
-        conn = self._conn_or_raise()
-        if prefix:
-            # Anchor the LIKE at the start: ``path + '%'`` matches stored
-            # paths beginning with ``path`` (including prefix-siblings such
-            # as ``src/utils.py`` for prefix ``src/util`` — same semantics
-            # as the historical startswith behavior).
-            escaped = path.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-            pattern = escaped + "%"
-            rows = conn.execute(
-                "SELECT entry_id, path FROM entry_paths "
-                "WHERE entry_type = ? AND path LIKE ? ESCAPE '\\'",
-                (entry_type, pattern),
-            )
-        else:
-            rows = conn.execute(
-                "SELECT entry_id, path FROM entry_paths WHERE entry_type = ? AND path = ?",
-                (entry_type, path),
-            )
         matches: dict[str, set[str]] = {}
-        for r in rows:
-            if path_exists is not None and not path_exists(r["path"]):
+        for row in self._matching_binding_rows(entry_type, path, prefix=prefix):
+            if path_exists is not None and not path_exists(row["path"]):
                 continue
-            matches.setdefault(r["entry_id"], set()).add(r["path"])
+            matches.setdefault(row["entry_id"], set()).add(row["path"])
         return matches
+
+    def _matching_binding_rows(
+        self,
+        entry_type: str | None,
+        path: str,
+        *,
+        prefix: bool,
+    ) -> list[sqlite3.Row]:
+        """Return entry_paths rows matching ``path`` under exact or prefix rules.
+
+        The single definition of path-overlap matching: prefix mode escapes
+        LIKE metacharacters and anchors the match at the start of the stored
+        path, so a prefix does not match a path that merely contains it.
+
+        Args:
+            entry_type: ``"decision"``, ``"constraint"``, or None to match
+                both.
+            path: Query path.
+            prefix: Use SQL LIKE prefix matching (with escaping) when True.
+
+        Returns:
+            Rows with ``entry_type``, ``entry_id``, ``path``, and
+            ``content_hash`` columns, in insertion order.
+        """
+        conn = self._conn_or_raise()
+        filters: list[str] = []
+        params: list[str] = []
+        if entry_type is not None:
+            filters.append("entry_type = ?")
+            params.append(entry_type)
+        if prefix:
+            filters.append("path LIKE ? ESCAPE '\\'")
+            params.append(_prefix_pattern(path))
+        else:
+            filters.append("path = ?")
+            params.append(path)
+        sql = (
+            "SELECT entry_type, entry_id, path, content_hash FROM entry_paths "
+            f"WHERE {' AND '.join(filters)} ORDER BY rowid"
+        )
+        return conn.execute(sql, params).fetchall()
+
+    def get_path_bindings(self, path: str, *, prefix: bool = False) -> list[PathBinding]:
+        """Return every entry_paths row bound to ``path``.
+
+        Uses the same match semantics as :meth:`get_path_matches` and does
+        no filesystem filtering, leaving hash-staleness classification to
+        callers.
+
+        Args:
+            path: File path to match against entry_paths.
+            prefix: When True, match entries whose stored path starts with
+                ``path`` instead of requiring an exact match.
+
+        Returns:
+            One binding per matching row, in insertion order.
+        """
+        return [_to_binding(r) for r in self._matching_binding_rows(None, path, prefix=prefix)]
+
+    def get_all_bindings(self) -> list[PathBinding]:
+        """Return every entry_paths row, in insertion order."""
+        conn = self._conn_or_raise()
+        rows = conn.execute(
+            "SELECT entry_type, entry_id, path, content_hash FROM entry_paths ORDER BY rowid"
+        )
+        return [_to_binding(r) for r in rows]
 
     def get_all_paths(self) -> list[str]:
         """Return every distinct stored path, in insertion order."""

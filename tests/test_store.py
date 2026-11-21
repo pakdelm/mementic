@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pytest
 
+from mementic.models import PathBinding
 from mementic.schema import SCHEMA_VERSION, successor_timestamp, utc_now
 from mementic.store import MementicStore
 
@@ -136,11 +137,11 @@ def _raw_conn(store: MementicStore) -> sqlite3.Connection:
 
 
 class TestSchema:
-    def test_fresh_database_gets_schema_v5(self, tmp_path: Path) -> None:
+    def test_fresh_database_gets_schema_v6(self, tmp_path: Path) -> None:
         db = tmp_path / "graph.db"
         with MementicStore(db_path=db) as store:
             version = _raw_conn(store).execute("PRAGMA user_version").fetchone()[0]
-            assert version == SCHEMA_VERSION == 5
+            assert version == SCHEMA_VERSION == 6
             tables = {
                 r["name"]
                 for r in _raw_conn(store).execute(
@@ -171,6 +172,23 @@ class TestSchema:
         with MementicStore(db_path=tmp_path / "graph.db") as store:
             mode = _raw_conn(store).execute("PRAGMA journal_mode").fetchone()[0]
         assert mode == "wal"
+
+    def test_entry_paths_content_hash_is_nullable(self, store: MementicStore) -> None:
+        columns = {r["name"]: r for r in _raw_conn(store).execute("PRAGMA table_info(entry_paths)")}
+        assert columns["content_hash"]["notnull"] == 0
+
+    def test_opening_v5_database_raises_with_migration_hint(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        db = tmp_path / "old.db"
+        conn = sqlite3.connect(str(db))
+        conn.execute("CREATE TABLE decisions (id TEXT PRIMARY KEY)")
+        conn.execute("PRAGMA user_version = 5")
+        conn.commit()
+        conn.close()
+        with pytest.raises(RuntimeError, match="not auto-upgraded"):
+            MementicStore(db_path=db)
 
     def test_opening_v4_database_raises_with_migration_hint(
         self,
@@ -669,6 +687,132 @@ class TestPathQueries:
             "src/services/io.py",
             "src/models/base.py",
             "src/models/types.py",
+        ]
+
+
+class TestPathBindings:
+    def test_add_records_content_hash_per_path(self, store: MementicStore) -> None:
+        store.add_decision(
+            entry_id="d1",
+            title="Title d1",
+            rationale="r",
+            created_at="2024-01-01T00:00:00Z",
+            paths=["src/a.py", "src/b.py"],
+            path_hashes={"src/a.py": "aaa111", "src/b.py": "bbb222"},
+        )
+        assert store.get_path_bindings("src/a.py") == [
+            PathBinding(
+                entry_type="decision",
+                entry_id="d1",
+                path="src/a.py",
+                content_hash="aaa111",
+            )
+        ]
+        assert store.get_path_bindings("src/b.py") == [
+            PathBinding(
+                entry_type="decision",
+                entry_id="d1",
+                path="src/b.py",
+                content_hash="bbb222",
+            )
+        ]
+
+    def test_add_without_hashes_stores_null(self, store: MementicStore) -> None:
+        store.add_constraint(
+            entry_id="c1",
+            description="d",
+            created_at="2024-01-01T00:00:00Z",
+            paths=["src/a.py", "src/b.py"],
+            path_hashes={"src/a.py": "aaa111"},
+        )
+        bindings = store.get_path_bindings("src/", prefix=True)
+        hashes = {b.path: b.content_hash for b in bindings}
+        assert hashes == {"src/a.py": "aaa111", "src/b.py": None}
+
+    def test_readd_replaces_recorded_hash(self, store: MementicStore) -> None:
+        store.add_constraint(
+            entry_id="c1",
+            description="d",
+            created_at="2024-01-01T00:00:00Z",
+            paths=["src/a.py"],
+            path_hashes={"src/a.py": "aaa111"},
+        )
+        store.add_constraint(
+            entry_id="c1",
+            description="d",
+            created_at="2024-01-02T00:00:00Z",
+            paths=["src/a.py"],
+            path_hashes={"src/a.py": "ccc333"},
+        )
+        assert store.get_path_bindings("src/a.py")[0].content_hash == "ccc333"
+        store.add_constraint(
+            entry_id="c1",
+            description="d",
+            created_at="2024-01-03T00:00:00Z",
+            paths=["src/a.py"],
+        )
+        assert store.get_path_bindings("src/a.py")[0].content_hash is None
+
+    def test_get_path_bindings_exact_match(self, store: MementicStore) -> None:
+        _add_constraint(store, "c1", paths=["src/a.py"])
+        _add_decision(store, "d1", paths=["src/a.py"])
+        _add_decision(store, "d2", paths=["src/a.py.helper"])
+        assert store.get_path_bindings("src/a.py") == [
+            PathBinding(entry_type="constraint", entry_id="c1", path="src/a.py"),
+            PathBinding(entry_type="decision", entry_id="d1", path="src/a.py"),
+        ]
+
+    def test_get_path_bindings_prefix_is_start_anchored(
+        self,
+        store: MementicStore,
+    ) -> None:
+        _add_decision(store, "d-src", paths=["src/services/io.py"])
+        _add_decision(store, "d-docs", paths=["docs/src/services/io.py"])
+        assert store.get_path_bindings("src/") == []
+        matches = store.get_path_bindings("src/", prefix=True)
+        assert matches == [
+            PathBinding(entry_type="decision", entry_id="d-src", path="src/services/io.py"),
+        ]
+        assert store.get_path_bindings("docs/src/", prefix=True) == [
+            PathBinding(
+                entry_type="decision",
+                entry_id="d-docs",
+                path="docs/src/services/io.py",
+            ),
+        ]
+
+    def test_get_path_bindings_includes_missing_files(self, store: MementicStore) -> None:
+        """The binding reader is filesystem-agnostic; staleness is classified later."""
+        store.add_constraint(
+            entry_id="c1",
+            description="d",
+            created_at="2024-01-01T00:00:00Z",
+            paths=["gone/nowhere.py"],
+            path_hashes={"gone/nowhere.py": "abc123"},
+        )
+        assert store.get_path_bindings("gone/nowhere.py") == [
+            PathBinding(
+                entry_type="constraint",
+                entry_id="c1",
+                path="gone/nowhere.py",
+                content_hash="abc123",
+            )
+        ]
+        assert store.get_path_matches("constraint", "gone/nowhere.py") == {
+            "c1": {"gone/nowhere.py"}
+        }
+
+    def test_get_all_bindings_insertion_order(self, store: MementicStore) -> None:
+        _add_decision(
+            store,
+            "d1",
+            paths=["src/a.py", "src/b.py"],
+        )
+        _add_constraint(store, "c1", paths=["src/c.py"])
+        assert store.get_all_bindings() == [
+            PathBinding(entry_type="decision", entry_id="d1", path="src/a.py"),
+            PathBinding(entry_type="decision", entry_id="d1", path="src/b.py"),
+            PathBinding(entry_type="constraint", entry_id="c1", path="src/c.py"),
         ]
 
 

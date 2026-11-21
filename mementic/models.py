@@ -1,4 +1,4 @@
-"""Data models for the Mementic memory store (schema v5).
+"""Data models for the Mementic memory store (schema v6).
 
 Decisions and constraints are flat relational rows; file associations ride
 along as ``paths`` (materialized from ``entry_paths``). Liveness is derived
@@ -47,3 +47,21 @@ class Constraint:
     enforced_by: str = ""
     created_at: str
     paths: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True, kw_only=True)
+class PathBinding:
+    """One entry_paths row: which entry claims which path, and the hash recorded with it.
+
+    Attributes:
+        entry_type: ``"decision"`` or ``"constraint"``.
+        entry_id: ID of the entry that claims the path.
+        path: The stored file path.
+        content_hash: sha256 hex of the bound file's bytes at write time, or
+            None when no hash was recorded.
+    """
+
+    entry_type: str
+    entry_id: str
+    path: str
+    content_hash: str | None = None

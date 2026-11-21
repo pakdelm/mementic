@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 DEFAULT_AUDIT_LIMIT = 20
 
 SCHEMA_DDL = """
@@ -23,9 +23,10 @@ CREATE TABLE constraints (
 );
 
 CREATE TABLE entry_paths (
-    entry_type TEXT NOT NULL CHECK (entry_type IN ('decision','constraint')),
-    entry_id   TEXT NOT NULL,
-    path       TEXT NOT NULL,
+    entry_type   TEXT NOT NULL CHECK (entry_type IN ('decision','constraint')),
+    entry_id     TEXT NOT NULL,
+    path         TEXT NOT NULL,
+    content_hash TEXT,               -- sha256 hex at write time; NULL = not recorded
     PRIMARY KEY (entry_type, entry_id, path)
 );
 CREATE INDEX idx_entry_paths_path ON entry_paths(path);
