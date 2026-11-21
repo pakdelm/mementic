@@ -34,6 +34,10 @@ description: Use when preparing a git commit. Reviews the diff, writes a convent
 ## Rules
 
 - Never commit without explicit user instruction.
+- Autonomous spec runs: when the `spec-lead` or `integrator` agent works inside a spec
+  worktree, a user-launched `/ship`, `/integrate`, or `orchestrator` run counts as that
+  instruction. Skip step 4 (asking for approval), commit only on `spec/*` branches, and never
+  commit on `main`.
 - Never commit secrets or generated artifacts.
 - Never amend commits or force-push unless the user explicitly asks.
 - If tests don't pass, block the commit and tell the user why.

@@ -7,21 +7,18 @@
     ".opencode/instructions/project-conventions.md",
     ".opencode/instructions/libraries.md"
   ],
-  "permission": {
-    "read": {
-      "**/.env": "deny",
-      "**/.env.*": "deny",
-      "*": "allow"
-    },
-    "edit": "allow",
-    "bash": {
-      "rm -rf /": "deny",
-      "rm -rf ~": "deny",
-      "*": "allow"
-    },
-    "task": "allow",
-    "external_directory": "allow",
-    "webfetch": "allow",
-    "websearch": "allow"
+  "permissions": [
+    { "action": "*", "resource": "*", "effect": "allow" },
+    { "action": "read", "resource": "*.env", "effect": "deny" },
+    { "action": "read", "resource": "*.env.*", "effect": "deny" },
+    { "action": "read", "resource": "*.env.example", "effect": "allow" },
+    { "action": "shell", "resource": "rm -rf /", "effect": "deny" },
+    { "action": "shell", "resource": "rm -rf ~", "effect": "deny" }
+  ],
+  "worktree": {
+    "directory": "../mementic-worktrees"
+  },
+  "experimental": {
+    "subagent_depth": 2
   }
 }
