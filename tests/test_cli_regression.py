@@ -1028,3 +1028,15 @@ def test_deprecate_plain_output_unchanged(project_dir: Path) -> None:
     assert "Deprecated beta-rule: obsolete" in output
     assert "Summary: 2 deprecated" in output
     assert "superseded" not in output.lower()
+
+
+def test_deprecate_split_lists_every_successor_in_history(project_dir: Path) -> None:
+    """Deprecating one entry twice records both successors for history."""
+    _ok("add", "decision", "Old Rule", "-r", "Old rationale")
+    _ok("add", "decision", "First Rule", "-r", "First rationale")
+    _ok("add", "decision", "Second Rule", "-r", "Second rationale")
+    _ok("deprecate", "old-rule", "--replaced-by", "first-rule")
+    _ok("deprecate", "old-rule", "--replaced-by", "second-rule")
+
+    output = _text(_ok("history", "old-rule"))
+    assert "old-rule -> first-rule, second-rule" in output

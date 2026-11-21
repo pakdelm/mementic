@@ -400,6 +400,46 @@ class TestHistoryCommand:
         assert result.exit_code == 0
         assert "No deprecation history" in _strip_ansi(result.stdout)
 
+    def test_history_shows_successor_chain_for_deprecated_entry(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A linear successor chain renders root-first as x -> y -> z."""
+        store = _make_store()
+        _seed_decision(store, "x", rationale="first", created_at="2024-01-01T00:00:00Z")
+        _seed_decision(store, "y", rationale="second", created_at="2024-02-01T00:00:00Z")
+        _seed_decision(store, "z", rationale="third", created_at="2024-03-01T00:00:00Z")
+        store.deprecate("decision", "x", reason="v1", replaced_by="y")
+        store.deprecate("decision", "y", reason="v2", replaced_by="z")
+
+        with patch("mementic.cli.context.resolve_store", return_value=nullcontext(store)):
+            result = runner.invoke(app, ["history", "x"])
+
+        assert result.exit_code == 0
+        assert "x -> y -> z" in _strip_ansi(result.stdout)
+
+    def test_history_split_chain_renders_siblings(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Two successors of one entry share one comma-joined trail position."""
+        store = _make_store()
+        _seed_decision(store, "base", rationale="base", created_at="2024-01-01T00:00:00Z")
+        _seed_decision(store, "first", rationale="first", created_at="2024-01-02T00:00:00Z")
+        _seed_decision(store, "second", rationale="second", created_at="2024-01-03T00:00:00Z")
+        store.deprecate("decision", "base", reason="split", replaced_by="first")
+        store.deprecate(
+            "decision",
+            "base",
+            reason="split",
+            replaced_by="second",
+            additional_successor=True,
+        )
+
+        with patch("mementic.cli.context.resolve_store", return_value=nullcontext(store)):
+            result = runner.invoke(app, ["history", "base"])
+
+        assert result.exit_code == 0
+        assert "base -> first, second" in _strip_ansi(result.stdout)
+
 
 _COMPACT_QUERIES = [
     ["query", "keywords", "auth", "--compact"],
