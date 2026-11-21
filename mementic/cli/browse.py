@@ -5,6 +5,7 @@ from __future__ import annotations
 import typer
 
 from mementic.cli import context
+from mementic.cli.views import SUPERSEDED_HEADER
 from mementic.console import (
     COLOR_DIM,
     COLOR_ID,
@@ -26,7 +27,6 @@ from mementic.text import format_timestamp
 list_app = typer.Typer(help="Browse decisions, constraints, and entities")
 
 _VALID_STATUSES = {"accepted", "deprecated", "active"}
-_SUPERSEDED_HEADER = "Superseded By"
 _SUPERSEDED_WIDTH = 16
 _TRAIL_ARROW = " -> "
 _TRAIL_SEPARATOR = ", "
@@ -131,7 +131,7 @@ def decisions(
     )
     if show_superseded:
         decision_table.add_column(
-            _SUPERSEDED_HEADER,
+            SUPERSEDED_HEADER,
             style=COLOR_WARN,
             no_wrap=True,
             overflow="ellipsis",
@@ -195,7 +195,7 @@ def constraints(
     )
     if show_superseded:
         constraint_table.add_column(
-            _SUPERSEDED_HEADER,
+            SUPERSEDED_HEADER,
             style=COLOR_WARN,
             no_wrap=True,
             overflow="ellipsis",

@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Spec 47: deprecate --replaced-by links retired rules to their successors in history and query search.**
+
 ## [0.5.2] - 2026-10-31
 
 ### Added

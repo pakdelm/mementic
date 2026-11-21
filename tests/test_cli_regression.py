@@ -1040,3 +1040,42 @@ def test_deprecate_split_lists_every_successor_in_history(project_dir: Path) -> 
 
     output = _text(_ok("history", "old-rule"))
     assert "old-rule -> first-rule, second-rule" in output
+
+
+def test_query_search_shows_successor_id_and_title(project_dir: Path) -> None:
+    """A deprecated search hit names its successor and the successor's title."""
+    _ok("add", "decision", "Old Rule", "-r", "legacy authentication rationale")
+    _ok("add", "decision", "New Rule", "-r", "modern authentication rationale")
+    _ok("deprecate", "old-rule", "--replaced-by", "new-rule")
+
+    output = _text(_ok("query", "search", "legacy"))
+
+    assert "[mementic: 0 constraints, 1 decisions | legacy]" in output
+    row = next(line for line in output.splitlines() if "old-rule" in line)
+    assert "new-rule (New Rule)" in row
+
+
+def test_query_search_plain_entry_has_no_successor_cell(project_dir: Path) -> None:
+    """A live search hit renders neither the successor header nor a missing label."""
+    _ok("add", "decision", "Plain Rule", "-r", "unique plaintext marker")
+
+    output = _text(_ok("query", "search", "plaintext"))
+
+    assert "plain-rule" in output
+    assert "Superseded By" not in output
+    assert "(missing)" not in output
+
+
+def test_query_search_split_lists_both_successors(project_dir: Path) -> None:
+    """Both successors of a split render on the deprecated entry's row."""
+    _ok("add", "decision", "Old Rule", "-r", "legacy authentication rationale")
+    _ok("add", "decision", "First Rule", "-r", "first replacement")
+    _ok("add", "decision", "Second Rule", "-r", "second replacement")
+    _ok("deprecate", "old-rule", "--replaced-by", "first-rule")
+    _ok("deprecate", "old-rule", "--replaced-by", "second-rule")
+
+    output = _text(_ok("query", "search", "legacy"))
+
+    row = next(line for line in output.splitlines() if "old-rule" in line)
+    assert "first-rule" in row
+    assert "second-rule" in row

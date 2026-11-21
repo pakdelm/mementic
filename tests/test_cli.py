@@ -14,6 +14,7 @@ import pytest
 from typer.testing import CliRunner
 
 from mementic.cli import app
+from mementic.cli.views import format_successor_cell
 from mementic.paths import ProjectPaths
 from mementic.store import MementicStore
 
@@ -1137,3 +1138,110 @@ class TestVersion:
 
         assert result.exit_code == 0, f"stderr: {result.stderr}"
         assert __version__ in result.stdout
+
+
+class TestQuerySearch:
+    """Successor rendering in ``mementic query search``."""
+
+    def _search(self, store: MementicStore, term: str) -> str:
+        """Run query search against ``store`` and return stripped output."""
+        with patch("mementic.cli.context.resolve_store", return_value=nullcontext(store)):
+            result = runner.invoke(app, ["query", "search", term])
+        assert result.exit_code == 0, f"stderr: {result.stderr}"
+        return _strip_ansi(result.stdout)
+
+    def test_query_search_shows_successor_id_and_title(self) -> None:
+        """A deprecated match carries its successor ID and the successor title."""
+        store = _make_store()
+        _seed_decision(
+            store,
+            "old-rule",
+            title="Old Rule",
+            rationale="legacy authentication rationale",
+        )
+        _seed_decision(
+            store,
+            "new-rule",
+            title="New Rule",
+            rationale="modern authentication rationale",
+            created_at="2024-02-01T00:00:00Z",
+        )
+        store.deprecate("decision", "old-rule", reason="replaced", replaced_by="new-rule")
+
+        output = self._search(store, "legacy")
+
+        assert "[mementic: 0 constraints, 1 decisions | legacy]" in output
+        row = next(line for line in output.splitlines() if "old-rule" in line)
+        assert "new-rule (New Rule)" in row
+
+    def test_query_search_plain_entry_has_no_successor_cell(self) -> None:
+        """A live match renders only the ID and title columns."""
+        store = _make_store()
+        _seed_decision(
+            store,
+            "plain-rule",
+            title="Plain Rule",
+            rationale="unique plaintext marker",
+        )
+
+        output = self._search(store, "plaintext")
+
+        assert "Superseded By" not in output
+        assert "(missing)" not in output
+        row = next(line for line in output.splitlines() if "plain-rule" in line)
+        cells = [cell for cell in re.split(r"\s{2,}", row.strip("│ ").strip()) if cell]
+        assert cells == ["plain-rule", "Plain Rule"]
+
+    def test_query_search_split_lists_both_successors(self) -> None:
+        """Both successors of a split appear on the deprecated entry's row."""
+        store = _make_store()
+        _seed_decision(
+            store,
+            "old-rule",
+            title="Old Rule",
+            rationale="legacy authentication rationale",
+        )
+        _seed_decision(
+            store,
+            "first-rule",
+            title="First Rule",
+            rationale="first replacement",
+            created_at="2024-02-01T00:00:00Z",
+        )
+        _seed_decision(
+            store,
+            "second-rule",
+            title="Second Rule",
+            rationale="second replacement",
+            created_at="2024-03-01T00:00:00Z",
+        )
+        store.deprecate("decision", "old-rule", reason="split", replaced_by="first-rule")
+        store.deprecate(
+            "decision",
+            "old-rule",
+            reason="split again",
+            replaced_by="second-rule",
+            additional_successor=True,
+        )
+
+        output = self._search(store, "legacy")
+
+        row = next(line for line in output.splitlines() if "old-rule" in line)
+        assert "first-rule" in row
+        assert "second-rule" in row
+
+
+class TestFormatSuccessorCell:
+    """Rendering rules for the successor table cell."""
+
+    def test_format_successor_cell_empty(self) -> None:
+        """An entry without successors renders an empty cell."""
+        assert format_successor_cell([]) == ""
+
+    def test_format_successor_cell_split_joins_labels(self) -> None:
+        """Split successors render comma-joined as id (label)."""
+        assert format_successor_cell([("a", "A"), ("b", "B")]) == "a (A), b (B)"
+
+    def test_format_successor_cell_missing_label(self) -> None:
+        """A successor whose row is gone renders id (missing)."""
+        assert format_successor_cell([("gone", "")]) == "gone (missing)"

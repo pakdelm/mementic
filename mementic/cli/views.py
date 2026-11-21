@@ -5,6 +5,8 @@ from __future__ import annotations
 from mementic.console import COLOR_ID, COLOR_SUCCESS, COLOR_WARN
 from mementic.entries import AddOutcome, EntryKind
 
+SUPERSEDED_HEADER = "Superseded By"
+
 
 def ellipsize(value: str, limit: int) -> str:
     """Shorten a display value to ``limit`` characters with a trailing ellipsis.
@@ -59,3 +61,20 @@ def add_summary(kind: EntryKind, entry_id: str, outcome: AddOutcome) -> str:
     if outcome is AddOutcome.DUPLICATE:
         return f"[{COLOR_WARN}]Skipped {noun}[/] [{COLOR_ID}]{entry_id}[/]{suffix}"
     return f"[{COLOR_SUCCESS}]Added {noun}[/] [{COLOR_ID}]{entry_id}[/]{suffix}"
+
+
+def format_successor_cell(successors: list[tuple[str, str]]) -> str:
+    """Render the successors of one deprecated entry in a table cell.
+
+    Args:
+        successors: ``(successor_id, label)`` pairs in tombstone order.
+
+    Returns:
+        An empty string when there are no successors; otherwise each
+        successor as ``id (label)``, comma-joined. A successor with no
+        label renders as ``id (missing)``.
+    """
+    cells = []
+    for successor_id, label in successors:
+        cells.append(f"{successor_id} ({label})" if label else f"{successor_id} (missing)")
+    return ", ".join(cells)
