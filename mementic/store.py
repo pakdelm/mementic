@@ -19,7 +19,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from collections import deque
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from pathlib import Path
 from types import TracebackType
@@ -37,6 +37,7 @@ from mementic.schema import (
 )
 
 _MAX_STAMP_RETRIES = 10
+_IN_CHUNK_SIZE = 500
 
 
 def _insert_deprecation(conn: sqlite3.Connection, row: tuple) -> str:
@@ -717,6 +718,62 @@ class MementicStore:
         paths = self._paths_by_entry("constraint")
         return [self._row_to_constraint(r, paths) for r in rows]
 
+    def get_constraints_for_paths(
+        self,
+        paths: Sequence[str],
+    ) -> list[tuple[Constraint, list[str]]]:
+        """Return live constraints bound to any of ``paths``, each once.
+
+        A constraint matches when one of its stored paths equals a query
+        path or is an ancestor directory of it (``src`` matches
+        ``src/auth.py``, but ``src/auth`` does not match
+        ``src/auth_legacy.py``).
+
+        Args:
+            paths: Canonical repo-relative forward-slash paths, as produced
+                by ``canonical_entity_path`` (typically the files changed
+                in a diff). Duplicate paths collapse to one matched entry.
+
+        Returns:
+            ``(constraint, matched_query_paths)`` pairs ordered by
+            ``(created_at, id)``; ``matched_query_paths`` preserves the
+            input order of ``paths``.
+        """
+        owners: dict[str, set[str]] = {}
+        order: dict[str, int] = {}
+        for index, path in enumerate(dict.fromkeys(paths)):
+            order[path] = index
+            for candidate in (path, *self._ancestor_directories(path)):
+                owners.setdefault(candidate, set()).add(path)
+        if not owners:
+            return []
+        matched: dict[str, set[str]] = {}
+        conn = self._conn_or_raise()
+        candidates = list(owners)
+        for start in range(0, len(candidates), _IN_CHUNK_SIZE):
+            chunk = candidates[start : start + _IN_CHUNK_SIZE]
+            placeholders = ",".join("?" for _ in chunk)
+            rows = conn.execute(
+                "SELECT entry_id, path FROM entry_paths "
+                f"WHERE entry_type = 'constraint' AND path IN ({placeholders})",
+                chunk,
+            )
+            for row in rows:
+                matched.setdefault(row["entry_id"], set()).update(owners[row["path"]])
+        if not matched:
+            return []
+        paths_by_entry = self._paths_by_entry("constraint")
+        results: list[tuple[Constraint, list[str]]] = []
+        for row in self._query_entries("constraints", live_only=True):
+            if row["id"] not in matched:
+                continue
+            matched_query_paths = sorted(
+                matched[row["id"]],
+                key=lambda query_path: order[query_path],
+            )
+            results.append((self._row_to_constraint(row, paths_by_entry), matched_query_paths))
+        return results
+
     def get_decisions_for_path(
         self,
         path: str,
@@ -786,6 +843,8 @@ class MementicStore:
         This is the single definition of path-overlap semantics for the
         whole codebase: callers filtering on filesystem liveness pass a
         ``path_exists`` predicate here rather than re-filtering results.
+        ``get_constraints_for_paths`` is the batch variant that additionally
+        treats stored ancestor directories as matches.
 
         Args:
             entry_type: ``"decision"`` or ``"constraint"``.
@@ -824,6 +883,26 @@ class MementicStore:
                 continue
             matches.setdefault(r["entry_id"], set()).add(r["path"])
         return matches
+
+    def _ancestor_directories(self, path: str) -> list[str]:
+        """Return the ancestor directories of a relative ``path``.
+
+        Absolute and drive-prefixed paths yield no ancestors so callers
+        only match their exact stored path. The empty string and ``/`` are
+        never produced, keeping anchored component-boundary matching from
+        degenerating into a match-everything prefix.
+
+        Args:
+            path: Query path using forward-slash separators.
+
+        Returns:
+            Intermediate directory prefixes, shallowest first.
+        """
+        if not path or path.startswith(("/", "\\")) or (len(path) >= 2 and path[1] == ":"):
+            return []
+        parts = path.split("/")
+        ancestors = ["/".join(parts[:i]) for i in range(1, len(parts))]
+        return [a for a in ancestors if a and a != "/"]
 
     def get_all_paths(self) -> list[str]:
         """Return every distinct stored path, in insertion order."""
