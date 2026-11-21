@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import re
+import shutil
 from pathlib import Path
 
 import pytest
 
 from mementic.cli import _LAZY_COMMANDS
-from mementic.inject import END_MARKER, START_MARKER, load_template
+from mementic.inject import END_MARKER, START_MARKER, load_template, sync_enforcement
 
 _REPO = Path(__file__).resolve().parents[1]
 
@@ -92,6 +93,14 @@ def test_repository_agents_md_matches_template() -> None:
     start = text.index(START_MARKER)
     end = text.index(END_MARKER) + len(END_MARKER)
     assert text[start:end] == load_template().strip()
+
+
+def test_init_leaves_agents_md_byte_identical(tmp_path: Path) -> None:
+    """Re-syncing the shipped AGENTS.md changes no bytes, so init is a no-op."""
+    agents_md = tmp_path / "AGENTS.md"
+    shutil.copyfile(_REPO / "AGENTS.md", agents_md)
+    sync_enforcement(agents_md)
+    assert agents_md.read_bytes() == (_REPO / "AGENTS.md").read_bytes()
 
 
 def test_readme_drops_token_goal_framing() -> None:
