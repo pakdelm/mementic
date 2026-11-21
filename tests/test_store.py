@@ -899,9 +899,9 @@ class TestSuccessorLink:
         deprecations = [
             entry for entry in store.get_audit_entries(limit=10) if entry["action"] == "deprecate"
         ]
-        assert [json.loads(entry["details"])["replaced_by"] for entry in deprecations] == [
-            "new-b",
-            "new-a",
+        assert [json.loads(entry["details"]) for entry in deprecations] == [
+            {"description": "Title old", "reason": "", "replaced_by": "new-b"},
+            {"description": "Title old", "reason": "", "replaced_by": "new-a"},
         ]
 
     def test_get_successor_map_returns_current_incarnation_only(self, store: MementicStore) -> None:
@@ -960,3 +960,24 @@ class TestSuccessorLink:
         _add_constraint(store, "new-c", description="Newest rule")
         store.deprecate("decision", "old", replaced_by="new-c")
         assert store.get_successor_map("decision", ["old"]) == {"old": [("new-c", "Newest rule")]}
+
+    def test_get_successor_map_reports_newest_incarnation_successors(
+        self, store: MementicStore, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The stale successor of a prior incarnation must not leak through.
+
+        The store clock is frozen so the incarnation boundary is structural
+        rather than dependent on wall-clock advancement between writes.
+        """
+        monkeypatch.setattr("mementic.store.utc_now", lambda: "2024-01-15T00:00:00+00:00")
+        _add_decision(store, "old", created_at="2024-01-01T00:00:00Z")
+        _add_decision(store, "old-succ", created_at="2024-02-01T00:00:00Z")
+        _add_decision(store, "new-succ", created_at="2024-02-01T00:00:00Z")
+        stamp = store.deprecate("decision", "old", replaced_by="old-succ")["at"]
+        monkeypatch.setattr("mementic.store.utc_now", lambda: "2024-01-16T00:00:00+00:00")
+        _add_decision(store, "old", created_at=successor_timestamp(stamp))
+        store.deprecate("decision", "old", replaced_by="new-succ")
+
+        assert store.get_successor_map("decision", ["old"]) == {
+            "old": [("new-succ", "Title new-succ")]
+        }

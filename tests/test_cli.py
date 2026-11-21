@@ -1227,8 +1227,12 @@ class TestQuerySearch:
         output = self._search(store, "legacy")
 
         row = next(line for line in output.splitlines() if "old-rule" in line)
-        assert "first-rule" in row
-        assert "second-rule" in row
+        cells = [cell for cell in re.split(r"\s{2,}", row.strip("│ ").strip()) if cell]
+        assert cells == [
+            "old-rule",
+            "Old Rule",
+            "first-rule (First Rule), second-rule (Second Rule)",
+        ]
 
 
 class TestFormatSuccessorCell:
