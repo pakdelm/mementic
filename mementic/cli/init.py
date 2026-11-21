@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import typer
+
 from mementic.cli import context
 from mementic.console import (
     COLOR_DIM,
@@ -18,12 +20,19 @@ from mementic.paths import display_path
 from mementic.store import MementicStore
 
 
-def init() -> None:
+def init(
+    graph_only: bool = typer.Option(
+        False,
+        "--graph-only",
+        help="Create the graph and sync .gitignore without touching AGENTS.md",
+    ),
+) -> None:
     """Initialize mementic in the current directory.
 
     Creates the graph database when missing (idempotent), syncs the
     enforcement section in AGENTS.md, and ignores ``.mementic/`` in a Git
-    work tree. The graph is CWD-local: subdirectories do not see it.
+    work tree. ``--graph-only`` skips the AGENTS.md sync. The graph is
+    CWD-local: subdirectories do not see it.
     """
     paths = context.resolve_paths()
     created = False
@@ -34,7 +43,11 @@ def init() -> None:
 
     graph_label = display_path(paths.graph_db, paths.base_dir)
     agents_label = display_path(paths.agents_md, paths.base_dir)
-    enforcement_note = sync_enforcement(paths.agents_md, label=agents_label)
+    enforcement_note = (
+        "Skipped AGENTS.md enforcement block (--graph-only)."
+        if graph_only
+        else sync_enforcement(paths.agents_md, label=agents_label)
+    )
     gitignore_note = sync_gitignore(paths.base_dir, label=".gitignore")
     graph_state = "created" if created else "already exists"
 

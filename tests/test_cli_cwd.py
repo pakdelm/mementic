@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -400,3 +401,94 @@ def test_stored_outside_path_round_trips(tmp_path: Path, monkeypatch: pytest.Mon
     data = json.loads(result.stdout)
     assert data["file"] == outside.as_posix()
     assert [entry["id"] for entry in data["decisions"]] == ["outside-path"]
+
+
+def test_init_graph_only_creates_graph_without_agents_md(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    result = _run("init", "--graph-only")
+
+    assert result.exit_code == 0, _text(result)
+    assert (tmp_path / ".mementic" / "graph.db").exists()
+    assert not (tmp_path / "AGENTS.md").exists()
+
+
+def test_init_graph_only_leaves_existing_agents_md_byte_identical(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    agents_md = tmp_path / "AGENTS.md"
+    agents_md.write_text("# House rules\r\n\r\nKeep lines short.\r\n", encoding="utf-8", newline="")
+    before = agents_md.read_bytes()
+    monkeypatch.chdir(tmp_path)
+
+    result = _run("init", "--graph-only")
+
+    assert result.exit_code == 0, _text(result)
+    assert agents_md.read_bytes() == before
+
+
+def test_init_graph_only_keeps_block_from_plain_init(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    assert _run("init").exit_code == 0
+    agents_md = tmp_path / "AGENTS.md"
+    content = agents_md.read_text(encoding="utf-8")
+    head, _, rest = content.partition("<!-- mementic:start -->")
+    _, _, tail = rest.partition("<!-- mementic:end -->")
+    agents_md.write_text(
+        f"{head}<!-- mementic:start -->\n\nOutdated block.\n<!-- mementic:end -->{tail}",
+        encoding="utf-8",
+        newline="",
+    )
+    before = agents_md.read_bytes()
+
+    result = _run("init", "--graph-only")
+
+    assert result.exit_code == 0, _text(result)
+    assert agents_md.read_bytes() == before
+    assert "<!-- mementic:start -->" in before.decode("utf-8")
+
+
+def test_init_after_graph_only_adds_enforcement_block(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    assert _run("init", "--graph-only").exit_code == 0
+
+    result = _run("init")
+
+    assert result.exit_code == 0, _text(result)
+    content = (tmp_path / "AGENTS.md").read_text(encoding="utf-8")
+    assert "<!-- mementic:start -->" in content
+    assert "<!-- mementic:end -->" in content
+
+
+def test_init_graph_only_is_idempotent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    first = _run("init", "--graph-only")
+    second = _run("init", "--graph-only")
+
+    assert first.exit_code == 0, _text(first)
+    assert second.exit_code == 0, _text(second)
+    assert "(created)" in _text(first)
+    assert "(already exists)" in _text(second)
+    assert not (tmp_path / "AGENTS.md").exists()
+
+
+def test_init_graph_only_reports_skipped_enforcement(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
+    monkeypatch.chdir(tmp_path)
+
+    result = _run("init", "--graph-only")
+
+    output = _text(result)
+    assert result.exit_code == 0, output
+    assert "Skipped AGENTS.md enforcement block (--graph-only)." in output
+    assert ".mementic/graph.db" in output
+    assert ".mementic/" in (tmp_path / ".gitignore").read_text(encoding="utf-8")
