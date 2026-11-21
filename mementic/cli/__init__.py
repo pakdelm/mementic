@@ -22,6 +22,7 @@ _LAZY_COMMANDS: dict[str, tuple[str, str]] = {
     "history": ("mementic.cli.browse", "history"),
     "log": ("mementic.cli.log", "log"),
     "status": ("mementic.cli.status", "status"),
+    "check": ("mementic.cli.check", "check"),
 }
 
 _GROUP_ATTRS: frozenset[str] = frozenset({"query_app", "add_app", "list_app"})

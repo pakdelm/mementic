@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Spec 45: `mementic check [--decisions]` lists the live rules bound to the files changed in `git diff` (staged and working-tree changes, renames on both the old and new path, deletions, and directory bindings). It is informational: it lists matches, says that it does not verify the change, exits 0 when rules match, and has no `--exit-code` gate.
+
 ## [0.5.2] - 2026-10-31
 
 ### Added
