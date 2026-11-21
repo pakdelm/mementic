@@ -5,7 +5,7 @@ from __future__ import annotations
 from mementic.console import COLOR_ID, COLOR_SUCCESS, COLOR_WARN
 from mementic.entries import AddOutcome, EntryKind
 
-SUPERSEDED_HEADER = "Superseded By"
+SUPERSEDED_HEADER: str = "Superseded By"
 
 
 def ellipsize(value: str, limit: int) -> str:

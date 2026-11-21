@@ -1056,14 +1056,15 @@ def test_query_search_shows_successor_id_and_title(project_dir: Path) -> None:
 
 
 def test_query_search_plain_entry_has_no_successor_cell(project_dir: Path) -> None:
-    """A live search hit renders neither the successor header nor a missing label."""
+    """A live search hit renders only the ID and title columns."""
     _ok("add", "decision", "Plain Rule", "-r", "unique plaintext marker")
 
     output = _text(_ok("query", "search", "plaintext"))
 
-    assert "plain-rule" in output
-    assert "Superseded By" not in output
     assert "(missing)" not in output
+    row = next(line for line in output.splitlines() if "plain-rule" in line)
+    cells = [cell for cell in re.split(r"\s{2,}", row.strip("│ ").strip()) if cell]
+    assert cells == ["plain-rule", "Plain Rule"]
 
 
 def test_query_search_split_lists_both_successors(project_dir: Path) -> None:
