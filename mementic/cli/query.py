@@ -10,6 +10,7 @@ import json
 
 import typer
 
+from mementic import staleness
 from mementic.cli import context
 from mementic.context import (
     DEFAULT_EVOLUTION_MAX_TOKENS,
@@ -151,11 +152,11 @@ def file(
         if not canonical_path.endswith("/"):
             canonical_path += "/"
     with context.resolve_store(paths) as store:
-        constraints = store.get_constraints_for_path(
-            canonical_path, prefix=prefix, path_exists=paths.entity_exists
-        )
-        decisions = store.get_decisions_for_path(
-            canonical_path, prefix=prefix, path_exists=paths.entity_exists
+        constraints = store.get_constraints_for_path(canonical_path, prefix=prefix)
+        decisions = store.get_decisions_for_path(canonical_path, prefix=prefix)
+        bindings = store.get_path_bindings(canonical_path, prefix=prefix)
+        markers = staleness.markers_by_entry(
+            staleness.classify_bindings(bindings, resolve=paths.entity_path)
         )
 
     if json_output:
@@ -168,7 +169,10 @@ def file(
         evolution_text += "\n\n### Constraints\n"
         for constraint in constraints:
             entities = ", ".join(constraint.paths) if constraint.paths else "none"
-            evolution_text += f"- {constraint.description} (#{constraint.id}, bound: {entities})\n"
+            suffix = markers.get(constraint.id, "")
+            evolution_text += (
+                f"- {constraint.description} (#{constraint.id}, bound: {entities}){suffix}\n"
+            )
     typer.echo(
         f"[mementic: {len(constraints)} constraints, {len(decisions)} decisions | {canonical_path}]"
     )

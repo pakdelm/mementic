@@ -579,8 +579,6 @@ def test_query_file_rejects_nonpositive_max_tokens(project_dir: Path) -> None:
 
 
 def test_query_file_finds_seeded_entry_by_path(project_dir: Path) -> None:
-    # The file must exist on disk: dead paths are filtered lazily via a
-    # filesystem check at read time (Spec 29), no pre-query cleanup scans.
     source = project_dir / "src" / "foo.py"
     source.parent.mkdir(parents=True)
     source.write_text("x = 1", encoding="utf-8")
@@ -934,3 +932,76 @@ def test_add_constraint_records_content_hash(project_dir: Path) -> None:
     finally:
         store.close()
     assert [b.content_hash for b in bindings] == [hashlib.sha256(target.read_bytes()).hexdigest()]
+
+
+def _bind_constraint_to_existing_file(project_dir: Path) -> Path:
+    """Create src/auth.py, bind a constraint to it, and return the file path."""
+    target = project_dir / "src" / "auth.py"
+    target.parent.mkdir(parents=True)
+    target.write_bytes(b"def handler():\n    return 1\n")
+    _ok("add", "constraint", "Rules must hold", "-e", "src/auth.py")
+    return target
+
+
+def test_query_file_marks_changed_binding_stale(project_dir: Path) -> None:
+    target = _bind_constraint_to_existing_file(project_dir)
+    target.write_bytes(b"def handler():\n    return 2\n")
+    output = _text(_ok("query", "file", "src/auth.py", "--compact"))
+    assert (
+        "- Rules must hold (#rules-must-hold, bound: src/auth.py) [stale: src/auth.py changed]"
+        in output
+    )
+
+
+def test_query_file_marks_missing_binding_stale(project_dir: Path) -> None:
+    target = _bind_constraint_to_existing_file(project_dir)
+    target.unlink()
+    output = _text(_ok("query", "file", "src/auth.py", "--compact"))
+    assert "rules-must-hold" in output
+    assert (
+        "- Rules must hold (#rules-must-hold, bound: src/auth.py) [stale: src/auth.py missing]"
+        in output
+    )
+
+
+def test_query_file_unchanged_binding_has_no_marker(project_dir: Path) -> None:
+    _bind_constraint_to_existing_file(project_dir)
+    output = _text(_ok("query", "file", "src/auth.py", "--compact"))
+    assert "rules-must-hold" in output
+    assert "[stale:" not in output
+
+
+def test_query_file_directory_binding_has_no_marker(project_dir: Path) -> None:
+    """Directory bindings record no hash, so they never render a stale marker."""
+    (project_dir / "src" / "api").mkdir(parents=True)
+    _ok("add", "constraint", "Api rules apply", "-e", "src/api")
+    output = _text(_ok("query", "file", "src/api", "--compact"))
+    assert "api-rules-apply" in output
+    assert "[stale:" not in output
+
+
+def test_stale_binding_keeps_exit_code_zero(project_dir: Path) -> None:
+    target = _bind_constraint_to_existing_file(project_dir)
+    target.write_bytes(b"def handler():\n    return 3\n")
+    result = _run("query", "file", "src/auth.py", "--compact")
+    assert result.exit_code == 0
+
+
+def test_query_file_does_not_mark_decisions(project_dir: Path) -> None:
+    """Decision lines never carry a stale marker, even when their file changed."""
+    target = project_dir / "src" / "auth.py"
+    target.parent.mkdir(parents=True)
+    target.write_bytes(b"def handler():\n    return 1\n")
+    _ok(
+        "add",
+        "decision",
+        "Track Auth Flow",
+        "-r",
+        "Central middleware owns the auth handshake",
+        "-e",
+        "src/auth.py",
+    )
+    target.write_bytes(b"def handler():\n    return 2\n")
+    output = _text(_ok("query", "file", "src/auth.py", "--compact"))
+    assert "track-auth-flow" in output
+    assert "[stale:" not in output

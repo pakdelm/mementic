@@ -635,8 +635,6 @@ class TestQueryFileJson:
     ) -> None:
         """query file matches exactly by default; --prefix opts into prefixes."""
         monkeypatch.chdir(tmp_path)
-        # The matched file must exist on disk: dead paths are filtered by a
-        # filesystem check at read time.
         target = tmp_path / "src" / "io" / "handlers.py"
         target.parent.mkdir(parents=True)
         target.write_text("x = 1", encoding="utf-8")
@@ -655,10 +653,10 @@ class TestQueryFileJson:
         assert prefixed.exit_code == 0
         assert [d["id"] for d in json.loads(prefixed.stdout)["decisions"]] == ["io-decision"]
 
-    def test_query_file_dead_paths_filtered_by_filesystem_check(
+    def test_query_file_missing_binding_is_reported_not_dropped(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Paths whose files no longer exist are dropped lazily at read time."""
+        """A binding whose file is gone is reported instead of filtered out."""
         monkeypatch.chdir(tmp_path)
         ghost = "ghost.py"
         alive = tmp_path / "alive.py"
@@ -678,9 +676,12 @@ class TestQueryFileJson:
             result = runner.invoke(app, ["query", "file", ghost, "--json"])
             mixed = runner.invoke(app, ["query", "file", "alive.py", "--json"])
 
-        # Entry bound only to the dead path is filtered out entirely...
-        assert json.loads(result.stdout)["decisions"] == []
-        # ...while the entry with one surviving binding still matches.
+        # A decision bound only to the missing path is still reported...
+        assert [d["id"] for d in json.loads(result.stdout)["decisions"]] == [
+            "ghost-only",
+            "mixed",
+        ]
+        # ...and so is a decision bound to the missing path plus a live one.
         assert [d["id"] for d in json.loads(mixed.stdout)["decisions"]] == ["mixed"]
 
 
