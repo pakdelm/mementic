@@ -122,7 +122,7 @@ def test_add_help_lists_subcommands(subcommand: str) -> None:
     assert subcommand in _text(result)
 
 
-@pytest.mark.parametrize("subcommand", ["keywords", "file", "search", "stats"])
+@pytest.mark.parametrize("subcommand", ["keywords", "file", "files", "search", "stats"])
 def test_query_help_lists_subcommands(subcommand: str) -> None:
     result = _ok("query", "--help")
     assert subcommand in _text(result)
@@ -1007,3 +1007,238 @@ def test_query_file_does_not_mark_decisions(project_dir: Path) -> None:
     output = _text(_ok("query", "file", "src/auth.py", "--compact"))
     assert "track-auth-flow" in output
     assert "[stale:" not in output
+
+
+def _create_files(project_dir: Path, *names: str) -> None:
+    """Create placeholder ``src/<name>`` files so batch matches stay live."""
+    for name in names:
+        source = project_dir / "src" / name
+        source.parent.mkdir(parents=True, exist_ok=True)
+        source.write_text("x = 1", encoding="utf-8")
+
+
+def test_query_files_two_paths_merges_shared_rule_once(project_dir: Path) -> None:
+    """A rule bound to both paths renders once, naming both matches."""
+    _create_files(project_dir, "a.py", "b.py")
+    _ok(
+        "add",
+        "decision",
+        "Track Auth Flow",
+        "-r",
+        "Central middleware owns the auth handshake",
+        "-e",
+        "src/a.py",
+        "-e",
+        "src/b.py",
+    )
+    text = _text(_ok("query", "files", "src/a.py", "src/b.py", "--compact"))
+    assert text.count("(#track-auth-flow)") == 1
+    assert "(matched: src/a.py, src/b.py)" in text
+
+
+def test_query_files_ten_paths_returns_merged_pack(project_dir: Path) -> None:
+    """Ten paths produce one pack, one summary line, and every decision."""
+    names = [f"f{index}.py" for index in range(1, 11)]
+    _create_files(project_dir, *names)
+    for index in range(1, 11):
+        _ok(
+            "add",
+            "decision",
+            f"Track F{index}",
+            "-r",
+            f"Rationale for file number {index}",
+            "-e",
+            f"src/f{index}.py",
+        )
+    text = _text(_ok("query", "files", *(f"src/{name}" for name in names), "--compact"))
+    for index in range(1, 11):
+        assert f"(#track-f{index})" in text
+    assert "## Files queried (10)" in text
+    summary = [line for line in text.splitlines() if "[mementic:" in line]
+    assert len(summary) == 1
+    assert "10 decisions | 10 paths: src/f1.py, src/f2.py, src/f3.py (+7 more)]" in summary[0]
+
+
+def test_query_files_no_rule_path_reported(project_dir: Path) -> None:
+    """A batch path that matches nothing is listed under its own heading."""
+    _create_files(project_dir, "a.py", "other.py")
+    _ok(
+        "add",
+        "decision",
+        "Track Auth Flow",
+        "-r",
+        "Central middleware owns the auth handshake",
+        "-e",
+        "src/a.py",
+    )
+    result = _run("query", "files", "src/a.py", "src/other.py", "--compact")
+    assert result.exit_code == 0
+    _, unmatched_section = _text(result).split("### No rules matched", 1)
+    assert "- src/other.py" in unmatched_section
+
+
+def test_query_files_duplicate_path_counted_once(project_dir: Path) -> None:
+    """A repeated path collapses to one entry before the store is queried."""
+    _create_files(project_dir, "a.py")
+    _ok(
+        "add",
+        "decision",
+        "Track Auth Flow",
+        "-r",
+        "Central middleware owns the auth handshake",
+        "-e",
+        "src/a.py",
+    )
+    text = _text(_ok("query", "files", "src/a.py", "./src/a.py", "--compact"))
+    assert "## Files queried (1)" in text
+    assert text.count("1 path: src/a.py") == 1
+
+
+def test_query_files_prints_mementic_summary_line(project_dir: Path) -> None:
+    """The merged pack reports counts and paths in the single-path format."""
+    _create_files(project_dir, "a.py", "b.py")
+    _ok(
+        "add",
+        "decision",
+        "Track Auth Flow",
+        "-r",
+        "Central middleware owns the auth handshake",
+        "-e",
+        "src/a.py",
+        "-e",
+        "src/b.py",
+    )
+    text = _text(_ok("query", "files", "src/a.py", "src/b.py", "--compact"))
+    line = next((ln for ln in text.splitlines() if "[mementic:" in ln), None)
+    assert line is not None, f"no [mementic: ...] summary line in:\n{text}"
+    assert re.search(r"\d+ constraints, \d+ decisions \| 2 paths: src/a\.py, src/b\.py\]", line), (
+        f"batch summary line lacks compact format: {line}"
+    )
+
+
+def test_query_files_opens_store_once(
+    project_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Ten paths open the graph once instead of reopening it per path."""
+    from mementic.cli import context as cli_context
+    from mementic.paths import ProjectPaths
+
+    names = [f"f{index}.py" for index in range(1, 11)]
+    _create_files(project_dir, *names)
+    opens: list[int] = []
+    original = cli_context.resolve_store
+
+    def counting_resolve_store(paths: ProjectPaths | None = None) -> MementicStore:
+        opens.append(1)
+        return original(paths)
+
+    monkeypatch.setattr("mementic.cli.context.resolve_store", counting_resolve_store)
+    _ok("query", "files", *(f"src/{name}" for name in names), "--compact")
+    assert len(opens) == 1
+
+
+def test_query_files_rejects_foreign_graph_path(
+    project_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """One foreign path refuses the whole batch before any store opens."""
+    from mementic.cli import context as cli_context
+    from mementic.paths import ProjectPaths
+
+    _create_files(project_dir, "a.py")
+    sibling = project_dir / "repo-b"
+    sibling.mkdir()
+    monkeypatch.chdir(sibling)
+    _ok("init")
+    monkeypatch.chdir(project_dir)
+    opens: list[int] = []
+    original = cli_context.resolve_store
+
+    def counting_resolve_store(paths: ProjectPaths | None = None) -> MementicStore:
+        opens.append(1)
+        return original(paths)
+
+    monkeypatch.setattr("mementic.cli.context.resolve_store", counting_resolve_store)
+    result = _run("query", "files", "src/a.py", "repo-b/src/other.py")
+    assert result.exit_code == 1
+    text = _text(result)
+    assert "Run: cd" in text
+    assert "repo-b" in text
+    assert "[mementic:" not in text
+    assert opens == []
+
+
+def test_query_files_single_path_returns_merged_pack(project_dir: Path) -> None:
+    """One path is a valid batch and renders the merged-pack heading."""
+    _create_files(project_dir, "a.py")
+    _ok(
+        "add",
+        "decision",
+        "Track Auth Flow",
+        "-r",
+        "Central middleware owns the auth handshake",
+        "-e",
+        "src/a.py",
+    )
+    result = _run("query", "files", "src/a.py", "--compact")
+    assert result.exit_code == 0
+    assert "## Files queried (1)" in _text(result)
+
+
+def test_query_files_requires_at_least_one_path(project_dir: Path) -> None:
+    """The variadic argument is required, so an empty batch is a usage error."""
+    result = _run("query", "files")
+    assert result.exit_code == 2
+    assert "Missing argument" in _text(result)
+
+
+def test_query_files_rejects_nonpositive_max_tokens(
+    project_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """--max-tokens < 1 exits non-zero before opening the store."""
+    from mementic.cli import context as cli_context
+    from mementic.paths import ProjectPaths
+
+    opens: list[int] = []
+    original = cli_context.resolve_store
+
+    def counting_resolve_store(paths: ProjectPaths | None = None) -> MementicStore:
+        opens.append(1)
+        return original(paths)
+
+    monkeypatch.setattr("mementic.cli.context.resolve_store", counting_resolve_store)
+    result = _run("query", "files", "src/a.py", "--max-tokens", "0")
+    assert result.exit_code != 0
+    assert "--max-tokens" in _text(result)
+    assert opens == []
+
+
+def test_query_files_default_output_uses_panel(project_dir: Path) -> None:
+    """Without --compact the merged pack renders through the console helpers."""
+    _create_files(project_dir, "a.py", "b.py")
+    _ok(
+        "add",
+        "decision",
+        "Track Auth Flow",
+        "-r",
+        "Central middleware owns the auth handshake",
+        "-e",
+        "src/a.py",
+        "-e",
+        "src/b.py",
+    )
+    text = _text(_ok("query", "files", "src/a.py", "src/b.py"))
+    assert "Files: 2 paths" in text
+
+
+def test_query_files_marks_changed_binding_stale(project_dir: Path) -> None:
+    """A stale binding keeps its marker after batching, at the line end."""
+    target = _bind_constraint_to_existing_file(project_dir)
+    target.write_bytes(b"def handler():\n    return 2\n")
+    output = _text(_ok("query", "files", "src/auth.py", "--compact"))
+    assert (
+        "- Rules must hold (#rules-must-hold, bound: src/auth.py) (matched: src/auth.py)"
+        " [stale: src/auth.py changed]"
+    ) in output
