@@ -258,13 +258,39 @@ def _cwd_relative_display(path: Path, base_dir: Path) -> str:
         return path.as_posix()
 
 
+def _resolved_for_compare(path: Path) -> Path:
+    """Return ``path`` with symlinks resolved for the ownership comparison.
+
+    ``resolve_base_dir`` returns a resolved directory, while a target is only
+    normalized when it is canonicalized. Resolving both sides of the ownership
+    check prevents a path reached through a symlink alias -- ``/tmp`` links to
+    ``/private/tmp`` on macOS, and project directories are sometimes symlinked
+    -- from being mistaken for a foreign graph that is really the current one.
+    The original lexical path is still used for existence checks and for the
+    returned key; only the stop condition compares resolved paths. ``path`` is
+    returned unchanged when resolution fails, for example on a symlink loop.
+
+    Args:
+        path: Path to resolve.
+
+    Returns:
+        The resolved path, or ``path`` when it cannot be resolved.
+    """
+    try:
+        return path.resolve()
+    except (OSError, RuntimeError):
+        return path
+
+
 def _owning_graph_dir(absolute: Path, base_dir: Path) -> Path | None:
     """Return the nearest directory around ``absolute`` that owns a graph.
 
     The walk starts at the target itself, so a directory input is checked as a
-    directory, and moves to its parents. It stops before ``base_dir`` and its
-    ancestors: paths owned by the current graph are never refused, and an
-    uninitialized sibling cannot inherit a graph from a parent directory. A
+    directory, and moves to its parents up to the filesystem root. The nearest
+    directory whose ``.mementic/graph.db`` exists owns the path, and it is the
+    current graph only when it is ``base_dir`` itself. A path owned by any
+    other graph -- a sibling, a nested graph, or a graph in an ancestor of
+    ``base_dir`` -- is foreign. A path that no directory owns is left alone. A
     ``.mementic`` directory without ``graph.db`` does not own anything.
 
     Args:
@@ -272,12 +298,15 @@ def _owning_graph_dir(absolute: Path, base_dir: Path) -> Path | None:
         base_dir: Directory that owns the current invocation's graph.
 
     Returns:
-        The nearest directory whose ``.mementic/graph.db`` exists, or ``None``
-        when no directory between the target and ``base_dir`` owns a graph.
+        The nearest directory whose ``.mementic/graph.db`` exists and is not
+        ``base_dir``, or ``None`` when no other directory on the path owns a
+        graph.
     """
+    resolved_base = _resolved_for_compare(base_dir)
     candidate = absolute
     while True:
-        if candidate == base_dir or base_dir.is_relative_to(candidate):
+        resolved_candidate = _resolved_for_compare(candidate)
+        if resolved_candidate == resolved_base:
             return None
         if graph_db_path(candidate).exists():
             return candidate
