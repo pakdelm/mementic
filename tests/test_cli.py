@@ -1283,6 +1283,48 @@ class TestQuerySearch:
             ["ID", "Description", "Superseded By"],
         ]
 
+    def test_query_search_live_row_keeps_blank_successor_cell_in_a_successor_section(
+        self,
+    ) -> None:
+        """A live match in a successor-bearing section renders a padding-only third cell.
+
+        The section gains ``Superseded By`` because another match has a successor,
+        so the live row must still supply a third cell for the table to render.
+        The row shape is pinned here: the blank cell contributes no populated
+        cell and no ``(missing)`` placeholder.
+        """
+        store = _make_store()
+        _seed_decision(
+            store,
+            "old-rule",
+            title="Old Rule",
+            rationale="shared migration marker",
+        )
+        _seed_decision(
+            store,
+            "new-rule",
+            title="New Rule",
+            rationale="replacement",
+            created_at="2024-02-01T00:00:00Z",
+        )
+        _seed_decision(
+            store,
+            "live-rule",
+            title="Live Rule",
+            rationale="shared migration marker",
+        )
+        store.deprecate("decision", "old-rule", reason="moved", replaced_by="new-rule")
+
+        output = self._search(store, "migration")
+
+        old_row = next(line for line in output.splitlines() if "old-rule" in line)
+        old_cells = [cell for cell in re.split(r"\s{2,}", old_row.strip("│ ").strip()) if cell]
+        live_row = next(line for line in output.splitlines() if "live-rule" in line)
+        live_cells = [cell for cell in re.split(r"\s{2,}", live_row.strip("│ ").strip()) if cell]
+        assert old_cells == ["old-rule", "Old Rule", "new-rule (New Rule)"]
+        assert live_cells == ["live-rule", "Live Rule"]
+        assert "(missing)" not in output
+
 
 class TestFormatSuccessorCell:
     """Rendering rules for the successor table cell."""
