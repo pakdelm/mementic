@@ -1235,13 +1235,13 @@ class TestQuerySearch:
         ]
 
     def test_query_search_adds_successor_column_only_where_a_successor_exists(self) -> None:
-        """Pins the per-section column decision (query-search-successor-column-keys-off).
+        """Pins that the Superseded By column is added per section, never globally.
 
         ``query search`` builds the decisions table before the constraints
         table and adds ``Superseded By`` only to a section that has a
         successor. Headers are recorded at construction, so an erroneously
-        added blank column is caught even though Rich would render it at zero
-        width and the stripped row text would look unchanged.
+        added blank column is caught even though it would render as a
+        padding-only column and the stripped row text would look unchanged.
         """
         from rich.table import Table as RichTable
 
