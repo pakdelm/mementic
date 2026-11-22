@@ -3,8 +3,9 @@
 The command tests drive the real Typer app through ``typer.testing.CliRunner``
 against a temporary Git repository that owns its own ``.mementic/graph.db``.
 The command reads the process working directory, so each test chdirs into
-the fixture repository before invoking the CLI. The enforcement-template test
-reads the packaged block and needs no repository.
+the fixture repository before invoking the CLI; the missing-graph and
+non-work-tree error tests use a graph-less repository or a plain directory.
+The enforcement-template test reads the packaged block and needs no repository.
 """
 
 from __future__ import annotations
@@ -466,6 +467,10 @@ def test_enforcement_template_names_diff_time_check() -> None:
     assert "mementic check --base" in template
     assert "does not verify" in template
     assert re.findall(r"(?m)^(\d+)\.", template) == ["1", "2", "3", "4"]
+    step3 = template.index("3. **Validate.**")
+    step4 = template.index("4. **Record inline.**")
+    check_sentence = template.index("mementic check --base")
+    assert step3 < check_sentence < step4
 
 
 def test_check_base_lists_rules_for_committed_change(
@@ -537,6 +542,27 @@ def test_check_base_combines_with_decisions_flag(
 
     assert "migrations-first" in output
     assert "Adopt Postgres" in output
+
+
+def test_check_lists_rules_for_path_owned_by_nested_graph(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A path inside an initialized sub-repository still lists the parent rule."""
+    repo = _repo(tmp_path, monkeypatch)
+    _add_rule("Nested sources stay importable", "sub", rule_id="nested-importable")
+    sub = repo / "sub"
+    sub.mkdir()
+    monkeypatch.chdir(sub)
+    _ok("init")
+    monkeypatch.chdir(repo)
+    _git(repo, "checkout", "-q", "-b", "feature")
+    _commit(repo, "sub/a.py", "x = 1\n")
+
+    output = _text(_ok("check", "--base", "main"))
+
+    assert "nested-importable" in output
+    assert "sub/a.py" in output
+    assert "Traceback" not in output
 
 
 def test_check_rejects_exit_code_flag(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

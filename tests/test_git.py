@@ -202,6 +202,18 @@ def test_changed_files_with_base_includes_committed_change(tmp_path: Path) -> No
     assert changed_files(repo, base="main") == [ChangedFile(status="M", path="base.txt")]
 
 
+def test_changed_files_with_base_reports_committed_rename(tmp_path: Path) -> None:
+    """A rename committed on the branch is still reported against a base."""
+    repo = _main_repo(tmp_path)
+    _git(repo, "checkout", "-q", "-b", "feature")
+    _git(repo, "mv", "base.txt", "renamed.txt")
+    _git(repo, "commit", "-q", "-m", "rename")
+
+    assert changed_files(repo, base="main") == [
+        ChangedFile(status="R", path="renamed.txt", previous_path="base.txt")
+    ]
+
+
 def test_changed_files_with_base_keeps_uncommitted_edits(tmp_path: Path) -> None:
     """A committed edit and a dirty edit are one change; the untracked file stays out."""
     repo = _main_repo(tmp_path)

@@ -15,7 +15,7 @@ from mementic.console import (
     text,
 )
 from mementic.git import ChangedFile, GitDiffError, NotAWorkTreeError, changed_files
-from mementic.paths import ProjectPaths
+from mementic.paths import ForeignGraphPathError, ProjectPaths
 
 _SUMMARY_FORMAT: str = "[mementic: {rules} constraints | {changed}]"
 _NO_CHANGED_FILES: str = "no changed files"
@@ -25,6 +25,26 @@ _NOT_A_WORK_TREE: str = (
     "Run 'mementic check' from the repository root, or use "
     "'mementic query file <path>'."
 )
+
+
+def _query_path(paths: ProjectPaths, reported: str) -> str:
+    """Return the canonical query path for one Git-reported path.
+
+    A path inside an initialized nested repository belongs to that graph, so
+    canonicalization refuses it; the listing stays informational, so the path
+    Git printed is used unchanged instead.
+
+    Args:
+        paths: Resolved paths anchoring the graph.
+        reported: Repo-relative POSIX path as printed by Git.
+
+    Returns:
+        The canonical entity path, or ``reported`` for a nested graph's path.
+    """
+    try:
+        return paths.canonical_entity_path(reported)
+    except ForeignGraphPathError:
+        return reported
 
 
 def _change_labels(
@@ -47,11 +67,11 @@ def _change_labels(
     labels: dict[str, str] = {}
     seen: set[str] = set()
     for change in changes:
-        current = paths.canonical_entity_path(change.path)
+        current = _query_path(paths, change.path)
         label = current
         candidates = [current]
         if change.previous_path is not None:
-            previous = paths.canonical_entity_path(change.previous_path)
+            previous = _query_path(paths, change.previous_path)
             label = f"{current} (renamed from {previous})"
             candidates.insert(0, previous)
         for candidate in candidates:
