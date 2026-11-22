@@ -277,8 +277,8 @@ If any of that sounds like fun to fix, contributions are welcome. See
 
 ## Storage
 
-Everything lives in one SQLite file at `.mementic/graph.db`, schema v5
-(`PRAGMA user_version = 5`). Five flat tables, no ORM:
+Everything lives in one SQLite file at `.mementic/graph.db`, schema v6
+(`PRAGMA user_version = 6`). Five flat tables, no ORM:
 
 | Table | Holds |
 |---|---|

@@ -47,7 +47,7 @@ def _strip_ansi(text: str) -> str:
 
 
 def _make_store() -> MementicStore:
-    """Build an empty in-memory store (schema v5)."""
+    """Build an empty in-memory store (schema v6)."""
     store = MementicStore(db_path=":memory:")
     _open_stores.append(store)
     return store
