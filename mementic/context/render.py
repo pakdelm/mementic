@@ -1,4 +1,4 @@
-"""Evolution, JSON, and file-history renderers."""
+"""Evolution, history, merged-pack, and JSON renderers."""
 
 from __future__ import annotations
 
