@@ -13,16 +13,22 @@ from mementic.inject import END_MARKER, START_MARKER, load_template, sync_enforc
 
 _REPO = Path(__file__).resolve().parents[1]
 
-_COMMAND_RE = re.compile(r"\bmementic\s+([a-z][a-z0-9-]*)")
+_COMMAND_RE = re.compile(r"\bmementic[ \t]+([a-z][a-z0-9-]*)")
 _CODE_SPAN_RE = re.compile(r"`([^`\n]+)`")
+_FENCED_BLOCK_RE = re.compile(r"^```([^\n]*)\n(.*?)^```[ \t]*$", re.MULTILINE | re.DOTALL)
+_QUOTED_DOC_LANGUAGES = {"markdown", "md"}
 
 
 def named_commands(text: str) -> set[str]:
-    """Return the top-level ``mementic`` subcommands named inside inline code spans.
+    """Return the top-level ``mementic`` subcommands named inside code spans or fences.
 
-    Only inline code spans are scanned, so prose such as "If mementic fails" and
-    placeholders such as ``uv run mementic <command>`` and ``[mementic: <id>]``
-    cannot produce a false match.
+    Inline code spans are scanned everywhere. Shell and console fences are
+    scanned too, because a quick start example puts its commands in a fence.
+    Markdown fences are skipped: they only quote an instruction file whose
+    commands already appear as inline code spans. Prose is never scanned, so
+    sentences such as "If mementic fails" and placeholders such as
+    ``uv run mementic <command>`` and ``[mementic: <id>]`` cannot produce a
+    false match.
 
     Args:
         text: Document text, in Markdown.
@@ -33,6 +39,10 @@ def named_commands(text: str) -> set[str]:
     commands: set[str] = set()
     for span in _CODE_SPAN_RE.findall(text):
         commands.update(_COMMAND_RE.findall(span))
+    for info, body in _FENCED_BLOCK_RE.findall(text):
+        if info.strip().lower() in _QUOTED_DOC_LANGUAGES:
+            continue
+        commands.update(_COMMAND_RE.findall(body))
     return commands
 
 
@@ -53,6 +63,18 @@ def test_parser_flags_unregistered_command() -> None:
 def test_parser_detects_unknown_command_name() -> None:
     """Parsing is independent of the registry: any subcommand token is returned."""
     assert named_commands("`mementic definitely-not-a-command`") == {"definitely-not-a-command"}
+
+
+def test_parser_scans_fenced_blocks() -> None:
+    """A shell fence is parsed, so a quick start example cannot hide a bad command."""
+    fenced = "Intro.\n\n```bash\nmementic capture --agent opencode\n```\n"
+    assert named_commands(fenced) == {"capture"}
+
+
+def test_parser_skips_markdown_quoted_documents() -> None:
+    """A Markdown fence quotes prose, so its words are not read as subcommands."""
+    quoted = "```markdown\nRun every mementic command from that directory.\n```\n"
+    assert named_commands(quoted) == set()
 
 
 @pytest.mark.parametrize(
