@@ -7,8 +7,8 @@ starts working. Your project's decisions and constraints live in a local graph
 you can query, so the agent reads what the project decided instead of
 rediscovering it every session.
 
-Without it, agents reread the same ADRs and instruction files before every task.
-That burns tokens, and every agent repeats the same work.
+Without it, agents reread the same ADRs and instruction files before every task,
+and every agent repeats the same work.
 
 What it does:
 
@@ -174,8 +174,9 @@ file.
 This project keeps its architectural rules in a local graph (`.mementic/`).
 Run every mementic command from the directory that contains `.mementic`. If
 your CWD is a subdirectory, `cd` to that directory first. Entity paths are
-relative to it: `src/auth.py` in a single repo project,
-or `repo-a/src/auth.py` from a multi repo workspace root.
+relative to that directory, which is the repository that owns the graph:
+`src/auth.py` in a single repo project and in each repository of a multi repo
+workspace, since every repository keeps its own graph.
 
 These steps apply to code work: reading, searching, editing, or making
 architectural claims. Messages that trigger none of those (acknowledgements,
@@ -202,43 +203,6 @@ not the code you are about to edit. If mementic fails, state the error and
 fall back to targeted reads. Query again at task boundaries and after graph
 writes.
 ```
-
-## Why I built this
-
-I ran two real implementation tasks in OpenCode, same tasks, same quality bar
-(tests, lint, typecheck), with and without mementic. The graph at the time held
-330 decisions and 215 constraints.
-
-Without mementic the agent kept rereading the same ADRs and instruction files,
-and spawned subagents that each did the same discovery work. With mementic the
-context pack answered "what rules apply here?" before the agent started, so it
-went straight to the work.
-
-A single module change:
-
-| Metric | Without | With |
-|---|---|---|
-| Unique files read | 9 | 4 |
-| Total file reads | 19 | 14 |
-| LLM tokens | 106K | 59K |
-| Subagents spawned | 1 | 0 |
-
-A cross cutting feature spanning several modules:
-
-| Metric | Without | With |
-|---|---|---|
-| Unique files read | 20 | 14 |
-| Total file reads | 120 | 59 |
-| LLM tokens | 324K | 149K |
-| Subagents spawned | 7 | 2 |
-
-Across both: 51% fewer tokens, 75% fewer subagents, 47% fewer file reads.
-
-These numbers are a one-off anecdote, not a reproducible benchmark: Windows 11,
-Python 3.13, October 2026, two tasks run in OpenCode against my graph (330
-decisions, 215 constraints). Treat them as a signal rather than a promise. How
-much you gain depends on how many architectural rules your project actually has
-written down.
 
 ## Limitations
 

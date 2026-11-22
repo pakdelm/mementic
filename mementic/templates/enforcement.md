@@ -4,8 +4,9 @@
 This project keeps its architectural rules in a local graph (`.mementic/`).
 Run every mementic command from the directory that contains `.mementic`; if
 your CWD is a subdirectory, `cd` to that directory first. Entity paths are
-relative to it: `src/auth.py` in a single-repo project,
-or `repo-a/src/auth.py` from a multi-repo workspace root.
+relative to that directory, which is the repository that owns the graph:
+`src/auth.py` in a single-repo project and in each repository of a multi-repo
+workspace, since every repository keeps its own graph.
 
 These steps apply to code work — reading, searching, editing, or making
 architectural claims. Messages that trigger none of those (acknowledgements,
