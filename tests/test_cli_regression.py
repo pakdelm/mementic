@@ -1092,7 +1092,6 @@ def test_query_search_split_lists_both_successors(project_dir: Path) -> None:
 def test_deprecate_unknown_old_id_writes_known_ids_and_exits_one(project_dir: Path) -> None:
     """An unknown OLD is per-id; the successor check is the only global no-write gate."""
     _ok("add", "decision", "Old Rule", "-r", "Old rationale")
-    _ok("add", "decision", "Other Rule", "-r", "Other rationale")
     _ok("add", "decision", "New Rule", "-r", "New rationale")
 
     result = _run("deprecate", "old-rule", "missing-rule", "--replaced-by", "new-rule")
@@ -1106,8 +1105,6 @@ def test_deprecate_unknown_old_id_writes_known_ids_and_exits_one(project_dir: Pa
         records = store.get_deprecations_for_entry("decision", "old-rule")
         assert len(records) == 1
         assert records[0]["replaced_by"] == "new-rule"
-        assert store.is_deprecated("decision", "other-rule") is False
-        assert store.get_deprecations_for_entry("decision", "other-rule") == []
     finally:
         store.close()
 

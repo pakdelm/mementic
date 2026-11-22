@@ -1234,6 +1234,55 @@ class TestQuerySearch:
             "first-rule (First Rule), second-rule (Second Rule)",
         ]
 
+    def test_query_search_adds_successor_column_only_where_a_successor_exists(self) -> None:
+        """Pins the per-section column decision (query-search-successor-column-keys-off).
+
+        ``query search`` builds the decisions table before the constraints
+        table and adds ``Superseded By`` only to a section that has a
+        successor. Headers are recorded at construction, so an erroneously
+        added blank column is caught even though Rich would render it at zero
+        width and the stripped row text would look unchanged.
+        """
+        from rich.table import Table as RichTable
+
+        from mementic.console import table as build_table
+
+        store = _make_store()
+        _seed_decision(
+            store,
+            "auth-decision",
+            title="Auth Decision",
+            rationale="Session authentication for every API",
+        )
+        _seed_decision(
+            store,
+            "new-rule",
+            title="New Rule",
+            rationale="Modern replacement",
+            created_at="2024-02-01T00:00:00Z",
+        )
+        _seed_constraint(
+            store,
+            "legacy-constraint",
+            description="Legacy Constraint requires basic authentication",
+        )
+        store.deprecate("constraint", "legacy-constraint", reason="moved", replaced_by="new-rule")
+
+        created: list[RichTable] = []
+
+        def recording_table(**kwargs: object) -> RichTable:
+            rich_table = build_table(**kwargs)
+            created.append(rich_table)
+            return rich_table
+
+        with patch("mementic.console.table", recording_table):
+            self._search(store, "authentication")
+
+        assert [[column.header for column in rich_table.columns] for rich_table in created] == [
+            ["ID", "Title"],
+            ["ID", "Description", "Superseded By"],
+        ]
+
 
 class TestFormatSuccessorCell:
     """Rendering rules for the successor table cell."""

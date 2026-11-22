@@ -297,6 +297,7 @@ def test_deprecate_many_records_constraint_successor(store: MementicStore) -> No
     )
 
     assert [result.outcome for result in results] == [DeprecateOutcome.DEPRECATED]
+    assert results[0].replaced_by == "new-rule"
     records = store.get_deprecations_for_entry("constraint", "services-must-be-stateless")
     assert len(records) == 1
     assert records[0]["replaced_by"] == "new-rule"

@@ -966,15 +966,18 @@ class TestSuccessorLink:
     ) -> None:
         """The stale successor of a prior incarnation must not leak through.
 
-        The store clock is frozen so the incarnation boundary is structural
-        rather than dependent on wall-clock advancement between writes.
+        ``successor_timestamp`` places the re-added incarnation one microsecond
+        past its tombstone, making liveness structural. Freezing the clock keeps
+        both tombstone stamps and their ordering deterministic.
         """
-        monkeypatch.setattr("mementic.store.utc_now", lambda: "2024-01-15T00:00:00+00:00")
+        import mementic.store as store_mod
+
+        monkeypatch.setattr(store_mod, "utc_now", lambda: "2024-01-15T00:00:00+00:00")
         _add_decision(store, "old", created_at="2024-01-01T00:00:00Z")
         _add_decision(store, "old-succ", created_at="2024-02-01T00:00:00Z")
         _add_decision(store, "new-succ", created_at="2024-02-01T00:00:00Z")
         stamp = store.deprecate("decision", "old", replaced_by="old-succ")["at"]
-        monkeypatch.setattr("mementic.store.utc_now", lambda: "2024-01-16T00:00:00+00:00")
+        monkeypatch.setattr(store_mod, "utc_now", lambda: "2024-01-16T00:00:00+00:00")
         _add_decision(store, "old", created_at=successor_timestamp(stamp))
         store.deprecate("decision", "old", replaced_by="new-succ")
 
