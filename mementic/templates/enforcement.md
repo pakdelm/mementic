@@ -25,7 +25,10 @@ ops commands, meta discussion) need no query.
    exploration reads too. No read-only exceptions. Pass file paths; `:line` and
    `:symbol` suffixes are accepted but discarded.
 3. **Validate.** Do not write code that violates an active constraint. Cite
-   every entity you apply or reject as `[mementic: <id>]`.
+   every entity you apply or reject as `[mementic: <id>]`. Before you report a
+   change done, run `mementic check --base origin/main` (or the branch's base
+   ref): it lists the live rules the diff touches, and does not verify the
+   change.
 4. **Record inline.** When you make a decision or establish a rule, run
    `mementic add decision TITLE -r "..."` or
    `mementic add constraint DESC -e PATH` immediately — no gate. Deprecate

@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Spec 45: `mementic check [--decisions]` lists the live rules bound to the files changed in `git diff` (staged and working-tree changes, renames on both the old and new path, deletions, and directory bindings). It is informational: it lists matches, says that it does not verify the change, exits 0 when rules match, and has no `--exit-code` gate.
+- Spec 45: `mementic check [--decisions]` lists the live rules bound to the files changed in `git diff` (staged and working-tree changes, renames on both the old and new path, deletions, and directory bindings). It is informational: it lists matches, says that it does not verify the change, exits 0 when rules match, and has no `--exit-code` gate. `--base REF` diffs the working tree against the merge-base with REF, so work committed on the branch is listed too; and the AGENTS.md enforcement block now tells agents to run `mementic check --base <base ref>` before reporting a change done (step 3, so the block keeps its four steps).
 
 ## [0.5.2] - 2026-10-31
 

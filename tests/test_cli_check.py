@@ -1,9 +1,10 @@
 """End-to-end tests for the `mementic check` command.
 
-Every test drives the real Typer app through ``typer.testing.CliRunner``
+The command tests drive the real Typer app through ``typer.testing.CliRunner``
 against a temporary Git repository that owns its own ``.mementic/graph.db``.
 The command reads the process working directory, so each test chdirs into
-the fixture repository before invoking the CLI.
+the fixture repository before invoking the CLI. The enforcement-template test
+reads the packaged block and needs no repository.
 """
 
 from __future__ import annotations
@@ -16,6 +17,7 @@ import pytest
 from typer.testing import CliRunner, Result
 
 from mementic.cli import app
+from mementic.inject import load_template
 
 runner = CliRunner()
 
@@ -455,6 +457,15 @@ def test_check_help_documents_base_flag(tmp_path: Path, monkeypatch: pytest.Monk
     assert "--base" in output
     assert "merge-base" in output
     assert "default is uncommitted changes" in output
+
+
+def test_enforcement_template_names_diff_time_check() -> None:
+    """The block tells agents to run the diff-time check before reporting done."""
+    template = load_template()
+
+    assert "mementic check --base" in template
+    assert "does not verify" in template
+    assert re.findall(r"(?m)^(\d+)\.", template) == ["1", "2", "3", "4"]
 
 
 def test_check_base_lists_rules_for_committed_change(

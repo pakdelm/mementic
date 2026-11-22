@@ -203,7 +203,7 @@ def test_changed_files_with_base_includes_committed_change(tmp_path: Path) -> No
 
 
 def test_changed_files_with_base_keeps_uncommitted_edits(tmp_path: Path) -> None:
-    """Committed branch work and a dirty edit collapse into one change."""
+    """A committed edit and a dirty edit are one change; the untracked file stays out."""
     repo = _main_repo(tmp_path)
     _git(repo, "checkout", "-q", "-b", "feature")
     _commit_change(repo, "base.txt", "committed on branch\n")
