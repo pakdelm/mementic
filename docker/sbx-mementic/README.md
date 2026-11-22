@@ -14,28 +14,30 @@ adds mementic.
 
 The kit image is not published; `sbx` builds it on demand from this directory.
 Pass the directory from your mementic checkout as `--kit` and run `sbx` from the
-workspace root — the directory that should own `.mementic/`:
+repository that owns the graph:
 
 ```sh
 sbx run docker.io/docker/sbx-kit-shell:1.0.0 \
   --kit /path/to/mementic/docker/sbx-mementic --name mementic
 ```
 
-Inside the sandbox, initialize the graph once:
+Inside the sandbox, initialize each repository that needs a graph:
 
 ```sh
 mementic init
 mementic query keywords auth session
 ```
 
-The graph lives at `<workspace>/.mementic/graph.db` and persists on the host.
+Each graph lives at `<repo>/.mementic/graph.db` and persists on the host.
 Use direct mode, not `--clone`: a clone breaks graph persistence because the
 agent edits the clone while the graph stays in the original workspace.
 
 The mixin does not set a workspace-root variable or change the agent's working
-directory. The primary workspace is the scope: run mementic from the directory
-that owns `.mementic`. If the agent starts in a child repository, that child has
-no graph until it is initialized there.
+directory. Each repository owns its graph: run mementic from the repository that
+owns the file. Passing a path from another repository is refused with an error
+naming the owning graph and the command to run. Repositories that receive the
+enforcement block another way, from a parent folder, a shared instruction file,
+or a hand-maintained `AGENTS.md`, can run `mementic init --graph-only`.
 
 ## What is in this directory
 
