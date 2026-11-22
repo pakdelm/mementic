@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 import typer
@@ -36,8 +36,6 @@ class _FileBatch:
 def _collect(
     store: MementicStore,
     canonical_paths: Sequence[str],
-    *,
-    path_exists: Callable[[str], bool],
 ) -> _FileBatch:
     """Collect one merged match set from a single open store.
 
@@ -45,23 +43,27 @@ def _collect(
     and the live entry tables are read once each, so the cost of a batch grows
     with the number of paths and not with the number of store opens.
 
+    Bindings are matched with no liveness filter, giving exact-match parity
+    with the single-path command: a rule bound to a file that changed or went
+    missing stays in the pack and keeps its stale marker instead of being
+    dropped, so both commands report the same rule for the same binding.
+
     Args:
         store: Open store the batch reads from.
         canonical_paths: Unique canonical paths, in argument order.
-        path_exists: Liveness predicate; matched paths failing it are dropped,
-            which also keeps dead bindings out of the merged pack.
 
     Returns:
         Merged matches, with matched-path lists in argument order and only
-        live entries present. ``unmatched`` is computed after liveness
-        filtering, so a path whose only matches are deprecated is unmatched.
+        live entries present. ``unmatched`` holds the queried paths no live
+        entry is bound to; a path whose only bindings are deprecated counts
+        as unmatched.
     """
     decision_matches: dict[str, list[str]] = {}
     constraint_matches: dict[str, list[str]] = {}
     for path in canonical_paths:
-        for entry_id in store.get_path_matches("decision", path, path_exists=path_exists):
+        for entry_id in store.get_path_matches("decision", path):
             decision_matches.setdefault(entry_id, []).append(path)
-        for entry_id in store.get_path_matches("constraint", path, path_exists=path_exists):
+        for entry_id in store.get_path_matches("constraint", path):
             constraint_matches.setdefault(entry_id, []).append(path)
 
     decisions = [
@@ -154,7 +156,7 @@ def files(
     project_paths = context.resolve_paths()
     canonical_paths = _unique_canonical_paths(paths, project_paths)
     with context.resolve_store(project_paths) as store:
-        batch = _collect(store, canonical_paths, path_exists=project_paths.entity_exists)
+        batch = _collect(store, canonical_paths)
         bindings = [
             binding for path in canonical_paths for binding in store.get_path_bindings(path)
         ]

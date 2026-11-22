@@ -1295,3 +1295,38 @@ def test_query_files_marks_changed_binding_stale(project_dir: Path) -> None:
         "- Rules must hold (#rules-must-hold, bound: src/auth.py) (matched: src/auth.py)"
         " [stale: src/auth.py changed]"
     ) in output
+
+
+def test_query_files_missing_binding_keeps_stale_marker(project_dir: Path) -> None:
+    """A deleted bound file keeps its rule and marker, agreeing with query file."""
+    target = _bind_constraint_to_existing_file(project_dir)
+    target.unlink()
+    single = _text(_ok("query", "file", "src/auth.py", "--compact"))
+    batch = _text(_ok("query", "files", "src/auth.py", "--compact"))
+    for output in (single, batch):
+        assert "[stale: src/auth.py missing]" in output
+    assert "rules-must-hold" in batch
+    assert "### No rules matched" not in batch
+
+
+def test_query_files_rule_bound_to_directory_and_files_appears_once(project_dir: Path) -> None:
+    """A rule bound to a directory and two files renders once with both matches."""
+    _create_files(project_dir, "a.py", "b.py")
+    _ok(
+        "add",
+        "decision",
+        "Dir Rule",
+        "-r",
+        "Applies to the tree and both files",
+        "-e",
+        "src",
+        "-e",
+        "src/a.py",
+        "-e",
+        "src/b.py",
+    )
+    text = _text(_ok("query", "files", "src/a.py", "src/b.py", "--compact"))
+    assert text.count("(#dir-rule)") == 1
+    assert "(matched: src/a.py, src/b.py)" in text
+    assert "\n- src\n" not in text
+    assert "2 paths" in text
