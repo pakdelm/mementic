@@ -481,6 +481,22 @@ def test_status_lists_entry_counts(project_dir: Path) -> None:
     assert "1 decisions" in output
 
 
+def test_status_reports_binding_staleness_counts(project_dir: Path) -> None:
+    """The Graph hint counts changed and missing bindings without a third check."""
+    live = project_dir / "src" / "live.py"
+    gone = project_dir / "src" / "gone.py"
+    live.parent.mkdir(parents=True)
+    live.write_bytes(b"x = 1\n")
+    gone.write_bytes(b"x = 1\n")
+    _ok("add", "constraint", "Live File Rule", "-e", "src/live.py")
+    _ok("add", "constraint", "Gone File Rule", "-e", "src/gone.py")
+    live.write_bytes(b"x = 2\n")
+    gone.unlink()
+    output = _text(_ok("status"))
+    assert "bindings: 1 missing, 1 changed, 0 unknown" in output
+    assert "2/2 checks passed" in output
+
+
 def test_query_keywords_returns_matching_seeded_entries(project_dir: Path) -> None:
     _ok("add", "decision", "Use Jwt Auth", "-r", "Jwt authentication guards every endpoint")
     _ok("add", "constraint", "Sessions must stay stateless", "-e", "src/session.py")
