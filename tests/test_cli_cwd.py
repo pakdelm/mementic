@@ -339,6 +339,27 @@ def test_add_with_mixed_entities_writes_nothing(
     assert _decision_ids(repo_b) == []
 
 
+def test_add_stores_url_entity_unchanged(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A URL entity keeps its exact form because the URL return precedes the guard."""
+    repo_a = tmp_path / "repo-a"
+    _begin_repo(repo_a, monkeypatch)
+    monkeypatch.chdir(repo_a)
+
+    result = _run(
+        "add", "decision", "Url Entity", "-r", "Reason", "-e", "https://example.com/x.py?q=1"
+    )
+
+    assert result.exit_code == 0, _text(result)
+    assert _decision_ids(repo_a) == ["url-entity"]
+    store = MementicStore(db_path=repo_a / ".mementic" / "graph.db")
+    try:
+        decision = store.get_decision("url-entity")
+    finally:
+        store.close()
+    assert decision is not None
+    assert decision.paths == ["https://example.com/x.py?q=1"]
+
+
 def test_query_file_prefix_refuses_foreign_directory(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -352,6 +373,30 @@ def test_query_file_prefix_refuses_foreign_directory(
 
     assert result.exit_code == 1
     assert "belongs to the graph at repo-a." in _text(result)
+
+
+def test_query_file_prefix_with_trailing_separator_refuses_foreign_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A refused directory prefix is reported without its trailing separator.
+
+    The refusal is raised inside canonicalization, before ``query file``
+    restores a trailing separator for prefix matching, so normalization wins
+    and the message names the bare directory.
+    """
+    workspace = tmp_path / "workspace"
+    repo_a = workspace / "repo-a"
+    _begin_repo(workspace, monkeypatch)
+    _begin_repo(repo_a, monkeypatch)
+    monkeypatch.chdir(workspace)
+
+    result = _run("query", "file", "repo-a/", "--prefix")
+
+    assert result.exit_code == 1
+    stderr = _strip_ansi(result.stderr)
+    assert "Error: repo-a belongs to the graph at repo-a." in stderr
+    assert "Run: cd repo-a; mementic query file ." in stderr
+    assert "repo-a/" not in stderr
 
 
 def test_query_file_allows_unowned_outside_path(
@@ -403,6 +448,49 @@ def test_stored_outside_path_round_trips(tmp_path: Path, monkeypatch: pytest.Mon
     data = json.loads(result.stdout)
     assert data["file"] == outside.as_posix()
     assert [entry["id"] for entry in data["decisions"]] == ["outside-path"]
+
+
+def test_stored_outside_path_survives_its_directory_gaining_a_graph(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Stored entity paths are never re-checked or rewritten by the guard.
+
+    Only new path inputs go through the ownership walk. Initializing a graph in
+    a directory that already owns stored paths leaves those keys byte for byte
+    unchanged, and later reads still resolve them.
+    """
+    repo_a = tmp_path / "repo-a"
+    outside = tmp_path / "outside"
+    target = outside / "x.py"
+    outside.mkdir()
+    target.write_text("x = 1", encoding="utf-8")
+    _begin_repo(repo_a, monkeypatch)
+    monkeypatch.chdir(repo_a)
+
+    result = _run("add", "decision", "Outside Path", "-r", "Reason", "-e", "../outside/x.py")
+
+    assert result.exit_code == 0, _text(result)
+    store = MementicStore(db_path=repo_a / ".mementic" / "graph.db")
+    try:
+        decision = store.get_decision("outside-path")
+    finally:
+        store.close()
+    assert decision is not None
+    assert decision.paths == [target.as_posix()]
+
+    _begin_repo(outside, monkeypatch)
+    monkeypatch.chdir(repo_a)
+    query = _run("query", "keywords", "Outside", "--json")
+
+    assert query.exit_code == 0, _text(query)
+    assert "outside-path" in [entry["id"] for entry in json.loads(query.stdout)["decisions"]]
+    store = MementicStore(db_path=repo_a / ".mementic" / "graph.db")
+    try:
+        stored = store.get_decision("outside-path")
+    finally:
+        store.close()
+    assert stored is not None
+    assert stored.paths == decision.paths
 
 
 def test_init_graph_only_creates_graph_without_agents_md(

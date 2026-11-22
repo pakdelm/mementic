@@ -321,8 +321,11 @@ def test_canonical_entity_path_refuses_nonexistent_target_under_foreign_graph(
     repo_a.mkdir()
     _write_graph(repo_b)
 
-    with pytest.raises(ForeignGraphPathError):
+    with pytest.raises(ForeignGraphPathError) as excinfo:
         canonical_entity_path(repo_a, "../repo-b/never-created.py")
+
+    assert excinfo.value.owning_dir == repo_b
+    assert excinfo.value.relative_path == "never-created.py"
 
 
 def test_canonical_entity_path_refuses_nested_graph(tmp_path: Path) -> None:
@@ -337,6 +340,32 @@ def test_canonical_entity_path_refuses_nested_graph(tmp_path: Path) -> None:
 
     assert excinfo.value.owning_dir == repo_a
     assert excinfo.value.relative_path == "src/auth.py"
+
+
+def test_canonical_entity_path_normalizes_trailing_separator_of_foreign_directory(
+    tmp_path: Path,
+) -> None:
+    """A trailing separator is normalized away before the refusal is built.
+
+    ``Path`` drops the separator during canonicalization, so a directory input
+    owned by its own graph renders ``relative_path`` as ``.`` and keeps the
+    caller-agnostic ``query file .`` hint.
+    """
+    workspace = tmp_path / "workspace"
+    repo_a = workspace / "repo-a"
+    _write_graph(workspace)
+    _write_graph(repo_a)
+
+    with pytest.raises(ForeignGraphPathError) as excinfo:
+        canonical_entity_path(workspace, "repo-a/")
+
+    error = excinfo.value
+    assert error.owning_dir == repo_a
+    assert error.relative_path == "."
+    assert str(error).splitlines() == [
+        "repo-a belongs to the graph at repo-a.",
+        "Run: cd repo-a; mementic query file .",
+    ]
 
 
 def test_canonical_entity_path_accepts_child_without_graph(tmp_path: Path) -> None:
@@ -356,6 +385,23 @@ def test_canonical_entity_path_ignores_ancestor_of_base_dir_graph(tmp_path: Path
 
     assert graph_db_path(tmp_path).exists()
     assert canonical_entity_path(repo_a, "../repo-b/x.py") == sibling.as_posix()
+
+
+def test_canonical_entity_path_allows_paths_under_an_ancestor_graph(tmp_path: Path) -> None:
+    """The ownership walk stops at the CWD and never inspects its ancestors.
+
+    ``parent`` owns a graph, but ``base`` is the CWD, so a sibling file under
+    ``parent`` is not judged by ``parent``'s graph: it is allowed and stored as
+    an absolute key, matching decision spec-42-d2.
+    """
+    parent = tmp_path / "workspace"
+    base = parent / "repo-a"
+    shared = parent / "shared.py"
+    _write_graph(parent)
+    _write_graph(base)
+
+    assert graph_db_path(parent).exists()
+    assert canonical_entity_path(base, "../shared.py") == shared.as_posix()
 
 
 def test_canonical_entity_path_refuses_directory_target(tmp_path: Path) -> None:
