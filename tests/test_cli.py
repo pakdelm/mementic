@@ -1021,6 +1021,15 @@ class TestInitStub:
         assert "--key" not in output
         assert "--deep" not in output
 
+    def test_init_help_lists_graph_only(self) -> None:
+        """init --help documents the long-only --graph-only flag."""
+        result = runner.invoke(app, ["init", "--help"])
+
+        assert result.exit_code == 0, f"stderr: {result.stderr}"
+        options = _strip_ansi(result.stdout).split("Options")[-1]
+        assert "--graph-only" in options
+        assert "-g" not in options.split()
+
     def test_capture_command_removed(self) -> None:
         """The capture command is gone from mementic --help."""
         result = runner.invoke(app, ["--help"])

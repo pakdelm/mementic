@@ -86,19 +86,33 @@ from that directory. A subdirectory or child repository has no graph until you
 initialize one there. There is no environment variable to override the scope; the
 current directory is the scope.
 
-For a workspace with several repositories, initialize once at the workspace root,
-start the agent there, and use paths relative to that root:
+For a workspace with several repositories, initialize each repository and run
+mementic from the repository that owns the file, using `cd` in the command.
+Paths are not routed between graphs:
 
 ```sh
-cd ~/dev/workspace
+cd ~/dev/workspace/repo-a
 mementic init
-mementic add constraint "Services must be stateless" --entity repo-a/src/services.py
-mementic query file repo-a/src/services.py
+mementic add constraint "Services must be stateless" --entity src/services.py
+mementic query file src/services.py
 ```
 
-`mementic query file --prefix repo-a/src` returns every rule bound under that
-prefix. Matching starts at the beginning of the stored path, so it is not a
-substring search and not a glob.
+Passing a path from another repository is refused:
+
+```text
+mementic query file ../repo-b/x.py
+Error: ../repo-b/x.py belongs to the graph at ../repo-b.
+Run: cd ../repo-b; mementic query file x.py
+```
+
+The error names the owning graph and the command to run. Repositories that
+receive the enforcement block another way, from a parent folder, a shared
+instruction file, or a hand-maintained `AGENTS.md`, can run
+`mementic init --graph-only` to create the graph without touching `AGENTS.md`.
+
+`mementic query file --prefix src` returns every rule bound under that prefix.
+Matching starts at the beginning of the stored path, so it is not a substring
+search and not a glob.
 
 ## Docker Sandboxes (sbx)
 
@@ -106,7 +120,7 @@ The v3 mixin in `docker/sbx-mementic/` installs the CLI into a workload. The kit
 image is not published. The committed kit directory is self-contained: the recipe
 downloads the pinned public release tag archive, so no staging step is required.
 Pass that directory from your mementic checkout as `--kit` and run `sbx` from the
-workspace root that should own `.mementic/`:
+repository that owns the graph:
 
 ```sh
 sbx run docker.io/docker/sbx-kit-shell:1.0.0 \
@@ -246,7 +260,7 @@ If any of that sounds like fun to fix, contributions are welcome. See
 | Command | What it does |
 |---|---|
 | `mementic --version` | Print the installed package version and exit |
-| `mementic init` | Create `.mementic/graph.db` when missing (idempotent) and create or update the AGENTS.md enforcement section |
+| `mementic init [--graph-only]` | Create `.mementic/graph.db` when missing (idempotent) and create or update the AGENTS.md enforcement section; `--graph-only` skips the AGENTS.md sync |
 | `mementic query keywords <kw...> [--json] [-c/--compact]` | Get ranked context for a task |
 | `mementic query file <path> [--prefix] [--json] [-c/--compact]` | Constraints and decisions for a file (exact match by default) |
 | `mementic query search <term>` | Full text search of the graph |

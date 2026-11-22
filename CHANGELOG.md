@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Spec 42: `mementic init --graph-only` creates the graph and, in a Git
+  work tree, syncs `.gitignore` without touching AGENTS.md.
+
+### Changed
+
+- Spec 42: entity paths owned by another repository's graph are refused with
+  an error naming the owning graph and the command to run.
+
 ## [0.5.2] - 2026-10-31
 
 ### Added

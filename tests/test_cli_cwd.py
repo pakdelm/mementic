@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -13,6 +14,8 @@ from mementic.cli import app
 from mementic.store import MementicStore
 
 runner = CliRunner()
+
+CRLF_AGENTS_MD: str = "# House rules\r\n\r\nKeep lines short.\r\n"
 
 
 def _strip_ansi(text: str) -> str:
@@ -232,3 +235,350 @@ def test_query_file_prefix_keeps_symbol_and_line_suffixes(
     data = json.loads(result.stdout)
     assert data["file"] == "repo-a/src/auth.py"
     assert [decision["id"] for decision in data["decisions"]] == ["repo-a-auth"]
+
+
+def _begin_repo(directory: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    directory.mkdir(parents=True, exist_ok=True)
+    _init(directory, monkeypatch)
+
+
+def _decision_ids(directory: Path) -> list[str]:
+    store = MementicStore(db_path=directory / ".mementic" / "graph.db")
+    try:
+        return [decision.id for decision in store.get_all_decisions()]
+    finally:
+        store.close()
+
+
+def _constraint_ids(directory: Path) -> list[str]:
+    store = MementicStore(db_path=directory / ".mementic" / "graph.db")
+    try:
+        return [constraint.id for constraint in store.get_all_constraints()]
+    finally:
+        store.close()
+
+
+def test_query_file_refuses_sibling_graph(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    repo_a = tmp_path / "repo-a"
+    repo_b = tmp_path / "repo-b"
+    _begin_repo(repo_a, monkeypatch)
+    _begin_repo(repo_b, monkeypatch)
+    monkeypatch.chdir(repo_a)
+
+    result = _run("query", "file", "../repo-b/x.py")
+
+    assert result.exit_code == 1
+    stderr = _strip_ansi(result.stderr)
+    assert "Error: ../repo-b/x.py belongs to the graph at ../repo-b." in stderr
+    assert "Run: cd ../repo-b; mementic query file x.py" in stderr
+
+
+def test_add_decision_refuses_sibling_graph(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo_a = tmp_path / "repo-a"
+    repo_b = tmp_path / "repo-b"
+    _begin_repo(repo_a, monkeypatch)
+    _begin_repo(repo_b, monkeypatch)
+    monkeypatch.chdir(repo_a)
+
+    result = _run("add", "decision", "Use X", "-r", "Reason", "-e", "../repo-b/x.py")
+
+    assert result.exit_code == 1
+    stderr = _strip_ansi(result.stderr)
+    assert "Error: ../repo-b/x.py belongs to the graph at ../repo-b." in stderr
+    assert "Run: cd ../repo-b; mementic query file x.py" in stderr
+    assert _decision_ids(repo_a) == []
+    assert _decision_ids(repo_b) == []
+
+
+def test_add_constraint_refuses_sibling_graph(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo_a = tmp_path / "repo-a"
+    repo_b = tmp_path / "repo-b"
+    _begin_repo(repo_a, monkeypatch)
+    _begin_repo(repo_b, monkeypatch)
+    monkeypatch.chdir(repo_a)
+
+    result = _run("add", "constraint", "Keep X stable", "-e", "../repo-b/x.py")
+
+    assert result.exit_code == 1
+    assert "belongs to the graph at ../repo-b." in _text(result)
+    assert _constraint_ids(repo_a) == []
+    assert _constraint_ids(repo_b) == []
+
+
+def test_add_with_mixed_entities_writes_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo_a = tmp_path / "repo-a"
+    repo_b = tmp_path / "repo-b"
+    _begin_repo(repo_a, monkeypatch)
+    _begin_repo(repo_b, monkeypatch)
+    own = repo_a / "src" / "auth.py"
+    own.parent.mkdir(parents=True)
+    own.write_text("x = 1", encoding="utf-8")
+    monkeypatch.chdir(repo_a)
+
+    result = _run(
+        "add",
+        "decision",
+        "Mixed Entities",
+        "-r",
+        "Reason",
+        "-e",
+        "src/auth.py",
+        "-e",
+        "../repo-b/x.py",
+    )
+
+    assert result.exit_code == 1
+    assert "belongs to the graph at ../repo-b." in _text(result)
+    assert _decision_ids(repo_a) == []
+    assert _decision_ids(repo_b) == []
+
+
+def test_add_stores_url_entity_unchanged(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A URL entity keeps its exact form because the URL return precedes the guard."""
+    repo_a = tmp_path / "repo-a"
+    _begin_repo(repo_a, monkeypatch)
+    monkeypatch.chdir(repo_a)
+
+    result = _run(
+        "add", "decision", "Url Entity", "-r", "Reason", "-e", "https://example.com/x.py?q=1"
+    )
+
+    assert result.exit_code == 0, _text(result)
+    assert _decision_ids(repo_a) == ["url-entity"]
+    store = MementicStore(db_path=repo_a / ".mementic" / "graph.db")
+    try:
+        decision = store.get_decision("url-entity")
+    finally:
+        store.close()
+    assert decision is not None
+    assert decision.paths == ["https://example.com/x.py?q=1"]
+
+
+def test_query_file_prefix_refuses_foreign_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workspace = tmp_path / "workspace"
+    repo_a = workspace / "repo-a"
+    _begin_repo(workspace, monkeypatch)
+    _begin_repo(repo_a, monkeypatch)
+    monkeypatch.chdir(workspace)
+
+    result = _run("query", "file", "repo-a", "--prefix")
+
+    assert result.exit_code == 1
+    assert "belongs to the graph at repo-a." in _text(result)
+
+
+def test_query_file_prefix_with_trailing_separator_refuses_foreign_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A refused directory prefix is reported without its trailing separator.
+
+    The refusal is raised inside canonicalization, before ``query file``
+    restores a trailing separator for prefix matching, so normalization wins
+    and the message names the bare directory.
+    """
+    workspace = tmp_path / "workspace"
+    repo_a = workspace / "repo-a"
+    _begin_repo(workspace, monkeypatch)
+    _begin_repo(repo_a, monkeypatch)
+    monkeypatch.chdir(workspace)
+
+    result = _run("query", "file", "repo-a/", "--prefix")
+
+    assert result.exit_code == 1
+    stderr = _strip_ansi(result.stderr)
+    assert "Error: repo-a belongs to the graph at repo-a." in stderr
+    assert "Run: cd repo-a; mementic query file ." in stderr
+    assert "repo-a/" not in stderr
+
+
+def test_query_file_allows_unowned_outside_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo_a = tmp_path / "repo-a"
+    _begin_repo(repo_a, monkeypatch)
+    outside = tmp_path / "unowned" / "x.py"
+    outside.parent.mkdir(parents=True)
+    outside.write_text("x = 1", encoding="utf-8")
+    monkeypatch.chdir(repo_a)
+
+    result = _run("query", "file", "../unowned/x.py", "--json")
+
+    assert result.exit_code == 0, _text(result)
+    assert json.loads(result.stdout)["file"] == outside.as_posix()
+
+
+def test_stored_outside_path_round_trips(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    repo_a = tmp_path / "repo-a"
+    _begin_repo(repo_a, monkeypatch)
+    outside = tmp_path / "unowned" / "x.py"
+    outside.parent.mkdir(parents=True)
+    outside.write_text("x = 1", encoding="utf-8")
+    monkeypatch.chdir(repo_a)
+    assert (
+        _run(
+            "add",
+            "decision",
+            "Outside Path",
+            "-r",
+            "Reason",
+            "-e",
+            "../unowned/x.py",
+        ).exit_code
+        == 0
+    )
+
+    store = MementicStore(db_path=repo_a / ".mementic" / "graph.db")
+    try:
+        decision = store.get_decision("outside-path")
+    finally:
+        store.close()
+    result = _run("query", "file", "../unowned/x.py", "--json")
+
+    assert decision is not None
+    assert decision.paths == [outside.as_posix()]
+    assert result.exit_code == 0, _text(result)
+    data = json.loads(result.stdout)
+    assert data["file"] == outside.as_posix()
+    assert [entry["id"] for entry in data["decisions"]] == ["outside-path"]
+
+
+def test_stored_outside_path_survives_its_directory_gaining_a_graph(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Stored entity paths are never re-checked or rewritten by the guard.
+
+    Only new path inputs go through the ownership walk. Initializing a graph in
+    a directory that already owns stored paths leaves those keys byte for byte
+    unchanged, and later reads still resolve them.
+    """
+    repo_a = tmp_path / "repo-a"
+    outside = tmp_path / "outside"
+    target = outside / "x.py"
+    outside.mkdir()
+    target.write_text("x = 1", encoding="utf-8")
+    _begin_repo(repo_a, monkeypatch)
+    monkeypatch.chdir(repo_a)
+
+    result = _run("add", "decision", "Outside Path", "-r", "Reason", "-e", "../outside/x.py")
+
+    assert result.exit_code == 0, _text(result)
+    store = MementicStore(db_path=repo_a / ".mementic" / "graph.db")
+    try:
+        decision = store.get_decision("outside-path")
+    finally:
+        store.close()
+    assert decision is not None
+    assert decision.paths == [target.as_posix()]
+
+    _begin_repo(outside, monkeypatch)
+    monkeypatch.chdir(repo_a)
+    query = _run("query", "keywords", "Outside", "--json")
+
+    assert query.exit_code == 0, _text(query)
+    assert "outside-path" in [entry["id"] for entry in json.loads(query.stdout)["decisions"]]
+    store = MementicStore(db_path=repo_a / ".mementic" / "graph.db")
+    try:
+        stored = store.get_decision("outside-path")
+    finally:
+        store.close()
+    assert stored is not None
+    assert stored.paths == decision.paths
+
+
+def test_init_graph_only_creates_graph_without_agents_md(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    result = _run("init", "--graph-only")
+
+    assert result.exit_code == 0, _text(result)
+    assert (tmp_path / ".mementic" / "graph.db").exists()
+    assert not (tmp_path / "AGENTS.md").exists()
+
+
+def test_init_graph_only_leaves_existing_agents_md_byte_identical(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    agents_md = tmp_path / "AGENTS.md"
+    agents_md.write_text(CRLF_AGENTS_MD, encoding="utf-8", newline="")
+    before = agents_md.read_bytes()
+    monkeypatch.chdir(tmp_path)
+
+    result = _run("init", "--graph-only")
+
+    assert result.exit_code == 0, _text(result)
+    assert agents_md.read_bytes() == before
+
+
+def test_init_graph_only_keeps_block_from_plain_init(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    assert _run("init").exit_code == 0
+    agents_md = tmp_path / "AGENTS.md"
+    content = agents_md.read_text(encoding="utf-8")
+    head, _, rest = content.partition("<!-- mementic:start -->")
+    _, _, tail = rest.partition("<!-- mementic:end -->")
+    agents_md.write_text(
+        f"{head}<!-- mementic:start -->\n\nOutdated block.\n<!-- mementic:end -->{tail}",
+        encoding="utf-8",
+        newline="",
+    )
+    before = agents_md.read_bytes()
+
+    result = _run("init", "--graph-only")
+
+    assert result.exit_code == 0, _text(result)
+    assert agents_md.read_bytes() == before
+    assert "<!-- mementic:start -->" in before.decode("utf-8")
+
+
+def test_init_after_graph_only_adds_enforcement_block(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    assert _run("init", "--graph-only").exit_code == 0
+
+    result = _run("init")
+
+    assert result.exit_code == 0, _text(result)
+    content = (tmp_path / "AGENTS.md").read_text(encoding="utf-8")
+    assert "<!-- mementic:start -->" in content
+    assert "<!-- mementic:end -->" in content
+
+
+def test_init_graph_only_is_idempotent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    first = _run("init", "--graph-only")
+    second = _run("init", "--graph-only")
+
+    assert first.exit_code == 0, _text(first)
+    assert second.exit_code == 0, _text(second)
+    assert "(created)" in _text(first)
+    assert "(already exists)" in _text(second)
+    assert not (tmp_path / "AGENTS.md").exists()
+
+
+def test_init_graph_only_reports_skipped_enforcement(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
+    monkeypatch.chdir(tmp_path)
+
+    result = _run("init", "--graph-only")
+
+    output = _text(result)
+    assert result.exit_code == 0, output
+    assert "Skipped AGENTS.md enforcement block (--graph-only)." in output
+    assert ".mementic/graph.db" in output
+    assert ".mementic/" in (tmp_path / ".gitignore").read_text(encoding="utf-8")
