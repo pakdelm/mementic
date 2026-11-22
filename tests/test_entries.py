@@ -15,6 +15,7 @@ from mementic.entries import (
     MissingDecisionError,
     word_overlap,
 )
+from mementic.models import PathBinding
 from mementic.store import MementicStore
 
 
@@ -166,6 +167,31 @@ def test_add_decision_rejects_existing_constraint_slug(store: MementicStore) -> 
     )
     with pytest.raises(ValueError, match="already exists as a constraint"):
         EntryWriter(store).add_decision(title="Shared Id", rationale="Decision text", paths=[])
+
+
+def test_failed_add_records_no_binding_rows(store: MementicStore) -> None:
+    """A cross-kind collision rolls back the entry, its audit row, and its bindings together."""
+    store.add_constraint(
+        entry_id="taken",
+        description="Existing constraint",
+        created_at="2024-01-01T00:00:00Z",
+        paths=["existing.py"],
+    )
+    with pytest.raises(ValueError, match="already exists as a constraint"):
+        EntryWriter(store).add_decision(
+            title="Taken",
+            rationale="Cross-kind collision",
+            paths=["new.py"],
+        )
+    assert store.get_decision("taken") is None
+    assert store.get_all_bindings() == [
+        PathBinding(
+            entry_type="constraint",
+            entry_id="taken",
+            path="existing.py",
+            content_hash=None,
+        )
+    ]
 
 
 def test_failed_successor_write_rolls_back_tombstone(

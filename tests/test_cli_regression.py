@@ -9,12 +9,15 @@ opened directly only to assert resulting state, never to seed it.
 from __future__ import annotations
 
 import hashlib
+import json
 import re
+import sqlite3
 from pathlib import Path
 
 import pytest
 from typer.testing import CliRunner, Result
 
+from mementic import staleness
 from mementic.cli import app
 from mementic.paths import graph_db_path, resolve_base_dir
 from mementic.store import MementicStore
@@ -714,6 +717,22 @@ def test_status_corrupt_store_reports_failure(project_dir: Path) -> None:
     assert "Could not load graph" in _text(result)
 
 
+def test_status_v5_graph_reports_schema_mismatch(project_dir: Path) -> None:
+    """An existing v5 graph explains the version bump instead of claiming no graph."""
+    db = project_dir / ".mementic" / "graph.db"
+    conn = sqlite3.connect(db)
+    try:
+        conn.execute("PRAGMA user_version = 5")
+        conn.commit()
+    finally:
+        conn.close()
+    output = _text(_ok("status"))
+    assert "schema v5" in output
+    assert "requires v6" in output
+    assert "Run 'mementic init' here" not in output
+    assert "1/2 checks passed" in output
+
+
 def test_log_lists_changes_newest_first(project_dir: Path) -> None:
     _ok("add", "decision", "Alpha Decision", "-r", "First recorded architectural choice")
     _ok("add", "decision", "Beta Decision", "-r", "Second recorded architectural choice")
@@ -969,6 +988,40 @@ def test_query_file_unchanged_binding_has_no_marker(project_dir: Path) -> None:
     output = _text(_ok("query", "file", "src/auth.py", "--compact"))
     assert "rules-must-hold" in output
     assert "[stale:" not in output
+
+
+def test_query_file_crlf_binding_is_not_stale(project_dir: Path) -> None:
+    """CRLF bytes hash identically at write and read time, so no stale marker appears."""
+    target = project_dir / "src" / "crlf.py"
+    target.parent.mkdir(parents=True)
+    target.write_bytes(b"a = 1\r\nb = 2\r\n")
+    _ok("add", "constraint", "CRLF rule", "-e", "src/crlf.py")
+    output = _text(_ok("query", "file", "src/crlf.py", "--compact"))
+    assert "crlf-rule" in output
+    assert "[stale:" not in output
+
+
+def test_query_file_json_does_not_hash_bindings(
+    project_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """JSON mode never classifies bindings, so it performs no file hashing."""
+    target = project_dir / "src" / "auth.py"
+    target.parent.mkdir(parents=True)
+    target.write_bytes(b"def handler():\n    return 1\n")
+    _ok("add", "constraint", "Rules must hold", "-e", "src/auth.py")
+    calls: list[tuple[object, ...]] = []
+
+    def record(*args: object, **kwargs: object) -> list:
+        calls.append((args, kwargs))
+        return []
+
+    monkeypatch.setattr(staleness, "classify_bindings", record)
+    result = _ok("query", "file", "src/auth.py", "--json")
+    data = json.loads(_text(result))
+    assert calls == []
+    assert set(data) == {"summary", "file", "decisions", "constraints"}
+    assert "[stale:" not in _text(result)
 
 
 def test_query_file_directory_binding_has_no_marker(project_dir: Path) -> None:

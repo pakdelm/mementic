@@ -55,6 +55,16 @@ def test_content_hash_returns_none_for_missing_file(tmp_path: Path) -> None:
     assert content_hash(tmp_path / "gone.py") is None
 
 
+def test_content_hash_reads_raw_bytes_without_newline_translation(tmp_path: Path) -> None:
+    """CRLF bytes hash as written; a text-mode read would translate them to LF."""
+    payload = b"a = 1\r\nb = 2\r\n"
+    target = tmp_path / "crlf.py"
+    target.write_bytes(payload)
+    digest = content_hash(target)
+    assert digest == hashlib.sha256(payload).hexdigest()
+    assert digest != hashlib.sha256(b"a = 1\nb = 2\n").hexdigest()
+
+
 def test_unchanged_file_classifies_current(tmp_path: Path) -> None:
     digest = _write(tmp_path, "a.py")
     assert (
