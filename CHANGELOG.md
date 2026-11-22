@@ -15,6 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `mementic status` reports how many bindings are missing, changed, or unknown,
   and `mementic query file` marks rules whose bound file changed or went missing
   instead of dropping them.
+- Spec 46: `mementic query files <path...>` returns one merged pack for several
+  paths; the enforcement template permits one batch query per task area for
+  exploration reads while the per-file gate still binds files being edited.
 
 ### Changed
 

@@ -58,8 +58,24 @@ def test_load_template_contains_cli_commands() -> None:
         "add constraint",
         "deprecate",
         "query file",
+        "query files",
     ):
         assert command in template, f"Template missing reference to {command}"
+
+
+def test_load_template_permits_one_batch_query_per_task_area() -> None:
+    """The template allows a single batch query per task area for exploration."""
+    template = load_template()
+    assert "`mementic query files <path...> --compact`" in template
+    assert "at most one batch query per task area" in template
+
+
+def test_load_template_scopes_file_gate_to_edited_files() -> None:
+    """The per-file gate binds files being edited, not every read."""
+    template = load_template()
+    assert "Before opening a file you are about to edit" in template
+    assert "No read-only exceptions" not in template
+    assert "Before opening ANY file" not in template
 
 
 def test_sync_creates_missing_file(tmp_path: Path) -> None:

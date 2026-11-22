@@ -20,11 +20,13 @@ ops commands, meta discussion) need no query.
    focused query per sub-task. Echo the `[mementic: ...]` summary line
    verbatim in your response — it is the auditable trace of what mementic
    contributed.
-2. **File gate.** Before opening ANY file, run
-   `mementic query file <path> --compact` for every path. Locating files with
-   grep/glob is fine; reading content without a query is not. This covers
-   exploration reads too. No read-only exceptions. Pass file paths; `:line` and
-   `:symbol` suffixes are accepted but discarded.
+2. **File gate.** Before opening a file you are about to edit, run
+   `mementic query file <path> --compact` for that path. Locating files with
+   grep/glob is fine; editing a file you have not queried is not. For
+   exploration reads of one task area, one
+   `mementic query files <path...> --compact` call may cover several paths -
+   at most one batch query per task area, and the batch is for reading only.
+   Pass file paths; `:line` and `:symbol` suffixes are accepted but discarded.
 3. **Validate.** Do not write code that violates an active constraint. Cite
    every entity you apply or reject as `[mementic: <id>]`.
 4. **Record inline.** When you make a decision or establish a rule, run
