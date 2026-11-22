@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import sqlite3
 from collections.abc import Generator
 from pathlib import Path
 
@@ -111,3 +112,30 @@ def test_missing_graph_hint_unchanged() -> None:
     item = _graph_row(items)
     assert (len(items), item.status, item.label) == (2, "fail", "Graph")
     assert "Could not load graph" in item.hint
+
+
+def test_graph_hint_names_schema_mismatch_for_existing_old_graph(tmp_path: Path) -> None:
+    """An existing v5 graph explains the version bump instead of claiming no graph."""
+    db = tmp_path / "graph.db"
+    conn = sqlite3.connect(db)
+    try:
+        conn.execute("PRAGMA user_version = 5")
+        conn.commit()
+    finally:
+        conn.close()
+    items = check_health(graph=None, graph_path=db)
+    item = _graph_row(items)
+    assert (len(items), item.status) == (2, "fail")
+    assert "schema v5" in item.hint
+    assert "requires v6" in item.hint
+    assert "move the file aside" in item.hint
+    assert "Run 'mementic init' here" not in item.hint
+
+
+def test_graph_hint_reports_unreadable_graph_file(tmp_path: Path) -> None:
+    """A garbage file at the graph path is named as unreadable, not as missing."""
+    db = tmp_path / "graph.db"
+    db.write_bytes(b"not a database")
+    item = _graph_row(check_health(graph=None, graph_path=db))
+    assert "not a readable mementic database" in item.hint
+    assert "Run 'mementic init' here" not in item.hint

@@ -28,7 +28,12 @@ def status() -> None:
     graph_label = display_path(paths.graph_db, paths.base_dir)
     store = context.try_open_store(paths)
     try:
-        items = check_health(store, repo_path=paths.base_dir, resolve_path=paths.entity_path)
+        items = check_health(
+            store,
+            repo_path=paths.base_dir,
+            resolve_path=paths.entity_path,
+            graph_path=paths.graph_db,
+        )
     finally:
         if store is not None:
             store.close()

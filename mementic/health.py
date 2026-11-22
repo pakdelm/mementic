@@ -6,6 +6,7 @@ Binding counts hash the bound files.
 
 from __future__ import annotations
 
+import sqlite3
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -13,9 +14,15 @@ from typing import TYPE_CHECKING, Literal
 
 from mementic import staleness
 from mementic.inject import START_MARKER
+from mementic.schema import SCHEMA_VERSION
 
 if TYPE_CHECKING:
     from mementic.store import MementicStore
+
+
+_MISSING_GRAPH_HINT = (
+    "Could not load graph. Run 'mementic init' here, or cd to the directory that owns .mementic."
+)
 
 
 @dataclass(kw_only=True)
@@ -61,19 +68,72 @@ def _bindings_hint(
     )
 
 
+def _graph_schema_version(graph_path: Path) -> int | None:
+    """Read a graph file's schema version without modifying the file.
+
+    Args:
+        graph_path: Existing graph database file.
+
+    Returns:
+        The stored ``PRAGMA user_version``, or None when the file cannot be
+        opened or queried as an SQLite database.
+    """
+    connection: sqlite3.Connection | None = None
+    try:
+        uri = f"{graph_path.resolve().as_uri()}?mode=ro"
+        connection = sqlite3.connect(uri, uri=True)
+        row = connection.execute("PRAGMA user_version").fetchone()
+    except (sqlite3.Error, OSError, ValueError):
+        return None
+    finally:
+        if connection is not None:
+            connection.close()
+    return int(row[0]) if row is not None else None
+
+
+def _unopenable_graph_hint(graph_path: Path | None) -> str:
+    """Explain why the graph could not be opened for the health check.
+
+    Args:
+        graph_path: Graph database location, or None when the caller did not
+            supply one.
+
+    Returns:
+        A hint naming the cause: a missing graph, an unreadable file, a
+        schema version this build does not accept, or a matching schema that
+        still failed to load.
+    """
+    if graph_path is None or not graph_path.exists():
+        return _MISSING_GRAPH_HINT
+    version = _graph_schema_version(graph_path)
+    if version is None or version == 0:
+        return (
+            "Could not load graph: the file is not a readable mementic database. "
+            "Move it aside and run 'mementic init' to start fresh."
+        )
+    if version != SCHEMA_VERSION:
+        return (
+            f"Could not load graph: it is schema v{version}, but this build requires "
+            f"v{SCHEMA_VERSION}. Old graphs are not upgraded; move the file aside and "
+            "run 'mementic init' to start fresh."
+        )
+    return (
+        "Could not load graph: the file could not be read even though its schema matches. "
+        "Move it aside and run 'mementic init' to start fresh."
+    )
+
+
 def _graph_item(
     graph: MementicStore | None,
     resolve_path: Callable[[str], Path] | None,
+    graph_path: Path | None,
 ) -> HealthItem:
     """Check that the store opens. An empty graph is healthy and reports a hint."""
     if graph is None:
         return HealthItem(
             label="Graph",
             status="fail",
-            hint=(
-                "Could not load graph. Run 'mementic init' here, or cd to the "
-                "directory that owns .mementic."
-            ),
+            hint=_unopenable_graph_hint(graph_path),
         )
 
     stats = graph.stats()
@@ -112,6 +172,7 @@ def check_health(
     repo_path: Path | None = None,
     *,
     resolve_path: Callable[[str], Path] | None = None,
+    graph_path: Path | None = None,
 ) -> list[HealthItem]:
     """Run all health checks.
 
@@ -121,8 +182,10 @@ def check_health(
         resolve_path: Optional resolver mapping a stored binding path to
             the file on disk. When None, bindings cannot be verified and
             all of them count as unknown.
+        graph_path: Optional graph database location. Used only to explain
+            why an existing graph could not be opened.
 
     Returns:
         One HealthItem per check.
     """
-    return [_graph_item(graph, resolve_path), _instructions_item(repo_path)]
+    return [_graph_item(graph, resolve_path, graph_path), _instructions_item(repo_path)]
