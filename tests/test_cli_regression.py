@@ -1329,4 +1329,17 @@ def test_query_files_rule_bound_to_directory_and_files_appears_once(project_dir:
     assert text.count("(#dir-rule)") == 1
     assert "(matched: src/a.py, src/b.py)" in text
     assert "\n- src\n" not in text
-    assert "2 paths" in text
+    assert "1 decisions | 2 paths: src/a.py, src/b.py]" in text
+
+
+def test_query_files_all_paths_unmatched_reports_all_and_exits_zero(project_dir: Path) -> None:
+    """A batch where nothing matches still lists every path and exits zero."""
+    _create_files(project_dir, "n1.py", "n2.py")
+    result = _run("query", "files", "src/n1.py", "src/n2.py", "--compact")
+    assert result.exit_code == 0
+    text = _text(result)
+    assert "[mementic: 0 constraints, 0 decisions | 2 paths: src/n1.py, src/n2.py]" in text
+    assert "No architectural decisions found for 2 files." in text
+    unmatched = text.split("### No rules matched", 1)[1]
+    assert "- src/n1.py" in unmatched
+    assert "- src/n2.py" in unmatched
