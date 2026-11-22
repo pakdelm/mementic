@@ -79,8 +79,21 @@ def check(
         "--decisions",
         help="Also show the decision enforcing each listed rule",
     ),
+    base: str | None = typer.Option(
+        None,
+        "--base",
+        metavar="REF",
+        help=(
+            "Diff the working tree against the merge-base with REF, so committed work "
+            "on the branch is included; default is uncommitted changes only"
+        ),
+    ),
 ) -> None:
     """List the live rules bound to the files changed in git diff.
+
+    ``--base`` widens the diff to the merge-base with REF, so work committed
+    on the branch is listed alongside uncommitted edits; without it only
+    uncommitted changes to tracked files appear.
 
     Informational only: the listing never fails because a rule matches. A
     missing graph, a graph root outside a Git work tree, or an unreadable
@@ -89,7 +102,7 @@ def check(
     paths = context.resolve_paths()
     with context.resolve_store(paths) as store:
         try:
-            changes = changed_files(paths.base_dir)
+            changes = changed_files(paths.base_dir, base=base)
         except NotAWorkTreeError as exc:
             typer.echo(
                 _NOT_A_WORK_TREE.format(base=paths.base_dir.as_posix()),

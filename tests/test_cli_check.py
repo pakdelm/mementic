@@ -92,6 +92,7 @@ def _repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     _ok("init")
     _git(repo, "add", "AGENTS.md", ".gitignore")
     _git(repo, "commit", "-q", "-m", "baseline")
+    _git(repo, "branch", "-M", "main")
     return repo
 
 
@@ -443,6 +444,88 @@ def test_check_help_documents_decisions_flag(
 
     assert "--decisions" in output
     assert "Also show the decision enforcing each listed rule" in output
+
+
+def test_check_help_documents_base_flag(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """--base help states both the merge-base diff and the uncommitted default."""
+    _repo(tmp_path, monkeypatch)
+
+    output = _text(_ok("check", "--help"))
+
+    assert "--base" in output
+    assert "merge-base" in output
+    assert "default is uncommitted changes" in output
+
+
+def test_check_base_lists_rules_for_committed_change(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """--base finds a rule when the change is committed on the branch."""
+    repo = _repo(tmp_path, monkeypatch)
+    _add_rule("Auth handlers must validate tokens", "src/auth.py", rule_id="validate-tokens")
+    _git(repo, "checkout", "-q", "-b", "feature")
+    _commit(repo, "src/auth.py", "x = 1\n")
+
+    assert "No changed files to check." in _text(_ok("check"))
+    output = _text(_ok("check", "--base", "main"))
+
+    assert "validate-tokens" in output
+    assert "src/auth.py" in output
+    assert "[mementic: 1 constraints | 1 changed files]" in output
+
+
+def test_check_base_unknown_ref_exits_one_and_names_ref(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An unknown base is an environment error that names the ref."""
+    _repo(tmp_path, monkeypatch)
+
+    result = _run("check", "--base", "nope")
+
+    assert result.exit_code == 1
+    output = _text(result)
+    assert "Error: " in output
+    assert "nope" in output
+    assert "is not inside a Git work tree" not in output
+    assert "Traceback" not in output
+
+
+def test_check_base_with_no_matches_exits_zero(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """--base with no matching rule reports the listing and exits 0."""
+    repo = _repo(tmp_path, monkeypatch)
+    _add_rule("Docs must stay current", "docs/readme.md", rule_id="docs-current")
+    _git(repo, "checkout", "-q", "-b", "feature")
+    _commit(repo, "src/auth.py", "x = 1\n")
+
+    result = _run("check", "--base", "main")
+
+    assert result.exit_code == 0
+    output = _text(result)
+    assert "No live rules are bound to the changed files." in output
+    assert "[mementic: 0 constraints | 1 changed files]" in output
+    assert "docs-current" not in output
+
+
+def test_check_base_combines_with_decisions_flag(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """--base and --decisions work together."""
+    repo = _repo(tmp_path, monkeypatch)
+    _add_rule(
+        "Migrations run before deploys",
+        "src/db.py",
+        rule_id="migrations-first",
+        decision="Adopt Postgres",
+    )
+    _git(repo, "checkout", "-q", "-b", "feature")
+    _commit(repo, "src/db.py", "x = 1\n")
+
+    output = _text(_ok("check", "--base", "main", "--decisions"))
+
+    assert "migrations-first" in output
+    assert "Adopt Postgres" in output
 
 
 def test_check_rejects_exit_code_flag(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

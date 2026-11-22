@@ -49,6 +49,20 @@ def _repo(tmp_path: Path) -> Path:
     return repo
 
 
+def _main_repo(tmp_path: Path) -> Path:
+    """Create a repository whose baseline commit sits on branch ``main``."""
+    repo = _repo(tmp_path)
+    _git(repo, "branch", "-M", "main")
+    return repo
+
+
+def _commit_change(repo: Path, relative: str, content: str) -> None:
+    """Write ``relative`` with ``content`` and commit it."""
+    (repo / relative).write_text(content, encoding="utf-8")
+    _git(repo, "add", relative)
+    _git(repo, "commit", "-q", "-m", f"touch {relative}")
+
+
 def _pin_ceiling(monkeypatch: pytest.MonkeyPatch, directory: Path) -> None:
     """Stop Git from discovering a repository above ``directory``."""
     monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(directory.resolve()))
@@ -168,3 +182,64 @@ def test_changed_files_raises_git_diff_error_without_commits(tmp_path: Path) -> 
 
     with pytest.raises(GitDiffError, match="no commits"):
         changed_files(repo)
+
+
+def test_changed_files_default_ignores_committed_branch_work(tmp_path: Path) -> None:
+    """Without a base, work committed on the branch is not a change."""
+    repo = _main_repo(tmp_path)
+    _git(repo, "checkout", "-q", "-b", "feature")
+    _commit_change(repo, "base.txt", "committed on branch\n")
+
+    assert changed_files(repo) == []
+
+
+def test_changed_files_with_base_includes_committed_change(tmp_path: Path) -> None:
+    """A base ref folds committed branch work into the change list."""
+    repo = _main_repo(tmp_path)
+    _git(repo, "checkout", "-q", "-b", "feature")
+    _commit_change(repo, "base.txt", "committed on branch\n")
+
+    assert changed_files(repo, base="main") == [ChangedFile(status="M", path="base.txt")]
+
+
+def test_changed_files_with_base_keeps_uncommitted_edits(tmp_path: Path) -> None:
+    """Committed branch work and a dirty edit collapse into one change."""
+    repo = _main_repo(tmp_path)
+    _git(repo, "checkout", "-q", "-b", "feature")
+    _commit_change(repo, "base.txt", "committed on branch\n")
+    (repo / "base.txt").write_text("edited after commit\n", encoding="utf-8")
+    (repo / "untracked.txt").write_text("untracked\n", encoding="utf-8")
+
+    assert changed_files(repo, base="main") == [ChangedFile(status="M", path="base.txt")]
+
+
+def test_changed_files_with_base_includes_uncommitted_only_edit(tmp_path: Path) -> None:
+    """A dirty edit appears even when the branch has no extra commits."""
+    repo = _main_repo(tmp_path)
+    _git(repo, "checkout", "-q", "-b", "feature")
+    (repo / "base.txt").write_text("edited, not committed\n", encoding="utf-8")
+
+    assert changed_files(repo, base="main") == [ChangedFile(status="M", path="base.txt")]
+
+
+def test_changed_files_with_base_uses_merge_base_on_diverged_branch(tmp_path: Path) -> None:
+    """Only changes since the merge-base appear, not changes made on the base."""
+    repo = _main_repo(tmp_path)
+    _git(repo, "checkout", "-q", "-b", "feature")
+    _commit_change(repo, "branch-only.txt", "branch\n")
+    _git(repo, "checkout", "-q", "main")
+    _commit_change(repo, "main-only.txt", "main\n")
+    _git(repo, "checkout", "-q", "feature")
+
+    assert changed_files(repo, base="main") == [ChangedFile(status="A", path="branch-only.txt")]
+
+
+def test_changed_files_with_unknown_base_raises_git_diff_error(tmp_path: Path) -> None:
+    """An unknown base names the ref and is not a work-tree failure."""
+    repo = _main_repo(tmp_path)
+
+    with pytest.raises(GitDiffError) as exc_info:
+        changed_files(repo, base="no-such-ref")
+
+    assert "no-such-ref" in str(exc_info.value)
+    assert not isinstance(exc_info.value, NotAWorkTreeError)

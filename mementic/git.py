@@ -1,7 +1,9 @@
 """Git work-tree detection and change listing for mementic.
 
-``changed_files`` reads the paths touched since ``HEAD`` in one invocation, so
-staged and working-tree changes share a single code path. Git runs with the
+``changed_files`` reads the paths touched since a diff point in one
+invocation, so staged and working-tree changes share a single code path.
+Passing ``base`` moves the diff point to the merge-base with that ref, which
+keeps committed branch work in scope without a second diff. Git runs with the
 caller's directory as its working directory, which keeps returned paths
 relative to the graph root.
 """
@@ -58,23 +60,27 @@ def is_git_work_tree(directory: Path) -> bool:
     return result.returncode == 0 and result.stdout.strip() == b"true"
 
 
-def changed_files(directory: Path) -> list[ChangedFile]:
-    """List paths changed since ``HEAD``, relative to ``directory``.
+def changed_files(directory: Path, *, base: str | None = None) -> list[ChangedFile]:
+    """List paths changed since the diff point, relative to ``directory``.
 
-    Staged and working-tree changes are both reported, renames are detected,
-    and paths outside ``directory`` are excluded. An untracked file is not a
-    change and does not appear.
+    The diff point is ``HEAD`` unless ``base`` is given, in which case it is
+    the merge-base of ``base`` and ``HEAD``. Staged and working-tree changes
+    are both reported, renames are detected, and paths outside ``directory``
+    are excluded. An untracked file is not a change and does not appear.
 
     Args:
         directory: Directory to run Git in; returned paths are relative to it.
+        base: Ref whose merge-base with ``HEAD`` becomes the diff point, so
+            committed branch work appears next to uncommitted edits. ``None``
+            diffs against ``HEAD`` alone.
 
     Returns:
         One entry per changed path, in the order Git reports them.
 
     Raises:
         NotAWorkTreeError: When ``directory`` is not a Git work tree.
-        GitDiffError: When ``directory`` has no commits yet, or the diff
-            cannot be read.
+        GitDiffError: When ``directory`` has no commits yet, ``base`` cannot be
+            resolved to a merge-base, or the diff cannot be read.
     """
     inside = _run_git(["rev-parse", "--is-inside-work-tree"], directory)
     if inside.returncode != 0 or inside.stdout.strip() != b"true":
@@ -82,8 +88,18 @@ def changed_files(directory: Path) -> list[ChangedFile]:
     head = _run_git(["rev-parse", "--verify", "--quiet", "HEAD"], directory)
     if head.returncode != 0:
         raise GitDiffError(f"{directory} has no commits; there is nothing to diff against")
+    diff_point = "HEAD"
+    if base is not None:
+        merge_base = _run_git(["merge-base", base, "HEAD"], directory)
+        if merge_base.returncode != 0:
+            detail = _decode(merge_base.stderr).strip()
+            message = f"cannot resolve a merge-base with {base} in {directory}"
+            if detail:
+                message = f"{message}: {detail}"
+            raise GitDiffError(message)
+        diff_point = _decode(merge_base.stdout).strip()
     result = _run_git(
-        ["-c", "core.hooksPath=", "diff", "--relative", "--name-status", "-z", "-M", "HEAD"],
+        ["-c", "core.hooksPath=", "diff", "--relative", "--name-status", "-z", "-M", diff_point],
         directory,
     )
     if result.returncode != 0:
