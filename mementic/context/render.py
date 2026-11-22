@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 
 from mementic.context.builder import (
@@ -20,6 +20,22 @@ _RATIONALE_MAX_CHARS: int = 200
 def _compact_evolution_line(decision: Decision) -> str:
     """Format a decision with provenance for evolution traces."""
     return f"- [{decision.created_at}] {decision.title}: {decision.rationale} (#{decision.id})"
+
+
+def format_constraint_line(constraint: Constraint, *, marker: str = "") -> str:
+    """Format one constraint with its bound paths and optional staleness suffix.
+
+    Args:
+        constraint: Constraint to render.
+        marker: Prebuilt staleness suffix for this entry, supplied by the caller so
+            the single-path and batched commands share one formatter. Empty when
+            the entry's bindings are current or unclassified.
+
+    Returns:
+        One line: ``- <description> (#<id>, bound: <entities|none>)<marker>``.
+    """
+    entities = ", ".join(constraint.paths) if constraint.paths else "none"
+    return f"- {constraint.description} (#{constraint.id}, bound: {entities}){marker}"
 
 
 def format_evolution(
@@ -178,3 +194,73 @@ def format_file_history_json(
         "decisions": decisions_json,
         "constraints": constraints_json,
     }
+
+
+def format_merged_history(
+    paths: Sequence[str],
+    decisions: Sequence[tuple[Decision, Sequence[str]]],
+    constraints: Sequence[tuple[Constraint, Sequence[str]]],
+    *,
+    max_tokens: int = DEFAULT_EVOLUTION_MAX_TOKENS,
+    unmatched: Sequence[str] = (),
+    markers: Mapping[str, str] | None = None,
+) -> str:
+    """Render one merged pack for several queried paths.
+
+    Args:
+        paths: Unique canonical paths, in argument order.
+        decisions: ``(decision, matched batch paths)`` pairs. Ranked with
+            rank_and_truncate by matched-path count, then created_at desc.
+        constraints: ``(constraint, matched batch paths)`` pairs, in caller
+            (store) order.
+        max_tokens: Shared budget for the decision lines only.
+        unmatched: Paths that matched no decision and no constraint.
+        markers: Optional entry-ID to staleness-suffix map, applied to
+            constraint lines only; decision lines never carry a marker.
+
+    Returns:
+        Markdown merged pack.
+    """
+    marker_map: Mapping[str, str] = markers or {}
+    matched_by_id = {decision.id: matched for decision, matched in decisions}
+
+    def decision_line(decision: Decision) -> str:
+        """Render one decision line with its matched-path suffix."""
+        line = _compact_evolution_line(decision)
+        matched = matched_by_id.get(decision.id, ())
+        if matched:
+            line += f" (matched: {', '.join(matched)})"
+        return line
+
+    selected, shown, total = rank_and_truncate(
+        [(decision, len(matched)) for decision, matched in decisions],
+        max_tokens,
+        line_formatter=decision_line,
+    )
+
+    lines = [f"## Files queried ({len(paths)})"]
+    lines.extend(f"- {path}" for path in paths)
+    lines.append("")
+    if total == 0:
+        noun = "file" if len(paths) == 1 else "files"
+        lines.append(f"No architectural decisions found for {len(paths)} {noun}.")
+    else:
+        lines.extend(decision_line(decision) for decision in selected)
+        if shown < total:
+            lines.append(f"... and {total - shown} more decisions omitted (token budget).")
+
+    if constraints:
+        lines.append("")
+        lines.append("### Constraints")
+        for constraint, matched in constraints:
+            line = format_constraint_line(constraint)
+            if matched:
+                line += f" (matched: {', '.join(matched)})"
+            lines.append(line + marker_map.get(constraint.id, ""))
+
+    if unmatched:
+        lines.append("")
+        lines.append("### No rules matched")
+        lines.extend(f"- {path}" for path in unmatched)
+
+    return "\n".join(lines)

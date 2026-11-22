@@ -18,8 +18,10 @@ from mementic.context import (
     build_context_pack,
     document_frequencies,
     drop_dead_path_entries,
+    format_constraint_line,
     format_evolution,
     format_file_history_json,
+    format_merged_history,
     idf_weights,
     keyword_idf_score,
     rank_and_truncate,
@@ -1452,3 +1454,88 @@ class TestTruncateFloorAndBackfill:
         assert stats.shown_constraints == 4
         # Truncation marker K must equal matched - shown (Spec 30 review d).
         assert "+1 more below threshold" in str(result.text)
+
+
+class TestFormatMergedHistory:
+    def test_lists_every_queried_path(self) -> None:
+        output = format_merged_history(["src/a.py", "src/b.py", "src/c.py"], [], [])
+
+        assert "## Files queried (3)" in output
+        for path in ("src/a.py", "src/b.py", "src/c.py"):
+            assert output.count(f"- {path}") == 1
+
+    def test_rule_appears_once_with_matched_paths(self) -> None:
+        decision = make_decision(id="d-001", rationale="Better performance")
+        output = format_merged_history(
+            ["src/a.py", "src/b.py"],
+            [(decision, ["src/a.py", "src/b.py"])],
+            [],
+        )
+
+        lines = [ln for ln in output.splitlines() if "d-001" in ln]
+        assert len(lines) == 1
+        assert lines[0].endswith("(matched: src/a.py, src/b.py)")
+
+    def test_reports_unmatched_paths(self) -> None:
+        output = format_merged_history(
+            ["src/a.py", "src/orphan.py"],
+            [(make_decision(id="d-001"), ["src/a.py"])],
+            [],
+            unmatched=["src/orphan.py"],
+        )
+
+        assert "### No rules matched" in output
+        section = output.split("### No rules matched", 1)[1]
+        assert "- src/orphan.py" in section
+        assert "- src/a.py" not in section
+        assert "### No rules matched" not in format_merged_history(["src/a.py"], [], [])
+
+    def test_constraints_section_lists_matched_paths(self) -> None:
+        constraint = make_constraint(id="c-001", paths=["src/a.py"])
+        output = format_merged_history(
+            ["src/a.py"],
+            [],
+            [(constraint, ["src/a.py"])],
+        )
+
+        assert "### Constraints" in output
+        assert "(#c-001, bound: src/a.py) (matched: src/a.py)" in output
+
+    def test_truncation_note_when_budget_cuts_decisions(self) -> None:
+        decisions = [
+            (make_decision(id=f"d-{i}", rationale="A long rationale " * 5), ["src/a.py"])
+            for i in range(3)
+        ]
+        output = format_merged_history(["src/a.py"], decisions, [], max_tokens=1)
+
+        assert "... and 3 more decisions omitted (token budget)." in output
+        assert "No architectural decisions found" not in output
+
+    def test_zero_decisions_note_names_file_count(self) -> None:
+        output = format_merged_history(["src/a.py", "src/b.py", "src/c.py"], [], [])
+
+        assert "No architectural decisions found for 3 files." in output
+        assert "No architectural decisions found for 1 file." in format_merged_history(
+            ["src/a.py"], [], []
+        )
+
+    def test_constraint_line_appends_marker_suffix(self) -> None:
+        marker = " [stale: src/a.py changed]"
+        line = format_constraint_line(make_constraint(), marker=marker)
+
+        assert line.endswith(marker)
+        assert "(#c-001, bound: none)" in line
+
+    def test_merged_constraint_line_keeps_marker_after_matched(self) -> None:
+        marker = " [stale: x changed]"
+        constraint = make_constraint(id="c-001", paths=["src/a.py"])
+        output = format_merged_history(
+            ["src/a.py"],
+            [],
+            [(constraint, ["src/a.py"])],
+            markers={"c-001": marker},
+        )
+
+        line = next(ln for ln in output.splitlines() if "c-001" in ln)
+        assert line.endswith(marker)
+        assert "(matched: src/a.py)" in line

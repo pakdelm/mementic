@@ -24,9 +24,11 @@ from mementic.context.ranking import (
 )
 from mementic.context.render import (
     DEFAULT_EVOLUTION_MAX_TOKENS,
+    format_constraint_line,
     format_context_pack_json,
     format_evolution,
     format_file_history_json,
+    format_merged_history,
 )
 
 __all__ = [
@@ -43,9 +45,11 @@ __all__ = [
     "build_context_pack",
     "document_frequencies",
     "drop_dead_path_entries",
+    "format_constraint_line",
     "format_context_pack_json",
     "format_evolution",
     "format_file_history_json",
+    "format_merged_history",
     "idf_weights",
     "keyword_idf_score",
     "rank_and_truncate",
