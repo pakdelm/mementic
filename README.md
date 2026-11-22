@@ -204,44 +204,6 @@ fall back to targeted reads. Query again at task boundaries and after graph
 writes.
 ```
 
-## Why I built this
-
-I ran two real implementation tasks in OpenCode, same tasks, same quality bar
-(tests, lint, typecheck), with and without mementic. The graph at the time held
-330 decisions and 215 constraints.
-
-Without mementic the agent kept rereading the same ADRs and instruction files,
-and spawned subagents that each did the same discovery work. With mementic the
-context pack answered "what rules apply here?" before the agent started, so it
-went straight to the work.
-
-A single module change:
-
-| Metric | Without | With |
-|---|---|---|
-| Unique files read | 9 | 4 |
-| Total file reads | 19 | 14 |
-| LLM tokens | 106K | 59K |
-| Subagents spawned | 1 | 0 |
-
-A cross cutting feature spanning several modules:
-
-| Metric | Without | With |
-|---|---|---|
-| Unique files read | 20 | 14 |
-| Total file reads | 120 | 59 |
-| LLM tokens | 324K | 149K |
-| Subagents spawned | 7 | 2 |
-
-Across both: 75% fewer subagents and 47% fewer file reads; 51% fewer tokens
-followed from that.
-
-These numbers are a one-off anecdote, not a reproducible benchmark: Windows 11,
-Python 3.13, October 2026, two tasks run in OpenCode against my graph (330
-decisions, 215 constraints). Treat them as a signal rather than a promise. How
-much you gain depends on how many architectural rules your project actually has
-written down.
-
 ## Limitations
 
 A few things worth knowing before you try it:
