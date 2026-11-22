@@ -155,15 +155,15 @@ def file(
         constraints = store.get_constraints_for_path(canonical_path, prefix=prefix)
         decisions = store.get_decisions_for_path(canonical_path, prefix=prefix)
         bindings = store.get_path_bindings(canonical_path, prefix=prefix)
-        markers = staleness.markers_by_entry(
-            staleness.classify_bindings(bindings, resolve=paths.entity_path)
-        )
 
     if json_output:
         result = format_file_history_json(canonical_path, decisions, constraints)
         typer.echo(json.dumps(result, indent=2, default=str))
         return
 
+    markers = staleness.markers_by_entry(
+        staleness.classify_bindings(bindings, resolve=paths.entity_path)
+    )
     evolution_text = format_evolution(canonical_path, decisions, max_tokens=max_tokens)
     if constraints:
         evolution_text += "\n\n### Constraints\n"

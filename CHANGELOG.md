@@ -11,7 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Spec 42: `mementic init --graph-only` creates the graph and, in a Git
   work tree, syncs `.gitignore` without touching AGENTS.md.
-- Spec 44: every path binding records a sha256 content hash of the bound file,
+- Spec 44: every path binding of a readable file records a sha256 content hash,
   `mementic status` reports how many bindings are missing, changed, or unknown,
   and `mementic query file` marks rules whose bound file changed or went missing
   instead of dropping them.

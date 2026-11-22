@@ -984,7 +984,9 @@ def test_stale_binding_keeps_exit_code_zero(project_dir: Path) -> None:
     target = _bind_constraint_to_existing_file(project_dir)
     target.write_bytes(b"def handler():\n    return 3\n")
     result = _run("query", "file", "src/auth.py", "--compact")
+    output = _text(result)
     assert result.exit_code == 0
+    assert "[stale: src/auth.py changed]" in output
 
 
 def test_query_file_does_not_mark_decisions(project_dir: Path) -> None:
