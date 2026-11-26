@@ -11,6 +11,7 @@ from mementic.git import (
     ChangedFile,
     GitDiffError,
     NotAWorkTreeError,
+    _parse_name_status,
     changed_files,
     is_git_work_tree,
 )
@@ -255,3 +256,32 @@ def test_changed_files_with_unknown_base_raises_git_diff_error(tmp_path: Path) -
 
     assert "no-such-ref" in str(exc_info.value)
     assert not isinstance(exc_info.value, NotAWorkTreeError)
+
+
+@pytest.mark.parametrize("flag_ref", ["--independent", "--fork-point"])
+def test_changed_files_rejects_flag_like_base(tmp_path: Path, flag_ref: str) -> None:
+    """A flag-like base is rejected as an invalid ref rather than parsed as an option."""
+    repo = _main_repo(tmp_path)
+
+    with pytest.raises(GitDiffError) as exc_info:
+        changed_files(repo, base=flag_ref)
+
+    assert flag_ref in str(exc_info.value)
+    assert not isinstance(exc_info.value, NotAWorkTreeError)
+
+
+def test_changed_files_handles_file_named_head(tmp_path: Path) -> None:
+    """A tracked file named HEAD does not make the diff point ambiguous."""
+    repo = _main_repo(tmp_path)
+    _commit_change(repo, "HEAD", "initial\n")
+    (repo / "HEAD").write_text("modified\n", encoding="utf-8")
+
+    assert changed_files(repo) == [ChangedFile(status="M", path="HEAD")]
+
+
+def test_parse_name_status_replaces_non_utf8_bytes() -> None:
+    """Undecodable path bytes decode to valid UTF-8 with no surrogates."""
+    changes = _parse_name_status(b"M\x00src/bad_\xff.py\x00")
+
+    assert changes == [ChangedFile(status="M", path="src/bad_\ufffd.py")]
+    changes[0].path.encode("utf-8")

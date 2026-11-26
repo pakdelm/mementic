@@ -90,7 +90,7 @@ def changed_files(directory: Path, *, base: str | None = None) -> list[ChangedFi
         raise GitDiffError(f"{directory} has no commits; there is nothing to diff against")
     diff_point = "HEAD"
     if base is not None:
-        merge_base = _run_git(["merge-base", base, "HEAD"], directory)
+        merge_base = _run_git(["merge-base", "--", base, "HEAD"], directory)
         if merge_base.returncode != 0:
             detail = _decode(merge_base.stderr).strip()
             message = f"cannot resolve a merge-base with {base} in {directory}"
@@ -99,7 +99,17 @@ def changed_files(directory: Path, *, base: str | None = None) -> list[ChangedFi
             raise GitDiffError(message)
         diff_point = _decode(merge_base.stdout).strip()
     result = _run_git(
-        ["-c", "core.hooksPath=", "diff", "--relative", "--name-status", "-z", "-M", diff_point],
+        [
+            "-c",
+            "core.hooksPath=",
+            "diff",
+            "--relative",
+            "--name-status",
+            "-z",
+            "-M",
+            diff_point,
+            "--",
+        ],
         directory,
     )
     if result.returncode != 0:
@@ -165,5 +175,5 @@ def _parse_name_status(raw: bytes) -> list[ChangedFile]:
 
 
 def _decode(token: bytes) -> str:
-    """Decode a NUL-delimited Git path without losing undecodable bytes."""
-    return token.decode("utf-8", errors="surrogateescape")
+    """Decode Git output bytes as UTF-8, replacing invalid byte sequences."""
+    return token.decode("utf-8", errors="replace")

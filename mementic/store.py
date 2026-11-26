@@ -725,9 +725,9 @@ class MementicStore:
         """Return live constraints bound to any of ``paths``, each once.
 
         A constraint matches when one of its stored paths equals a query
-        path or is an ancestor directory of it (``src`` matches
-        ``src/auth.py``, but ``src/auth`` does not match
-        ``src/auth_legacy.py``).
+        path or is an ancestor directory of it, with or without a trailing
+        slash (``src`` and ``src/`` both match ``src/auth.py``, while
+        ``src/auth`` and ``src/auth/`` do not match ``src/auth_legacy.py``).
 
         Args:
             paths: Canonical repo-relative forward-slash paths, as produced
@@ -743,8 +743,10 @@ class MementicStore:
         order: dict[str, int] = {}
         for index, path in enumerate(dict.fromkeys(paths)):
             order[path] = index
-            for candidate in (path, *self._ancestor_directories(path)):
-                owners.setdefault(candidate, set()).add(path)
+            owners.setdefault(path, set()).add(path)
+            for ancestor in self._ancestor_directories(path):
+                owners.setdefault(ancestor, set()).add(path)
+                owners.setdefault(f"{ancestor}/", set()).add(path)
         if not owners:
             return []
         matched: dict[str, set[str]] = {}

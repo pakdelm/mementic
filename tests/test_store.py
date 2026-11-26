@@ -695,6 +695,19 @@ class TestConstraintPathSets:
             "c-dir": ["src/auth/login.py"],
         }
 
+    def test_get_constraints_for_paths_matches_trailing_slash_directory_binding(
+        self,
+        store: MementicStore,
+    ) -> None:
+        """``src/auth/`` binds files beneath it without widening to sibling prefixes."""
+        _add_constraint(store, "c-dir", paths=["src/auth/"])
+
+        results = store.get_constraints_for_paths(["src/auth_legacy.py", "src/auth/login.py"])
+
+        assert {c.id: matched for c, matched in results} == {
+            "c-dir": ["src/auth/login.py"],
+        }
+
     def test_get_constraints_for_paths_does_not_expand_absolute_paths(
         self,
         store: MementicStore,

@@ -136,7 +136,7 @@ def check(
         matches = store.get_constraints_for_paths(query_paths)
         decision_titles = (
             {decision.id: decision.title for decision in store.get_live_decisions()}
-            if decisions
+            if decisions and matches
             else {}
         )
 
