@@ -2,16 +2,18 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from collections.abc import Generator
 
 import pytest
 
 from mementic.entries import (
+    MISSING_DECISION_MESSAGE,
     AddOutcome,
     DeprecateOutcome,
-    MISSING_DECISION_MESSAGE,
     EntryWriter,
+    InvalidSuccessorError,
     MissingDecisionError,
     word_overlap,
 )
@@ -209,3 +211,91 @@ def test_deprecate_many_reports_each_outcome(store: MementicStore) -> None:
         DeprecateOutcome.NOT_FOUND,
     ]
     assert "not found" in results[-1].message.lower()
+
+
+def test_deprecate_many_rejects_missing_successor_before_writing(store: MementicStore) -> None:
+    _seed_decision(store, "old-rule")
+    _seed_decision(store, "other-rule")
+    audit_before = store.count_audit_entries()
+
+    with pytest.raises(InvalidSuccessorError) as excinfo:
+        EntryWriter(store).deprecate_many(
+            ["old-rule", "other-rule"], reason="cleanup", replaced_by="ghost"
+        )
+
+    assert excinfo.value.successor_id == "ghost"
+    assert str(excinfo.value) == "successor 'ghost' not found"
+    assert store.is_deprecated("decision", "old-rule") is False
+    assert store.is_deprecated("decision", "other-rule") is False
+    assert store.get_all_deprecations() == []
+    assert store.count_audit_entries() == audit_before
+
+
+def test_deprecate_many_rejects_self_successor(store: MementicStore) -> None:
+    _seed_decision(store, "alpha-rule")
+    _seed_decision(store, "beta-rule")
+    audit_before = store.count_audit_entries()
+
+    with pytest.raises(InvalidSuccessorError) as excinfo:
+        EntryWriter(store).deprecate_many(["alpha-rule", "beta-rule"], replaced_by="beta-rule")
+
+    assert excinfo.value.successor_id == "beta-rule"
+    assert str(excinfo.value) == ("successor 'beta-rule' is being deprecated in the same command")
+    assert store.is_deprecated("decision", "alpha-rule") is False
+    assert store.is_deprecated("decision", "beta-rule") is False
+    assert store.count_audit_entries() == audit_before
+
+
+def test_deprecate_many_reports_successor_added_for_repeat(store: MementicStore) -> None:
+    _seed_decision(store, "old-rule")
+    _seed_decision(store, "new-rule")
+    _seed_decision(store, "other-rule")
+    writer = EntryWriter(store)
+
+    first = writer.deprecate_many(["old-rule"], reason="first", replaced_by="new-rule")
+    second = writer.deprecate_many(["old-rule"], reason="second", replaced_by="other-rule")
+
+    assert [result.outcome for result in first] == [DeprecateOutcome.DEPRECATED]
+    assert first[0].replaced_by == "new-rule"
+    assert [result.outcome for result in second] == [DeprecateOutcome.SUCCESSOR_ADDED]
+    assert second[0].replaced_by == "other-rule"
+    assert "also superseded" in second[0].message
+
+
+def test_deprecate_many_plain_path_unchanged(store: MementicStore) -> None:
+    _seed_decision(store, "use-jwt-auth")
+    _seed_decision(store, "use-sessions")
+
+    results = EntryWriter(store).deprecate_many(
+        ["use-jwt-auth", "use-sessions", "no-such-id"],
+        reason="cleanup",
+    )
+
+    assert [result.outcome for result in results] == [
+        DeprecateOutcome.DEPRECATED,
+        DeprecateOutcome.DEPRECATED,
+        DeprecateOutcome.NOT_FOUND,
+    ]
+    assert [result.replaced_by for result in results] == [None, None, None]
+    assert results[-1].message == "Entity 'no-such-id' not found."
+
+
+def test_deprecate_many_records_constraint_successor(store: MementicStore) -> None:
+    store.add_constraint(
+        entry_id="services-must-be-stateless",
+        description="Services must be stateless",
+        created_at="2024-01-01T00:00:00+00:00",
+    )
+    _seed_decision(store, "new-rule", title="New Rule")
+
+    results = EntryWriter(store).deprecate_many(
+        ["services-must-be-stateless"], reason="moved", replaced_by="new-rule"
+    )
+
+    assert [result.outcome for result in results] == [DeprecateOutcome.DEPRECATED]
+    assert results[0].replaced_by == "new-rule"
+    records = store.get_deprecations_for_entry("constraint", "services-must-be-stateless")
+    assert len(records) == 1
+    assert records[0]["replaced_by"] == "new-rule"
+    latest = store.get_audit_entries(limit=1)[0]
+    assert json.loads(latest["details"])["replaced_by"] == "new-rule"

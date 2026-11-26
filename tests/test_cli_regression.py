@@ -8,6 +8,7 @@ opened directly only to assert resulting state, never to seed it.
 
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 
@@ -903,3 +904,308 @@ def test_deprecated_entry_excluded_from_context_pack(project_dir: Path) -> None:
     assert "zebra-protocol" not in output
     # Compact echo (Spec 33 Phase 1): nothing live, nothing shown.
     assert "[mementic: 0 of 0 constraints, 0 of 0 decisions | zebra]" in output
+
+
+def test_deprecate_with_replaced_by_records_successor(project_dir: Path) -> None:
+    """A single successor lands in deprecations.replaced_by and the audit log."""
+    _ok("add", "decision", "Old Rule", "-r", "Old rationale")
+    _ok("add", "decision", "New Rule", "-r", "New rationale")
+    result = _ok("deprecate", "old-rule", "--replaced-by", "new-rule", "-r", "moved")
+
+    output = _text(result)
+    assert "Deprecated old-rule (superseded by new-rule): moved" in output
+    store = _store()
+    try:
+        records = store.get_deprecations_for_entry("decision", "old-rule")
+        assert [record["replaced_by"] for record in records] == ["new-rule"]
+        assert [record["reason"] for record in records] == ["moved"]
+        assert json.loads(store.get_audit_entries(limit=1)[0]["details"])["replaced_by"] == (
+            "new-rule"
+        )
+    finally:
+        store.close()
+
+
+def test_deprecate_missing_successor_exits_one_without_writing(project_dir: Path) -> None:
+    _ok("add", "decision", "Old Rule", "-r", "Old rationale")
+    _ok("add", "decision", "Other Rule", "-r", "Other rationale")
+    store = _store()
+    try:
+        audit_before = store.count_audit_entries()
+    finally:
+        store.close()
+
+    result = _run("deprecate", "old-rule", "other-rule", "--replaced-by", "ghost")
+
+    assert result.exit_code == 1
+    assert "Error: successor 'ghost' not found" in _text(result)
+    store = _store()
+    try:
+        assert store.is_deprecated("decision", "old-rule") is False
+        assert store.is_deprecated("decision", "other-rule") is False
+        # The refused batch writes no tombstone for any id in the batch.
+        assert store.get_all_deprecations() == []
+        assert store.count_audit_entries() == audit_before
+    finally:
+        store.close()
+
+
+def test_deprecate_deprecated_successor_exits_one_without_writing(project_dir: Path) -> None:
+    _ok("add", "decision", "Old Rule", "-r", "Old rationale")
+    _ok("add", "decision", "New Rule", "-r", "New rationale")
+    _ok("deprecate", "new-rule")
+    store = _store()
+    try:
+        audit_before = store.count_audit_entries()
+    finally:
+        store.close()
+
+    result = _run("deprecate", "old-rule", "--replaced-by", "new-rule")
+
+    assert result.exit_code == 1
+    assert "Error: successor 'new-rule' is deprecated; name a live entry" in _text(result)
+    store = _store()
+    try:
+        assert store.is_deprecated("decision", "old-rule") is False
+        assert store.get_deprecations_for_entry("decision", "old-rule") == []
+        assert store.count_audit_entries() == audit_before
+    finally:
+        store.close()
+
+
+def test_deprecate_self_successor_exits_one_without_writing(project_dir: Path) -> None:
+    _ok("add", "decision", "Alpha Rule", "-r", "Alpha rationale")
+    _ok("add", "decision", "Beta Rule", "-r", "Beta rationale")
+    store = _store()
+    try:
+        audit_before = store.count_audit_entries()
+    finally:
+        store.close()
+
+    result = _run("deprecate", "alpha-rule", "beta-rule", "--replaced-by", "beta-rule")
+
+    assert result.exit_code == 1
+    assert "Error: successor 'beta-rule' is being deprecated in the same command" in _text(result)
+    store = _store()
+    try:
+        assert store.is_deprecated("decision", "alpha-rule") is False
+        assert store.is_deprecated("decision", "beta-rule") is False
+        assert store.count_audit_entries() == audit_before
+    finally:
+        store.close()
+
+
+def test_deprecate_merge_several_ids_one_successor(project_dir: Path) -> None:
+    _ok("add", "decision", "Alpha Rule", "-r", "Alpha rationale")
+    _ok("add", "decision", "Beta Rule", "-r", "Beta rationale")
+    _ok("add", "decision", "New Rule", "-r", "New rationale")
+    result = _ok(
+        "deprecate", "alpha-rule", "beta-rule", "--replaced-by", "new-rule", "-r", "merged"
+    )
+
+    output = _text(result)
+    assert "Deprecated alpha-rule (superseded by new-rule): merged" in output
+    assert "Deprecated beta-rule (superseded by new-rule): merged" in output
+    assert "Summary: 2 deprecated" in output
+    store = _store()
+    try:
+        alpha = store.get_deprecations_for_entry("decision", "alpha-rule")
+        beta = store.get_deprecations_for_entry("decision", "beta-rule")
+        assert [record["replaced_by"] for record in alpha] == ["new-rule"]
+        assert [record["replaced_by"] for record in beta] == ["new-rule"]
+        assert [record["reason"] for record in alpha] == ["merged"]
+        assert [record["reason"] for record in beta] == ["merged"]
+    finally:
+        store.close()
+
+
+def test_deprecate_plain_output_unchanged(project_dir: Path) -> None:
+    """Without --replaced-by the output shape is byte-identical to today."""
+    _ok("add", "decision", "Alpha Rule", "-r", "Alpha rationale")
+    _ok("add", "decision", "Beta Rule", "-r", "Beta rationale")
+    result = _ok("deprecate", "alpha-rule", "beta-rule", "-r", "obsolete")
+
+    output = _text(result)
+    assert "Deprecated alpha-rule: obsolete" in output
+    assert "Deprecated beta-rule: obsolete" in output
+    assert "Summary: 2 deprecated" in output
+    assert "superseded" not in output.lower()
+
+
+def test_deprecate_split_lists_every_successor_in_history(project_dir: Path) -> None:
+    """Deprecating one entry twice records both successors for history."""
+    _ok("add", "decision", "Old Rule", "-r", "Old rationale")
+    _ok("add", "decision", "First Rule", "-r", "First rationale")
+    _ok("add", "decision", "Second Rule", "-r", "Second rationale")
+    _ok("deprecate", "old-rule", "--replaced-by", "first-rule")
+    _ok("deprecate", "old-rule", "--replaced-by", "second-rule")
+
+    output = _text(_ok("history", "old-rule"))
+    assert "old-rule -> first-rule, second-rule" in output
+
+
+def test_query_search_shows_successor_id_and_title(project_dir: Path) -> None:
+    """A deprecated search hit names its successor and the successor's title."""
+    _ok("add", "decision", "Old Rule", "-r", "legacy authentication rationale")
+    _ok("add", "decision", "New Rule", "-r", "modern authentication rationale")
+    _ok("deprecate", "old-rule", "--replaced-by", "new-rule")
+
+    output = _text(_ok("query", "search", "legacy"))
+
+    assert "[mementic: 0 constraints, 1 decisions | legacy]" in output
+    assert "Superseded By" in output
+    row = next(line for line in output.splitlines() if "old-rule" in line)
+    assert "new-rule (New Rule)" in row
+
+
+def test_query_search_plain_entry_has_no_successor_cell(project_dir: Path) -> None:
+    """A live search hit renders only the ID and title columns."""
+    _ok("add", "decision", "Plain Rule", "-r", "unique plaintext marker")
+
+    output = _text(_ok("query", "search", "plaintext"))
+
+    assert "Superseded By" not in output
+    assert "(missing)" not in output
+    row = next(line for line in output.splitlines() if "plain-rule" in line)
+    cells = [cell for cell in re.split(r"\s{2,}", row.strip("│ ").strip()) if cell]
+    assert cells == ["plain-rule", "Plain Rule"]
+
+
+def test_query_search_split_lists_both_successors(project_dir: Path) -> None:
+    """Both successors of a split render on the deprecated entry's row."""
+    _ok("add", "decision", "Old Rule", "-r", "legacy authentication rationale")
+    _ok("add", "decision", "First Rule", "-r", "first replacement")
+    _ok("add", "decision", "Second Rule", "-r", "second replacement")
+    _ok("deprecate", "old-rule", "--replaced-by", "first-rule")
+    _ok("deprecate", "old-rule", "--replaced-by", "second-rule")
+
+    output = _text(_ok("query", "search", "legacy"))
+
+    row = next(line for line in output.splitlines() if "old-rule" in line)
+    cells = [cell for cell in re.split(r"\s{2,}", row.strip("│ ").strip()) if cell]
+    assert cells == [
+        "old-rule",
+        "Old Rule",
+        "first-rule (First Rule), second-rule (Second Rule)",
+    ]
+
+
+def test_deprecate_unknown_old_id_writes_known_ids_and_exits_one(project_dir: Path) -> None:
+    """An unknown OLD is per-id; the successor check is the only global no-write gate."""
+    _ok("add", "decision", "Old Rule", "-r", "Old rationale")
+    _ok("add", "decision", "New Rule", "-r", "New rationale")
+
+    result = _run("deprecate", "old-rule", "missing-rule", "--replaced-by", "new-rule")
+
+    assert result.exit_code == 1
+    output = _text(result)
+    assert "Error: missing-rule not found" in output
+    assert "Summary: 1 deprecated, 1 not found" in output
+    store = _store()
+    try:
+        records = store.get_deprecations_for_entry("decision", "old-rule")
+        assert len(records) == 1
+        assert records[0]["replaced_by"] == "new-rule"
+    finally:
+        store.close()
+
+
+def test_query_search_successor_column_is_per_section(project_dir: Path) -> None:
+    """Only the section holding a successor gains the Superseded By column."""
+    _ok("add", "decision", "Auth Decision", "-r", "Session authentication for every API")
+    _ok("add", "decision", "New Rule", "-r", "Modern replacement")
+    _ok(
+        "add",
+        "constraint",
+        "Legacy Constraint requires basic authentication",
+        "-e",
+        "src/auth.py",
+        "--id",
+        "legacy-constraint",
+    )
+    _ok("deprecate", "legacy-constraint", "--replaced-by", "new-rule")
+
+    output = _text(_ok("query", "search", "authentication"))
+
+    assert "Superseded By" in output
+    decision_row = next(line for line in output.splitlines() if "auth-decision" in line)
+    decision_cells = [
+        cell for cell in re.split(r"\s{2,}", decision_row.strip("│ ").strip()) if cell
+    ]
+    assert decision_cells == ["auth-decision", "Auth Decision"]
+    constraint_row = next(line for line in output.splitlines() if "legacy-constraint" in line)
+    constraint_cells = [
+        cell for cell in re.split(r"\s{2,}", constraint_row.strip("│ ").strip()) if cell
+    ]
+    assert len(constraint_cells) == 3
+    assert constraint_cells[2] == "new-rule (New Rule)"
+
+
+def test_query_search_cross_type_constraint_successor(project_dir: Path) -> None:
+    """A deprecated decision superseded by a constraint displays the constraint's description."""
+    _ok("add", "decision", "Old Rule", "-r", "legacy authentication rationale")
+    _ok("add", "constraint", "Tokens must remain stateless", "-e", "src/auth.py")
+    _ok("deprecate", "old-rule", "--replaced-by", "tokens-must-remain-stateless")
+
+    output = _text(_ok("query", "search", "legacy"))
+
+    assert "Superseded By" in output
+    row = next(line for line in output.splitlines() if "old-rule" in line)
+    assert "tokens-must-remain-stateless (Tokens must remain stateless)" in row
+
+
+def test_deprecate_replaced_by_without_reason_ends_with_period(project_dir: Path) -> None:
+    """Deprecating with --replaced-by and no reason punctuates both confirmation lines."""
+    _ok("add", "decision", "Old Rule", "-r", "Old rationale")
+    _ok("add", "decision", "First Rule", "-r", "First rationale")
+    _ok("add", "decision", "Second Rule", "-r", "Second rationale")
+
+    first_result = _ok("deprecate", "old-rule", "--replaced-by", "first-rule")
+    assert "Deprecated old-rule (superseded by first-rule)." in _text(first_result)
+
+    second_result = _ok("deprecate", "old-rule", "--replaced-by", "second-rule")
+    assert "Recorded successor second-rule for old-rule." in _text(second_result)
+
+
+def test_list_decisions_deprecated_renders_split_successors(project_dir: Path) -> None:
+    """list decisions --status deprecated renders all split successors without truncation."""
+    _ok("add", "decision", "Old Rule", "-r", "Old rationale")
+    _ok("add", "decision", "First Rule", "-r", "First rationale")
+    _ok("add", "decision", "Second Rule", "-r", "Second rationale")
+    _ok("deprecate", "old-rule", "--replaced-by", "first-rule")
+    _ok("deprecate", "old-rule", "--replaced-by", "second-rule")
+
+    output = _text(_ok("list", "decisions", "--status", "deprecated"))
+
+    assert "Superseded By" in output
+    row = next(line for line in output.splitlines() if "old-rule" in line)
+    assert "first-rule, second-rule" in row
+    assert "..." not in row
+
+
+def test_history_split_and_transitive_chain_renders_trail_and_rows(
+    project_dir: Path,
+) -> None:
+    """history renders the split-and-transitive trail and every tombstone row."""
+    _ok("add", "decision", "a", "-r", "Rationale for a")
+    _ok("add", "decision", "b", "-r", "Rationale for b")
+    _ok("add", "decision", "c", "-r", "Rationale for c")
+    _ok("add", "decision", "d", "-r", "Rationale for d")
+    _ok("deprecate", "a", "--replaced-by", "b", "-r", "r1")
+    _ok("deprecate", "a", "--replaced-by", "c", "-r", "r2")
+    _ok("deprecate", "b", "--replaced-by", "d", "-r", "r3")
+
+    output = _text(_ok("history", "a"))
+
+    assert "a -> b, c -> d" in output
+    rows = [
+        tuple(cell for cell in re.split(r"\s{2,}", line.strip("│ ").strip()) if cell)
+        for line in output.splitlines()
+        if line.strip().startswith("│")
+    ]
+    entry_rows = [cells[1:] for cells in rows if len(cells) == 4 and cells[0] != "At (UTC)"]
+    assert set(entry_rows) == {
+        ("a", "b", "r1"),
+        ("a", "c", "r2"),
+        ("b", "d", "r3"),
+    }

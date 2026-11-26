@@ -469,6 +469,8 @@ class MementicStore:
         entry_id: str,
         reason: str = "",
         replaced_by: str | None = None,
+        *,
+        additional_successor: bool = False,
     ) -> dict[str, str]:
         """Record that a decision or constraint was superseded or retired.
 
@@ -481,14 +483,20 @@ class MementicStore:
             entry_id: The entry to deprecate.
             reason: Optional human-readable reason.
             replaced_by: Optional successor entry ID.
+            additional_successor: When the entry is already deprecated,
+                record ``replaced_by`` as an extra successor (a split) rather
+                than reporting ``already_deprecated``. Naming a successor
+                already recorded for the current incarnation stays
+                idempotent.
 
         Returns:
             Dict with keys ``status``, ``message``, and — when a tombstone
             row was written — ``at`` holding the tombstone's ISO 8601
             stamp. ``status`` is one of ``"deprecated"``,
-            ``"already_deprecated"``, or ``"not_found"``. Callers adding a
-            successor incarnation must derive its ``created_at`` from
-            ``at`` via :func:`successor_timestamp` so the new incarnation
+            ``"successor_added"``, ``"already_deprecated"``, or
+            ``"not_found"``. Callers adding a successor incarnation must
+            derive its ``created_at`` from ``at`` via
+            :func:`successor_timestamp` so the new incarnation
             structurally postdates the tombstone.
 
         Raises:
@@ -506,11 +514,28 @@ class MementicStore:
                 "status": "not_found",
                 "message": f"{entry_type.title()} '{entry_id}' not found.",
             }
+        noun = entry_type.title()
+        status = "deprecated"
+        message = f"Deprecated {noun.lower()} '{entry_id}'"
+        if replaced_by:
+            message += f" (superseded by '{replaced_by}')"
         if self.is_deprecated(entry_type, entry_id):
-            return {
+            already = {
                 "status": "already_deprecated",
-                "message": (f"{entry_type.title()} '{entry_id}' is already deprecated."),
+                "message": f"{noun} '{entry_id}' is already deprecated.",
             }
+            if not additional_successor or not replaced_by:
+                return already
+            existing = conn.execute(
+                f"SELECT 1 FROM {table} e"
+                f" JOIN deprecations dp ON dp.entry_type = ? AND dp.entry_id = e.id"
+                f" WHERE e.id = ? AND dp.at > e.created_at AND dp.replaced_by = ?",
+                (entry_type, entry_id, replaced_by),
+            ).fetchone()
+            if existing is not None:
+                return already
+            status = "successor_added"
+            message = f"Deprecated {noun.lower()} '{entry_id}' (also superseded by '{replaced_by}')"
         now = utc_now()
         with self._write_scope():
             inserted_at = _insert_deprecation(
@@ -526,13 +551,7 @@ class MementicStore:
                     "replaced_by": replaced_by or "",
                 },
             )
-        noun = entry_type.title()
-        suffix = f" (superseded by '{replaced_by}')" if replaced_by else ""
-        return {
-            "status": "deprecated",
-            "at": inserted_at,
-            "message": f"Deprecated {noun.lower()} '{entry_id}'{suffix}",
-        }
+        return {"status": status, "at": inserted_at, "message": message}
 
     def record_succession(
         self,
@@ -653,52 +672,66 @@ class MementicStore:
         """Return ``(decision, superseded_by)`` pairs for every decision.
 
         ``superseded_by`` is ``None`` for live entries; otherwise the
-        successor ID or the literal ``"retired"`` when no successor exists.
+        comma-joined distinct successor IDs in tombstone order (for example
+        ``"first, second"``) or the literal ``"retired"`` when no non-empty
+        successor exists.
         """
-        rows = self._query_entries(
-            "decisions",
-            live_only=False,
-            with_superseded=True,
-        )
+        rows = self._query_entries("decisions", live_only=False)
         paths = self._paths_by_entry("decision")
-        return [(self._row_to_decision(r, paths), r["superseded_by"]) for r in rows]
+        superseded = self._superseded_by_entry("decision")
+        return [(self._row_to_decision(r, paths), superseded.get(r["id"])) for r in rows]
 
     def get_constraints_with_liveness(self) -> list[tuple[Constraint, str | None]]:
-        """Return ``(constraint, superseded_by)`` pairs for every constraint."""
-        rows = self._query_entries(
-            "constraints",
-            live_only=False,
-            with_superseded=True,
-        )
+        """Return ``(constraint, superseded_by)`` pairs for every constraint.
+
+        ``superseded_by`` is ``None`` for live entries; otherwise the
+        comma-joined distinct successor IDs in tombstone order (for example
+        ``"first, second"``) or the literal ``"retired"`` when no non-empty
+        successor exists.
+        """
+        rows = self._query_entries("constraints", live_only=False)
         paths = self._paths_by_entry("constraint")
-        return [(self._row_to_constraint(r, paths), r["superseded_by"]) for r in rows]
+        superseded = self._superseded_by_entry("constraint")
+        return [(self._row_to_constraint(r, paths), superseded.get(r["id"])) for r in rows]
 
     def _query_entries(
         self,
         table: str,
         *,
         live_only: bool,
-        with_superseded: bool = False,
     ) -> list[sqlite3.Row]:
         """Query the decisions/constraints table with derived liveness."""
         conn = self._conn_or_raise()
         etype = table[:-1]
         alias = table[0]
-        superseded_col = ""
-        if with_superseded:
-            superseded_col = (
-                f",(SELECT CASE WHEN dp.replaced_by IS NULL THEN 'retired' "
-                f"ELSE dp.replaced_by END FROM deprecations dp "
-                f"WHERE dp.entry_type = :etype AND dp.entry_id = {alias}.id "
-                f"AND dp.at > {alias}.created_at "
-                f"ORDER BY dp.at DESC LIMIT 1) AS superseded_by"
-            )
         where = f"WHERE {LIVE_WHERE.format(alias=alias)}" if live_only else ""
         sql = (
-            f"SELECT {alias}.*{superseded_col} FROM {table} {alias} {where} "
-            f"ORDER BY {alias}.created_at, {alias}.id"
+            f"SELECT {alias}.* FROM {table} {alias} {where} ORDER BY {alias}.created_at, {alias}.id"
         )
         return conn.execute(sql, {"etype": etype}).fetchall()
+
+    def _superseded_by_entry(self, entry_type: str) -> dict[str, str]:
+        """Return entry ID to superseded-by label for currently deprecated entries."""
+        conn = self._conn_or_raise()
+        table = entry_type + "s"
+        successors_by_entry: dict[str, list[str]] = {}
+        rows = conn.execute(
+            f"SELECT e.id AS entry_id, dp.replaced_by AS successor"
+            f" FROM {table} e"
+            f" JOIN deprecations dp ON dp.entry_type = ? AND dp.entry_id = e.id"
+            f" WHERE dp.at > e.created_at"
+            f" ORDER BY dp.at",
+            (entry_type,),
+        )
+        for row in rows:
+            successors = successors_by_entry.setdefault(row["entry_id"], [])
+            successor = row["successor"]
+            if successor and successor not in successors:
+                successors.append(successor)
+        return {
+            entry_id: ", ".join(successors) if successors else "retired"
+            for entry_id, successors in successors_by_entry.items()
+        }
 
     def _row_to_decision(
         self,
@@ -1008,6 +1041,82 @@ class MementicStore:
             "SELECT * FROM deprecations WHERE entry_type = ? AND entry_id = ? ORDER BY at",
             (entry_type, entry_id),
         ).fetchall()
+
+    def get_successor_map(
+        self,
+        entry_type: str,
+        entry_ids: Sequence[str],
+    ) -> dict[str, list[tuple[str, str]]]:
+        """Return successors and their labels for currently deprecated entries.
+
+        Reads only tombstones stamped after the entry's ``created_at`` (the
+        same derived predicate as :meth:`is_deprecated`), so a re-added
+        incarnation drops out of the map. Successors may be decisions or
+        constraints regardless of ``entry_type``.
+
+        Args:
+            entry_type: ``"decision"`` or ``"constraint"``.
+            entry_ids: Candidate entry IDs.
+
+        Returns:
+            Mapping from entry ID to distinct ``(successor_id, label)`` pairs
+            ordered by tombstone stamp ascending. The label is the successor's
+            title for a decision or description for a constraint, and ``""``
+            when no successor row exists; when an ID exists in both tables the
+            decision title wins. Entries without a current-incarnation
+            non-empty successor are omitted; an empty ``entry_ids`` returns
+            ``{}``.
+
+        Raises:
+            ValueError: If ``entry_type`` is not ``"decision"`` or
+                ``"constraint"``.
+        """
+        if entry_type not in {"decision", "constraint"}:
+            raise ValueError(f"entry_type must be 'decision' or 'constraint', got {entry_type!r}")
+        if not entry_ids:
+            return {}
+        conn = self._conn_or_raise()
+        table = entry_type + "s"
+        unique_ids = list(dict.fromkeys(entry_ids))
+        pairs: list[tuple[str, str]] = []
+        seen_pairs: set[tuple[str, str]] = set()
+        for id_chunk in _chunks(unique_ids, _IN_CHUNK_SIZE):
+            entry_placeholders = ", ".join("?" for _ in id_chunk)
+            for row in conn.execute(
+                f"SELECT e.id AS entry_id, dp.replaced_by AS successor"
+                f" FROM {table} e"
+                f" JOIN deprecations dp ON dp.entry_type = ? AND dp.entry_id = e.id"
+                f" WHERE e.id IN ({entry_placeholders})"
+                f"   AND dp.at > e.created_at"
+                f"   AND dp.replaced_by IS NOT NULL"
+                f"   AND dp.replaced_by != ''"
+                f" ORDER BY dp.at",
+                (entry_type, *id_chunk),
+            ):
+                pair = (row["entry_id"], row["successor"])
+                if pair not in seen_pairs:
+                    seen_pairs.add(pair)
+                    pairs.append(pair)
+        if not pairs:
+            return {}
+        successors = list(dict.fromkeys(successor for _, successor in pairs))
+        labels: dict[str, str] = {}
+        label_sources = (("decisions", "title"), ("constraints", "description"))
+        for successor_table, column in label_sources:
+            for successor_chunk in _chunks(successors, _IN_CHUNK_SIZE):
+                successor_placeholders = ", ".join("?" for _ in successor_chunk)
+                for label_row in conn.execute(
+                    f"SELECT id, {column} AS label FROM {successor_table}"
+                    f" WHERE id IN ({successor_placeholders})",
+                    tuple(successor_chunk),
+                ):
+                    labels.setdefault(label_row["id"], label_row["label"])
+        successors_by_entry: dict[str, list[tuple[str, str]]] = {}
+        for entry_id, successor in pairs:
+            successors_by_entry.setdefault(entry_id, []).append(
+                (successor, labels.get(successor, ""))
+            )
+        return successors_by_entry
 
     def get_replacement_chain(
         self,

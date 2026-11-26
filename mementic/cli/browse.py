@@ -5,6 +5,7 @@ from __future__ import annotations
 import typer
 
 from mementic.cli import context
+from mementic.cli.views import SUPERSEDED_HEADER
 from mementic.console import (
     COLOR_DIM,
     COLOR_ID,
@@ -26,8 +27,9 @@ from mementic.text import format_timestamp
 list_app = typer.Typer(help="Browse decisions, constraints, and entities")
 
 _VALID_STATUSES = {"accepted", "deprecated", "active"}
-_SUPERSEDED_HEADER = "Superseded By"
 _SUPERSEDED_WIDTH = 16
+_TRAIL_ARROW = " -> "
+_TRAIL_SEPARATOR = ", "
 
 
 def _validate_status(status: str | None) -> None:
@@ -47,19 +49,48 @@ def _superseded_label(superseded_by: str | None) -> str:
     return "none" if superseded_by == "retired" else superseded_by
 
 
-def _replacement_chain(entry_id: str, records: list) -> list[str]:
+def _replacement_trail(entry_id: str, records: list) -> str:
     """Return the ordered ``entry -> successor -> ...`` ID trail.
 
-    ``records`` arrive chronologically from the store. Skipping successors
-    already in the chain keeps self-replacements and cycles out of the
-    rendered trail.
+    ``records`` arrive chronologically from the store, so successors of one
+    entry keep tombstone order. Successors of the same entry share one
+    trail position, which renders a split as ``a -> b, c`` while a linear
+    chain stays ``x -> y -> z``. Skipping successors already in the trail
+    keeps self-replacements and cycles out of the rendered text.
+
+    Args:
+        entry_id: The root entry the trail starts from.
+        records: Deprecation rows ordered by tombstone stamp.
+
+    Returns:
+        The trail with siblings comma-joined and positions arrow-joined,
+        root first.
     """
-    chain = [entry_id]
+    successors_by_entry: dict[str, list[str]] = {}
     for record in records:
         successor = record["replaced_by"]
-        if successor and successor not in chain:
-            chain.append(successor)
-    return chain
+        if not successor:
+            continue
+        siblings = successors_by_entry.setdefault(record["entry_id"], [])
+        if successor not in siblings:
+            siblings.append(successor)
+
+    positions = [entry_id]
+    visited = {entry_id}
+    frontier = [entry_id]
+    while frontier:
+        level: list[str] = []
+        for node in frontier:
+            for successor in successors_by_entry.get(node, []):
+                if successor in visited:
+                    continue
+                visited.add(successor)
+                level.append(successor)
+        if not level:
+            break
+        positions.append(_TRAIL_SEPARATOR.join(level))
+        frontier = level
+    return _TRAIL_ARROW.join(positions)
 
 
 @list_app.command()
@@ -100,11 +131,10 @@ def decisions(
     )
     if show_superseded:
         decision_table.add_column(
-            _SUPERSEDED_HEADER,
+            SUPERSEDED_HEADER,
             style=COLOR_WARN,
-            no_wrap=True,
-            overflow="ellipsis",
-            width=_SUPERSEDED_WIDTH,
+            overflow="fold",
+            min_width=_SUPERSEDED_WIDTH,
         )
     for decision, superseded_by in pairs:
         date = decision.created_at[:10] if decision.created_at else ""
@@ -164,11 +194,10 @@ def constraints(
     )
     if show_superseded:
         constraint_table.add_column(
-            _SUPERSEDED_HEADER,
+            SUPERSEDED_HEADER,
             style=COLOR_WARN,
-            no_wrap=True,
-            overflow="ellipsis",
-            width=_SUPERSEDED_WIDTH,
+            overflow="fold",
+            min_width=_SUPERSEDED_WIDTH,
         )
     for constraint, superseded_by in pairs:
         icon = STATUS_OK if superseded_by is None else STATUS_DEPRECATED
@@ -264,7 +293,7 @@ def history(
         console.print(text(f"No deprecation history for '{escape(entry_id)}'."))
         return
 
-    chain_ids = _replacement_chain(entry_id, records)
+    chain = escape(_replacement_trail(entry_id, records))
 
     dep_table = table()
     dep_table.add_column("At (UTC)", style=COLOR_DIM, no_wrap=True, width=16)
@@ -282,7 +311,6 @@ def history(
             successor,
             escape(reason) if reason else "[dim]no reason recorded[/]",
         )
-    chain = " -> ".join(escape(chain_id) for chain_id in chain_ids)
     console.print(
         panel(
             text(f"[{COLOR_ID} bold]{chain}[/]"),

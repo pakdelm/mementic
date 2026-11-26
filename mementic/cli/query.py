@@ -189,9 +189,11 @@ def search(
 
     Deprecated entries stay searchable.
     """
+    from mementic.cli.views import SUPERSEDED_HEADER, format_successor_cell
     from mementic.console import (
         COLOR_HEADER,
         COLOR_ID,
+        COLOR_WARN,
         console,
         escape,
         panel,
@@ -199,36 +201,62 @@ def search(
         text,
     )
 
+    needle = term.lower()
     with context.resolve_store() as store:
         all_decisions = store.get_all_decisions()
         all_constraints = store.get_all_constraints()
-    needle = term.lower()
-    matching_decisions = [
-        decision
-        for decision in all_decisions
-        if needle in decision.title.lower() or needle in decision.rationale.lower()
-    ]
-    matching_constraints = [
-        constraint for constraint in all_constraints if needle in constraint.description.lower()
-    ]
+        matching_decisions = [
+            decision
+            for decision in all_decisions
+            if needle in decision.title.lower() or needle in decision.rationale.lower()
+        ]
+        matching_constraints = [
+            constraint for constraint in all_constraints if needle in constraint.description.lower()
+        ]
+        decision_successors = store.get_successor_map(
+            "decision", [decision.id for decision in matching_decisions]
+        )
+        constraint_successors = store.get_successor_map(
+            "constraint", [constraint.id for constraint in matching_constraints]
+        )
 
     panel_lines: list = []
     if matching_decisions:
-        decisions_table = table(show_header=False, show_edge=False, padding=(0, 1))
+        decisions_table = table(
+            show_header=bool(decision_successors),
+            show_edge=False,
+            padding=(0, 1),
+        )
         decisions_table.add_column("ID", style=COLOR_ID)
         decisions_table.add_column("Title")
+        if decision_successors:
+            decisions_table.add_column(SUPERSEDED_HEADER, style=COLOR_WARN)
         for decision in matching_decisions:
-            decisions_table.add_row(escape(decision.id), escape(decision.title))
+            row = [escape(decision.id), escape(decision.title)]
+            if decision_successors:
+                successors = decision_successors.get(decision.id, [])
+                row.append(escape(format_successor_cell(successors)))
+            decisions_table.add_row(*row)
         panel_lines.append(text(f"[{COLOR_HEADER} bold]Decisions ({len(matching_decisions)})[/]"))
         panel_lines.append(decisions_table)
     if matching_constraints:
         if panel_lines:
             panel_lines.append(text(""))
-        constraints_table = table(show_header=False, show_edge=False, padding=(0, 1))
+        constraints_table = table(
+            show_header=bool(constraint_successors),
+            show_edge=False,
+            padding=(0, 1),
+        )
         constraints_table.add_column("ID", style=COLOR_ID)
         constraints_table.add_column("Description")
+        if constraint_successors:
+            constraints_table.add_column(SUPERSEDED_HEADER, style=COLOR_WARN)
         for constraint in matching_constraints:
-            constraints_table.add_row(escape(constraint.id), escape(constraint.description))
+            row = [escape(constraint.id), escape(constraint.description)]
+            if constraint_successors:
+                successors = constraint_successors.get(constraint.id, [])
+                row.append(escape(format_successor_cell(successors)))
+            constraints_table.add_row(*row)
         panel_lines.append(
             text(f"[{COLOR_HEADER} bold]Constraints ({len(matching_constraints)})[/]")
         )
