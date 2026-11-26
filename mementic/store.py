@@ -739,41 +739,24 @@ class MementicStore:
             ``(created_at, id)``; ``matched_query_paths`` preserves the
             input order of ``paths``.
         """
-        owners: dict[str, set[str]] = {}
-        order: dict[str, int] = {}
-        for index, path in enumerate(dict.fromkeys(paths)):
-            order[path] = index
-            owners.setdefault(path, set()).add(path)
-            for ancestor in self._ancestor_directories(path):
-                owners.setdefault(ancestor, set()).add(path)
-                owners.setdefault(f"{ancestor}/", set()).add(path)
-        if not owners:
+        unique_paths = list(dict.fromkeys(paths))
+        if not unique_paths:
             return []
-        matched: dict[str, set[str]] = {}
-        conn = self._conn_or_raise()
-        candidates = list(owners)
-        for start in range(0, len(candidates), _IN_CHUNK_SIZE):
-            chunk = candidates[start : start + _IN_CHUNK_SIZE]
-            placeholders = ",".join("?" for _ in chunk)
-            rows = conn.execute(
-                "SELECT entry_id, path FROM entry_paths "
-                f"WHERE entry_type = 'constraint' AND path IN ({placeholders})",
-                chunk,
-            )
-            for row in rows:
-                matched.setdefault(row["entry_id"], set()).update(owners[row["path"]])
-        if not matched:
+
+        query_paths_by_binding = self._index_binding_candidates(unique_paths)
+        matched_by_constraint = self._match_constraint_bindings(query_paths_by_binding)
+        if not matched_by_constraint:
             return []
+
+        input_order = {path: index for index, path in enumerate(unique_paths)}
         paths_by_entry = self._paths_by_entry("constraint")
         results: list[tuple[Constraint, list[str]]] = []
         for row in self._query_entries("constraints", live_only=True):
-            if row["id"] not in matched:
+            matched_paths = matched_by_constraint.get(row["id"])
+            if matched_paths is None:
                 continue
-            matched_query_paths = sorted(
-                matched[row["id"]],
-                key=lambda query_path: order[query_path],
-            )
-            results.append((self._row_to_constraint(row, paths_by_entry), matched_query_paths))
+            ordered_paths = sorted(matched_paths, key=input_order.__getitem__)
+            results.append((self._row_to_constraint(row, paths_by_entry), ordered_paths))
         return results
 
     def get_decisions_for_path(
@@ -885,6 +868,44 @@ class MementicStore:
                 continue
             matches.setdefault(r["entry_id"], set()).add(r["path"])
         return matches
+
+    def _index_binding_candidates(self, paths: Sequence[str]) -> dict[str, set[str]]:
+        """Map each candidate stored binding path to the query paths it matches."""
+        query_paths_by_binding: dict[str, set[str]] = {}
+        for path in paths:
+            for binding in self._binding_candidates(path):
+                query_paths_by_binding.setdefault(binding, set()).add(path)
+        return query_paths_by_binding
+
+    def _binding_candidates(self, path: str) -> list[str]:
+        """Return every stored binding key that matches ``path``."""
+        candidates = [path]
+        for ancestor in self._ancestor_directories(path):
+            candidates.append(ancestor)
+            candidates.append(f"{ancestor}/")
+        return candidates
+
+    def _match_constraint_bindings(
+        self,
+        query_paths_by_binding: dict[str, set[str]],
+    ) -> dict[str, set[str]]:
+        """Return ``constraint_id -> matched query paths`` via chunked SQL lookups."""
+        conn = self._conn_or_raise()
+        matched_by_constraint: dict[str, set[str]] = {}
+        bindings = list(query_paths_by_binding)
+        for start in range(0, len(bindings), _IN_CHUNK_SIZE):
+            chunk = bindings[start : start + _IN_CHUNK_SIZE]
+            placeholders = ",".join("?" for _ in chunk)
+            rows = conn.execute(
+                "SELECT entry_id, path FROM entry_paths "
+                f"WHERE entry_type = 'constraint' AND path IN ({placeholders})",
+                chunk,
+            )
+            for row in rows:
+                matched_by_constraint.setdefault(row["entry_id"], set()).update(
+                    query_paths_by_binding[row["path"]]
+                )
+        return matched_by_constraint
 
     def _ancestor_directories(self, path: str) -> list[str]:
         """Return the ancestor directories of a relative ``path``.

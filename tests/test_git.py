@@ -285,3 +285,19 @@ def test_parse_name_status_replaces_non_utf8_bytes() -> None:
 
     assert changes == [ChangedFile(status="M", path="src/bad_\ufffd.py")]
     changes[0].path.encode("utf-8")
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [b"M\x00", b"R100\x00old.py\x00"],
+)
+def test_parse_name_status_rejects_truncated_output(raw: bytes) -> None:
+    """Truncated records fail with GitDiffError instead of crashing."""
+    with pytest.raises(GitDiffError, match="unexpected git diff output"):
+        _parse_name_status(raw)
+
+
+def test_parse_name_status_rejects_unknown_status_token() -> None:
+    """An unrecognized status letter fails with GitDiffError."""
+    with pytest.raises(GitDiffError, match="unexpected git diff status token"):
+        _parse_name_status(b"X\x00file.py\x00")

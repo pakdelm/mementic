@@ -11,11 +11,21 @@ relative to the graph root.
 from __future__ import annotations
 
 import subprocess
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
 _STATUS_LETTERS: frozenset[str] = frozenset("AMDRCTU")
 _RENAME_OR_COPY: frozenset[str] = frozenset("RC")
+_DIFF_BASE_ARGS: tuple[str, ...] = (
+    "-c",
+    "core.hooksPath=",
+    "diff",
+    "--relative",
+    "--name-status",
+    "-z",
+    "-M",
+)
 
 
 class GitDiffError(RuntimeError):
@@ -54,10 +64,10 @@ def is_git_work_tree(directory: Path) -> bool:
         otherwise, including when Git cannot be started.
     """
     try:
-        result = _run_git(["rev-parse", "--is-inside-work-tree"], directory)
+        _require_work_tree(directory)
     except GitDiffError:
         return False
-    return result.returncode == 0 and result.stdout.strip() == b"true"
+    return True
 
 
 def changed_files(directory: Path, *, base: str | None = None) -> list[ChangedFile]:
@@ -82,40 +92,48 @@ def changed_files(directory: Path, *, base: str | None = None) -> list[ChangedFi
         GitDiffError: When ``directory`` has no commits yet, ``base`` cannot be
             resolved to a merge-base, or the diff cannot be read.
     """
-    inside = _run_git(["rev-parse", "--is-inside-work-tree"], directory)
-    if inside.returncode != 0 or inside.stdout.strip() != b"true":
+    _require_work_tree(directory)
+    _require_head_commit(directory)
+    diff_point = _resolve_diff_point(directory, base)
+    raw_diff = _diff_name_status(directory, diff_point)
+    return _parse_name_status(raw_diff)
+
+
+def _require_work_tree(directory: Path) -> None:
+    """Raise ``NotAWorkTreeError`` when ``directory`` is outside a Git work tree."""
+    result = _run_git(["rev-parse", "--is-inside-work-tree"], directory)
+    if result.returncode != 0 or result.stdout.strip() != b"true":
         raise NotAWorkTreeError(f"{directory} is not a Git work tree; cannot read changes")
-    head = _run_git(["rev-parse", "--verify", "--quiet", "HEAD"], directory)
-    if head.returncode != 0:
+
+
+def _require_head_commit(directory: Path) -> None:
+    """Raise ``GitDiffError`` when ``directory`` has no commits yet."""
+    result = _run_git(["rev-parse", "--verify", "--quiet", "HEAD"], directory)
+    if result.returncode != 0:
         raise GitDiffError(f"{directory} has no commits; there is nothing to diff against")
-    diff_point = "HEAD"
-    if base is not None:
-        merge_base = _run_git(["merge-base", "--", base, "HEAD"], directory)
-        if merge_base.returncode != 0:
-            detail = _decode(merge_base.stderr).strip()
-            message = f"cannot resolve a merge-base with {base} in {directory}"
-            if detail:
-                message = f"{message}: {detail}"
-            raise GitDiffError(message)
-        diff_point = _decode(merge_base.stdout).strip()
-    result = _run_git(
-        [
-            "-c",
-            "core.hooksPath=",
-            "diff",
-            "--relative",
-            "--name-status",
-            "-z",
-            "-M",
-            diff_point,
-            "--",
-        ],
-        directory,
-    )
+
+
+def _resolve_diff_point(directory: Path, base: str | None) -> str:
+    """Return ``HEAD``, or the merge-base of ``base`` and ``HEAD`` when given."""
+    if base is None:
+        return "HEAD"
+    result = _run_git(["merge-base", "--", base, "HEAD"], directory)
+    if result.returncode != 0:
+        detail = _decode(result.stderr).strip()
+        message = f"cannot resolve a merge-base with {base} in {directory}"
+        if detail:
+            message = f"{message}: {detail}"
+        raise GitDiffError(message)
+    return _decode(result.stdout).strip()
+
+
+def _diff_name_status(directory: Path, diff_point: str) -> bytes:
+    """Run ``git diff --name-status -z`` against ``diff_point`` and return raw bytes."""
+    result = _run_git([*_DIFF_BASE_ARGS, diff_point, "--"], directory)
     if result.returncode != 0:
         detail = _decode(result.stderr).strip()
         raise GitDiffError(f"cannot read changes in {directory}: {detail}")
-    return _parse_name_status(result.stdout)
+    return result.stdout
 
 
 def _run_git(args: list[str], directory: Path) -> subprocess.CompletedProcess[bytes]:
@@ -139,39 +157,49 @@ def _run_git(args: list[str], directory: Path) -> subprocess.CompletedProcess[by
 
 
 def _parse_name_status(raw: bytes) -> list[ChangedFile]:
-    """Parse NUL-separated ``--name-status -z`` output.
+    """Parse NUL-separated ``git diff --name-status -z`` output.
+
+    Each record starts with a status token followed by one path, or two paths
+    (old then new) for renames (``R``) and copies (``C``).
 
     Raises:
-        GitDiffError: When a status token is unknown or the stream ends before
-            all paths for a token are present.
+        GitDiffError: When a status token is unknown or a record is truncated.
     """
-    tokens = raw.split(b"\0")
-    if tokens and not tokens[-1]:
-        tokens.pop()
+    if not raw:
+        return []
+    fields = iter(_split_nul_fields(raw))
     changes: list[ChangedFile] = []
-    index = 0
-    while index < len(tokens):
-        token = _decode(tokens[index])
-        letter = token[:1]
-        if letter not in _STATUS_LETTERS:
-            raise GitDiffError(f"unexpected git diff status token: {token!r}")
-        has_second_path = letter in _RENAME_OR_COPY
-        paths_needed = 2 if has_second_path else 1
-        if index + paths_needed >= len(tokens):
-            raise GitDiffError("unexpected git diff output")
-        if has_second_path:
-            changes.append(
-                ChangedFile(
-                    status=letter,
-                    path=_decode(tokens[index + 2]),
-                    previous_path=_decode(tokens[index + 1]),
-                )
-            )
-            index += 3
+    for status_token in fields:
+        status = _parse_status_letter(status_token)
+        if status in _RENAME_OR_COPY:
+            previous_path = _take_path(fields)
+            new_path = _take_path(fields)
+            changes.append(ChangedFile(status=status, path=new_path, previous_path=previous_path))
         else:
-            changes.append(ChangedFile(status=letter, path=_decode(tokens[index + 1])))
-            index += 2
+            path = _take_path(fields)
+            changes.append(ChangedFile(status=status, path=path))
     return changes
+
+
+def _split_nul_fields(raw: bytes) -> list[str]:
+    """Split NUL-terminated Git output into decoded string fields."""
+    return [_decode(token) for token in raw.removesuffix(b"\0").split(b"\0")]
+
+
+def _parse_status_letter(token: str) -> str:
+    """Extract and validate the leading status letter from a diff status token."""
+    letter = token[:1]
+    if letter not in _STATUS_LETTERS:
+        raise GitDiffError(f"unexpected git diff status token: {token!r}")
+    return letter
+
+
+def _take_path(fields: Iterator[str]) -> str:
+    """Return the next decoded path field or fail on truncated Git output."""
+    try:
+        return next(fields)
+    except StopIteration as exc:
+        raise GitDiffError("unexpected git diff output") from exc
 
 
 def _decode(token: bytes) -> str:
