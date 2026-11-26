@@ -21,7 +21,8 @@ import sqlite3
 from collections import deque
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
-from pathlib import Path
+from dataclasses import dataclass
+from pathlib import Path, PurePosixPath
 from types import TracebackType
 from urllib.parse import quote
 
@@ -73,6 +74,90 @@ def _insert_deprecation(conn: sqlite3.Connection, row: tuple) -> str:
         f"could not insert a unique deprecation stamp for {row[1]!r} "
         f"after {_MAX_STAMP_RETRIES} attempts"
     )
+
+
+def _chunks(items: Sequence[str], size: int) -> Iterator[Sequence[str]]:
+    """Yield consecutive slices of ``items`` of at most ``size`` elements."""
+    for start in range(0, len(items), size):
+        yield items[start : start + size]
+
+
+def _is_relative_path(path: str) -> bool:
+    """Return True when ``path`` is a non-empty relative path without a drive prefix."""
+    if not path or path.startswith(("/", "\\")):
+        return False
+    return not (len(path) >= 2 and path[1] == ":")
+
+
+def _ancestor_directories(path: str) -> list[str]:
+    """Return shallowest-first ancestor directories for a relative POSIX ``path``.
+
+    Absolute and drive-prefixed paths yield no ancestors so callers only match
+    their exact stored path.
+    """
+    if not _is_relative_path(path):
+        return []
+    return [
+        parent.as_posix()
+        for parent in reversed(PurePosixPath(path).parents)
+        if parent != PurePosixPath(".")
+    ]
+
+
+def _binding_candidates(path: str) -> list[str]:
+    """Return every stored binding key that matches ``path``."""
+    candidates = [path]
+    for ancestor in _ancestor_directories(path):
+        candidates.append(ancestor)
+        candidates.append(f"{ancestor}/")
+    return candidates
+
+
+@dataclass(frozen=True, kw_only=True)
+class _PathBindingIndex:
+    """Reverse index from candidate stored bindings to caller query paths.
+
+    Precomputes every stored path that can bind each query path (exact file
+    plus ancestor directories with or without a trailing slash) and preserves
+    caller input order when grouping SQLite hits back to query paths.
+    """
+
+    query_paths: tuple[str, ...]
+    _queries_by_binding: dict[str, set[str]]
+    _input_order: dict[str, int]
+
+    @classmethod
+    def from_paths(cls, paths: Sequence[str]) -> _PathBindingIndex:
+        """Build an index from caller query paths, deduplicated in input order."""
+        unique_paths = tuple(dict.fromkeys(paths))
+        queries_by_binding: dict[str, set[str]] = {}
+        for query_path in unique_paths:
+            for binding in _binding_candidates(query_path):
+                queries_by_binding.setdefault(binding, set()).add(query_path)
+        input_order = {path: index for index, path in enumerate(unique_paths)}
+        return cls(
+            query_paths=unique_paths,
+            _queries_by_binding=queries_by_binding,
+            _input_order=input_order,
+        )
+
+    @property
+    def candidate_bindings(self) -> list[str]:
+        """Return every distinct stored binding path to query against SQLite."""
+        return list(self._queries_by_binding)
+
+    def group_matches(
+        self,
+        binding_rows: Sequence[tuple[str, str]],
+    ) -> dict[str, list[str]]:
+        """Group ``(entry_id, stored_binding)`` hits into ordered query paths."""
+        matched: dict[str, set[str]] = {}
+        for entry_id, stored_binding in binding_rows:
+            matched.setdefault(entry_id, set()).update(self._queries_by_binding[stored_binding])
+        return {
+            entry_id: sorted(paths, key=self._input_order.__getitem__)
+            for entry_id, paths in matched.items()
+        }
 
 
 class MementicStore:
@@ -739,25 +824,21 @@ class MementicStore:
             ``(created_at, id)``; ``matched_query_paths`` preserves the
             input order of ``paths``.
         """
-        unique_paths = list(dict.fromkeys(paths))
-        if not unique_paths:
+        index = _PathBindingIndex.from_paths(paths)
+        if not index.query_paths:
             return []
 
-        query_paths_by_binding = self._index_binding_candidates(unique_paths)
-        matched_by_constraint = self._match_constraint_bindings(query_paths_by_binding)
-        if not matched_by_constraint:
+        binding_rows = self._find_entry_paths("constraint", index.candidate_bindings)
+        matched_paths_by_id = index.group_matches(binding_rows)
+        if not matched_paths_by_id:
             return []
 
-        input_order = {path: index for index, path in enumerate(unique_paths)}
         paths_by_entry = self._paths_by_entry("constraint")
-        results: list[tuple[Constraint, list[str]]] = []
-        for row in self._query_entries("constraints", live_only=True):
-            matched_paths = matched_by_constraint.get(row["id"])
-            if matched_paths is None:
-                continue
-            ordered_paths = sorted(matched_paths, key=input_order.__getitem__)
-            results.append((self._row_to_constraint(row, paths_by_entry), ordered_paths))
-        return results
+        return [
+            (self._row_to_constraint(row, paths_by_entry), matched_paths_by_id[row["id"]])
+            for row in self._query_entries("constraints", live_only=True)
+            if row["id"] in matched_paths_by_id
+        ]
 
     def get_decisions_for_path(
         self,
@@ -869,63 +950,23 @@ class MementicStore:
             matches.setdefault(r["entry_id"], set()).add(r["path"])
         return matches
 
-    def _index_binding_candidates(self, paths: Sequence[str]) -> dict[str, set[str]]:
-        """Map each candidate stored binding path to the query paths it matches."""
-        query_paths_by_binding: dict[str, set[str]] = {}
-        for path in paths:
-            for binding in self._binding_candidates(path):
-                query_paths_by_binding.setdefault(binding, set()).add(path)
-        return query_paths_by_binding
-
-    def _binding_candidates(self, path: str) -> list[str]:
-        """Return every stored binding key that matches ``path``."""
-        candidates = [path]
-        for ancestor in self._ancestor_directories(path):
-            candidates.append(ancestor)
-            candidates.append(f"{ancestor}/")
-        return candidates
-
-    def _match_constraint_bindings(
+    def _find_entry_paths(
         self,
-        query_paths_by_binding: dict[str, set[str]],
-    ) -> dict[str, set[str]]:
-        """Return ``constraint_id -> matched query paths`` via chunked SQL lookups."""
+        entry_type: str,
+        stored_paths: Sequence[str],
+    ) -> list[tuple[str, str]]:
+        """Return ``(entry_id, path)`` pairs whose stored path is in ``stored_paths``."""
         conn = self._conn_or_raise()
-        matched_by_constraint: dict[str, set[str]] = {}
-        bindings = list(query_paths_by_binding)
-        for start in range(0, len(bindings), _IN_CHUNK_SIZE):
-            chunk = bindings[start : start + _IN_CHUNK_SIZE]
+        hits: list[tuple[str, str]] = []
+        for chunk in _chunks(stored_paths, _IN_CHUNK_SIZE):
             placeholders = ",".join("?" for _ in chunk)
             rows = conn.execute(
                 "SELECT entry_id, path FROM entry_paths "
-                f"WHERE entry_type = 'constraint' AND path IN ({placeholders})",
-                chunk,
+                f"WHERE entry_type = ? AND path IN ({placeholders})",
+                (entry_type, *chunk),
             )
-            for row in rows:
-                matched_by_constraint.setdefault(row["entry_id"], set()).update(
-                    query_paths_by_binding[row["path"]]
-                )
-        return matched_by_constraint
-
-    def _ancestor_directories(self, path: str) -> list[str]:
-        """Return the ancestor directories of a relative ``path``.
-
-        Absolute and drive-prefixed paths yield no ancestors so callers
-        only match their exact stored path. The empty string and ``/`` are
-        never produced, keeping anchored component-boundary matching from
-        degenerating into a match-everything prefix.
-
-        Args:
-            path: Query path using forward-slash separators.
-
-        Returns:
-            Intermediate directory prefixes, shallowest first.
-        """
-        if not path or path.startswith(("/", "\\")) or (len(path) >= 2 and path[1] == ":"):
-            return []
-        parts = path.split("/")
-        ancestors = ["/".join(parts[:i]) for i in range(1, len(parts))]
-        return [a for a in ancestors if a and a != "/"]
+            hits.extend((row["entry_id"], row["path"]) for row in rows)
+        return hits
 
     def get_all_paths(self) -> list[str]:
         """Return every distinct stored path, in insertion order."""
