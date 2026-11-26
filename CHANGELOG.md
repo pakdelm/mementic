@@ -19,6 +19,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Spec 42: entity paths owned by another repository's graph are refused with
   an error naming the owning graph and the command to run.
 
+## [0.5.3] - 2026-11-26
+
+- Merge pull request #10 from pakdelm/spec/47-deprecation-successor-link
+- Merge remote-tracking branch 'origin/main' into spec/47-deprecation-successor-link
+- Merge pull request #9 from pakdelm/spec/45-diff-time-rule-check
+- Merge remote-tracking branch 'origin/main' into spec/45-diff-time-rule-check
+- Merge pull request #8 from pakdelm/spec/42-foreign-graph-path-guard
+- Merge pull request #7 from pakdelm/feat/spec-orchestration-agents
+
 ## [0.5.2] - 2026-10-31
 
 ### Added
