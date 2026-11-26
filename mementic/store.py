@@ -21,7 +21,8 @@ import sqlite3
 from collections import deque
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
-from pathlib import Path
+from dataclasses import dataclass
+from pathlib import Path, PurePosixPath
 from types import TracebackType
 from urllib.parse import quote
 
@@ -37,6 +38,7 @@ from mementic.schema import (
 )
 
 _MAX_STAMP_RETRIES = 10
+_IN_CHUNK_SIZE = 500
 
 
 def _insert_deprecation(conn: sqlite3.Connection, row: tuple) -> str:
@@ -72,6 +74,90 @@ def _insert_deprecation(conn: sqlite3.Connection, row: tuple) -> str:
         f"could not insert a unique deprecation stamp for {row[1]!r} "
         f"after {_MAX_STAMP_RETRIES} attempts"
     )
+
+
+def _chunks(items: Sequence[str], size: int) -> Iterator[Sequence[str]]:
+    """Yield consecutive slices of ``items`` of at most ``size`` elements."""
+    for start in range(0, len(items), size):
+        yield items[start : start + size]
+
+
+def _is_relative_path(path: str) -> bool:
+    """Return True when ``path`` is a non-empty relative path without a drive prefix."""
+    if not path or path.startswith(("/", "\\")):
+        return False
+    return not (len(path) >= 2 and path[1] == ":")
+
+
+def _ancestor_directories(path: str) -> list[str]:
+    """Return shallowest-first ancestor directories for a relative POSIX ``path``.
+
+    Absolute and drive-prefixed paths yield no ancestors so callers only match
+    their exact stored path.
+    """
+    if not _is_relative_path(path):
+        return []
+    return [
+        parent.as_posix()
+        for parent in reversed(PurePosixPath(path).parents)
+        if parent != PurePosixPath(".")
+    ]
+
+
+def _binding_candidates(path: str) -> list[str]:
+    """Return every stored binding key that matches ``path``."""
+    candidates = [path]
+    for ancestor in _ancestor_directories(path):
+        candidates.append(ancestor)
+        candidates.append(f"{ancestor}/")
+    return candidates
+
+
+@dataclass(frozen=True, kw_only=True)
+class _PathBindingIndex:
+    """Reverse index from candidate stored bindings to caller query paths.
+
+    Precomputes every stored path that can bind each query path (exact file
+    plus ancestor directories with or without a trailing slash) and preserves
+    caller input order when grouping SQLite hits back to query paths.
+    """
+
+    query_paths: tuple[str, ...]
+    _queries_by_binding: dict[str, set[str]]
+    _input_order: dict[str, int]
+
+    @classmethod
+    def from_paths(cls, paths: Sequence[str]) -> _PathBindingIndex:
+        """Build an index from caller query paths, deduplicated in input order."""
+        unique_paths = tuple(dict.fromkeys(paths))
+        queries_by_binding: dict[str, set[str]] = {}
+        for query_path in unique_paths:
+            for binding in _binding_candidates(query_path):
+                queries_by_binding.setdefault(binding, set()).add(query_path)
+        input_order = {path: index for index, path in enumerate(unique_paths)}
+        return cls(
+            query_paths=unique_paths,
+            _queries_by_binding=queries_by_binding,
+            _input_order=input_order,
+        )
+
+    @property
+    def candidate_bindings(self) -> list[str]:
+        """Return every distinct stored binding path to query against SQLite."""
+        return list(self._queries_by_binding)
+
+    def group_matches(
+        self,
+        binding_rows: Sequence[tuple[str, str]],
+    ) -> dict[str, list[str]]:
+        """Group ``(entry_id, stored_binding)`` hits into ordered query paths."""
+        matched: dict[str, set[str]] = {}
+        for entry_id, stored_binding in binding_rows:
+            matched.setdefault(entry_id, set()).update(self._queries_by_binding[stored_binding])
+        return {
+            entry_id: sorted(paths, key=self._input_order.__getitem__)
+            for entry_id, paths in matched.items()
+        }
 
 
 class MementicStore:
@@ -736,6 +822,43 @@ class MementicStore:
         paths = self._paths_by_entry("constraint")
         return [self._row_to_constraint(r, paths) for r in rows]
 
+    def get_constraints_for_paths(
+        self,
+        paths: Sequence[str],
+    ) -> list[tuple[Constraint, list[str]]]:
+        """Return live constraints bound to any of ``paths``, each once.
+
+        A constraint matches when one of its stored paths equals a query
+        path or is an ancestor directory of it, with or without a trailing
+        slash (``src`` and ``src/`` both match ``src/auth.py``, while
+        ``src/auth`` and ``src/auth/`` do not match ``src/auth_legacy.py``).
+
+        Args:
+            paths: Canonical repo-relative forward-slash paths, as produced
+                by ``canonical_entity_path`` (typically the files changed
+                in a diff). Duplicate paths collapse to one matched entry.
+
+        Returns:
+            ``(constraint, matched_query_paths)`` pairs ordered by
+            ``(created_at, id)``; ``matched_query_paths`` preserves the
+            input order of ``paths``.
+        """
+        index = _PathBindingIndex.from_paths(paths)
+        if not index.query_paths:
+            return []
+
+        binding_rows = self._find_entry_paths("constraint", index.candidate_bindings)
+        matched_paths_by_id = index.group_matches(binding_rows)
+        if not matched_paths_by_id:
+            return []
+
+        paths_by_entry = self._paths_by_entry("constraint")
+        return [
+            (self._row_to_constraint(row, paths_by_entry), matched_paths_by_id[row["id"]])
+            for row in self._query_entries("constraints", live_only=True)
+            if row["id"] in matched_paths_by_id
+        ]
+
     def get_decisions_for_path(
         self,
         path: str,
@@ -805,6 +928,8 @@ class MementicStore:
         This is the single definition of path-overlap semantics for the
         whole codebase: callers filtering on filesystem liveness pass a
         ``path_exists`` predicate here rather than re-filtering results.
+        ``get_constraints_for_paths`` is the batch variant that additionally
+        treats stored ancestor directories as matches.
 
         Args:
             entry_type: ``"decision"`` or ``"constraint"``.
@@ -843,6 +968,24 @@ class MementicStore:
                 continue
             matches.setdefault(r["entry_id"], set()).add(r["path"])
         return matches
+
+    def _find_entry_paths(
+        self,
+        entry_type: str,
+        stored_paths: Sequence[str],
+    ) -> list[tuple[str, str]]:
+        """Return ``(entry_id, path)`` pairs whose stored path is in ``stored_paths``."""
+        conn = self._conn_or_raise()
+        hits: list[tuple[str, str]] = []
+        for chunk in _chunks(stored_paths, _IN_CHUNK_SIZE):
+            placeholders = ",".join("?" for _ in chunk)
+            rows = conn.execute(
+                "SELECT entry_id, path FROM entry_paths "
+                f"WHERE entry_type = ? AND path IN ({placeholders})",
+                (entry_type, *chunk),
+            )
+            hits.extend((row["entry_id"], row["path"]) for row in rows)
+        return hits
 
     def get_all_paths(self) -> list[str]:
         """Return every distinct stored path, in insertion order."""

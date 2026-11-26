@@ -103,7 +103,7 @@ def project_dir(bare_dir: Path) -> Path:
 
 @pytest.mark.parametrize(
     "command",
-    ["init", "add", "deprecate", "query", "list", "log", "status", "history"],
+    ["init", "add", "deprecate", "query", "list", "log", "status", "history", "check"],
 )
 def test_help_lists_top_level_command(command: str) -> None:
     result = _ok("--help")
