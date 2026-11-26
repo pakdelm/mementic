@@ -215,6 +215,29 @@ class TestListCommand:
         output = _strip_ansi(result.stdout)
         assert "does_not_exist.py" in output
 
+    def test_list_decisions_deprecated_shows_split_successors(self) -> None:
+        """Deprecated decisions list shows all comma-joined successors without truncation."""
+        store = _make_store()
+        _seed_decision(store, "old-rule", rationale="Old")
+        _seed_decision(store, "first-rule", rationale="First", created_at="2024-02-01T00:00:00Z")
+        _seed_decision(store, "second-rule", rationale="Second", created_at="2024-03-01T00:00:00Z")
+        store.deprecate("decision", "old-rule", reason="split", replaced_by="first-rule")
+        store.deprecate(
+            "decision",
+            "old-rule",
+            reason="split",
+            replaced_by="second-rule",
+            additional_successor=True,
+        )
+
+        with patch("mementic.cli.context.resolve_store", return_value=nullcontext(store)):
+            result = runner.invoke(app, ["list", "decisions", "--status", "deprecated"])
+
+        assert result.exit_code == 0
+        output = _strip_ansi(result.stdout)
+        assert "Superseded By" in output
+        assert "first-rule, second-rule" in output
+
 
 class TestDeprecateCommand:
     """Tests for mementic deprecate command."""
@@ -280,9 +303,7 @@ class TestDeprecateCommand:
         output = result.stdout + result.stderr
         assert "Skipped already-dep: already deprecated" in output
 
-    def test_deprecate_replaced_by_writes_successor(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_deprecate_replaced_by_writes_successor(self) -> None:
         store = _make_store()
         _seed_decision(store, "use-old-auth", rationale="Basic session auth")
         _seed_decision(store, "use-new-auth", rationale="Token auth")
@@ -300,9 +321,7 @@ class TestDeprecateCommand:
         assert len(records) == 1
         assert records[0]["replaced_by"] == "use-new-auth"
 
-    def test_deprecate_missing_successor_exits_one(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_deprecate_missing_successor_exits_one(self) -> None:
         store = _make_store()
         _seed_decision(store, "use-old-auth", rationale="Basic session auth")
 
@@ -314,9 +333,7 @@ class TestDeprecateCommand:
         assert "Error: successor 'ghost' not found" in output
         assert store.is_deprecated("decision", "use-old-auth") is False
 
-    def test_deprecate_repeat_with_second_successor_reports_also_superseded(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_deprecate_repeat_with_second_successor_reports_also_superseded(self) -> None:
         store = _make_store()
         _seed_decision(store, "old-a", rationale="Old A")
         _seed_decision(store, "old-b", rationale="Old B")
@@ -335,6 +352,22 @@ class TestDeprecateCommand:
         assert "Recorded successor second-successor for old-a: split" in output
         assert "Recorded successor second-successor for old-b: split" in output
         assert "Summary: 2 also superseded" in output
+
+    def test_deprecate_replaced_by_without_reason_ends_with_period(self) -> None:
+        """Omitting --reason ends both initial and split successor lines with a period."""
+        store = _make_store()
+        _seed_decision(store, "old-a", rationale="Old A")
+        _seed_decision(store, "first-s", rationale="First")
+        _seed_decision(store, "second-s", rationale="Second")
+
+        with patch("mementic.cli.context.resolve_store", return_value=nullcontext(store)):
+            first = runner.invoke(app, ["deprecate", "old-a", "--replaced-by", "first-s"])
+            second = runner.invoke(app, ["deprecate", "old-a", "--replaced-by", "second-s"])
+
+        assert first.exit_code == 0
+        assert "Deprecated old-a (superseded by first-s)." in _strip_ansi(first.stdout)
+        assert second.exit_code == 0
+        assert "Recorded successor second-s for old-a." in _strip_ansi(second.stdout)
 
 
 class TestHistoryCommand:
@@ -401,9 +434,7 @@ class TestHistoryCommand:
         assert result.exit_code == 0
         assert "No deprecation history" in _strip_ansi(result.stdout)
 
-    def test_history_shows_successor_chain_for_deprecated_entry(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_history_shows_successor_chain_for_deprecated_entry(self) -> None:
         """A linear successor chain renders root-first as x -> y -> z."""
         store = _make_store()
         _seed_decision(store, "x", rationale="first", created_at="2024-01-01T00:00:00Z")
@@ -418,9 +449,7 @@ class TestHistoryCommand:
         assert result.exit_code == 0
         assert "x -> y -> z" in _strip_ansi(result.stdout)
 
-    def test_history_split_chain_renders_siblings(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_history_split_chain_renders_siblings(self) -> None:
         """Two successors of one entry share one comma-joined trail position."""
         store = _make_store()
         _seed_decision(store, "base", rationale="base", created_at="2024-01-01T00:00:00Z")
@@ -440,6 +469,40 @@ class TestHistoryCommand:
 
         assert result.exit_code == 0
         assert "base -> first, second" in _strip_ansi(result.stdout)
+
+    def test_history_split_and_transitive_chain_renders_trail_and_rows(self) -> None:
+        """A split plus transitive succession renders both the trail banner and per-edge rows."""
+        store = _make_store()
+        _seed_decision(store, "a", rationale="A", created_at="2024-01-01T00:00:00Z")
+        _seed_decision(store, "b", rationale="B", created_at="2024-01-02T00:00:00Z")
+        _seed_decision(store, "c", rationale="C", created_at="2024-01-03T00:00:00Z")
+        _seed_decision(store, "d", rationale="D", created_at="2024-01-04T00:00:00Z")
+        store.deprecate("decision", "a", reason="r1", replaced_by="b")
+        store.deprecate(
+            "decision",
+            "a",
+            reason="r2",
+            replaced_by="c",
+            additional_successor=True,
+        )
+        store.deprecate("decision", "b", reason="r3", replaced_by="d")
+
+        with patch("mementic.cli.context.resolve_store", return_value=nullcontext(store)):
+            result = runner.invoke(app, ["history", "a"])
+
+        assert result.exit_code == 0
+        output = _strip_ansi(result.stdout)
+        assert "a -> b, c -> d" in output
+        rows = [
+            [cell for cell in re.split(r"\s{2,}", line.strip("│ ").strip()) if cell]
+            for line in output.splitlines()
+            if any(reason in line for reason in ("r1", "r2", "r3"))
+        ]
+        assert [row[1:] for row in rows] == [
+            ["a", "b", "r1"],
+            ["a", "c", "r2"],
+            ["b", "d", "r3"],
+        ]
 
 
 _COMPACT_QUERIES = [
@@ -1180,8 +1243,37 @@ class TestQuerySearch:
         output = self._search(store, "legacy")
 
         assert "[mementic: 0 constraints, 1 decisions | legacy]" in output
+        assert "Superseded By" in output
         row = next(line for line in output.splitlines() if "old-rule" in line)
         assert "new-rule (New Rule)" in row
+
+    def test_query_search_shows_cross_type_constraint_successor(self) -> None:
+        """A decision superseded by a constraint displays the constraint ID and description."""
+        store = _make_store()
+        _seed_decision(
+            store,
+            "old-rule",
+            title="Old Rule",
+            rationale="legacy session authentication",
+        )
+        _seed_constraint(
+            store,
+            "new-constraint",
+            description="Require short-lived tokens",
+            created_at="2024-02-01T00:00:00Z",
+        )
+        store.deprecate(
+            "decision",
+            "old-rule",
+            reason="moved to constraint",
+            replaced_by="new-constraint",
+        )
+
+        output = self._search(store, "legacy")
+
+        assert "Superseded By" in output
+        row = next(line for line in output.splitlines() if "old-rule" in line)
+        assert "new-constraint (Require short-lived tokens)" in row
 
     def test_query_search_plain_entry_has_no_successor_cell(self) -> None:
         """A live match renders only the ID and title columns."""
@@ -1254,7 +1346,7 @@ class TestQuerySearch:
         """
         from rich.table import Table as RichTable
 
-        from mementic.console import table as build_table
+        from mementic.console import COLOR_WARN, table as build_table
 
         store = _make_store()
         _seed_decision(
@@ -1291,6 +1383,8 @@ class TestQuerySearch:
             ["ID", "Title"],
             ["ID", "Description", "Superseded By"],
         ]
+        assert [t.show_header for t in created] == [False, True]
+        assert created[1].columns[2].style == COLOR_WARN
 
     def test_query_search_live_row_keeps_blank_successor_cell_in_a_successor_section(
         self,

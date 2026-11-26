@@ -448,6 +448,78 @@ class TestDerivedLiveness:
         cpairs = {c.id: sb for c, sb in store.get_constraints_with_liveness()}
         assert cpairs["dead-c"] == "retired"
 
+    def test_decisions_with_liveness_handles_splits_empty_and_readded(
+        self,
+        store: MementicStore,
+    ) -> None:
+        _add_decision(store, "live-d", created_at="2024-01-01T00:00:00Z")
+        _add_decision(store, "single-d", created_at="2024-01-01T00:00:00Z")
+        _add_decision(store, "split-d", created_at="2024-01-01T00:00:00Z")
+        _add_decision(store, "empty-d", created_at="2024-01-01T00:00:00Z")
+        _add_decision(store, "retired-d", created_at="2024-01-01T00:00:00Z")
+        _add_decision(store, "readded-d", created_at="2024-01-01T00:00:00Z")
+        _add_decision(store, "new-a", created_at="2024-02-01T00:00:00Z")
+        _add_decision(store, "first", created_at="2024-02-01T00:00:00Z")
+        _add_decision(store, "second", created_at="2024-02-01T00:00:00Z")
+
+        store.deprecate("decision", "single-d", replaced_by="new-a")
+        store.deprecate("decision", "split-d", replaced_by="first")
+        store.deprecate("decision", "split-d", replaced_by="second", additional_successor=True)
+        store.record_succession("decision", "split-d", replaced_by="first")
+        store.deprecate("decision", "empty-d", replaced_by="")
+        store.deprecate("decision", "retired-d")
+        readded_stamp = store.deprecate("decision", "readded-d", replaced_by="new-a")["at"]
+        _add_decision(store, "readded-d", created_at=successor_timestamp(readded_stamp))
+
+        pairs = {d.id: sb for d, sb in store.get_decisions_with_liveness()}
+        assert pairs == {
+            "live-d": None,
+            "single-d": "new-a",
+            "split-d": "first, second",
+            "empty-d": "retired",
+            "retired-d": "retired",
+            "readded-d": None,
+            "new-a": None,
+            "first": None,
+            "second": None,
+        }
+
+    def test_constraints_with_liveness_handles_splits_empty_and_readded(
+        self,
+        store: MementicStore,
+    ) -> None:
+        _add_constraint(store, "live-c", created_at="2024-01-01T00:00:00Z")
+        _add_constraint(store, "single-c", created_at="2024-01-01T00:00:00Z")
+        _add_constraint(store, "split-c", created_at="2024-01-01T00:00:00Z")
+        _add_constraint(store, "empty-c", created_at="2024-01-01T00:00:00Z")
+        _add_constraint(store, "retired-c", created_at="2024-01-01T00:00:00Z")
+        _add_constraint(store, "readded-c", created_at="2024-01-01T00:00:00Z")
+        _add_constraint(store, "new-a", created_at="2024-02-01T00:00:00Z")
+        _add_constraint(store, "first", created_at="2024-02-01T00:00:00Z")
+        _add_constraint(store, "second", created_at="2024-02-01T00:00:00Z")
+
+        store.deprecate("constraint", "single-c", replaced_by="new-a")
+        store.deprecate("constraint", "split-c", replaced_by="first")
+        store.deprecate("constraint", "split-c", replaced_by="second", additional_successor=True)
+        store.record_succession("constraint", "split-c", replaced_by="first")
+        store.deprecate("constraint", "empty-c", replaced_by="")
+        store.deprecate("constraint", "retired-c")
+        readded_stamp = store.deprecate("constraint", "readded-c", replaced_by="new-a")["at"]
+        _add_constraint(store, "readded-c", created_at=successor_timestamp(readded_stamp))
+
+        cpairs = {c.id: sb for c, sb in store.get_constraints_with_liveness()}
+        assert cpairs == {
+            "live-c": None,
+            "single-c": "new-a",
+            "split-c": "first, second",
+            "empty-c": "retired",
+            "retired-c": "retired",
+            "readded-c": None,
+            "new-a": None,
+            "first": None,
+            "second": None,
+        }
+
 
 class TestSuccessionTimestamps:
     def test_record_succession_returns_tombstone_stamp(
@@ -1081,4 +1153,62 @@ class TestSuccessorLink:
 
         assert store.get_successor_map("decision", ["old"]) == {
             "old": [("new-succ", "Title new-succ")]
+        }
+
+    @pytest.mark.parametrize("entry_ids", [[], ["d1"]])
+    @pytest.mark.parametrize("bad_type", ["entity", "", "DECISION", "rule"])
+    def test_get_successor_map_rejects_unknown_entry_type(
+        self,
+        store: MementicStore,
+        bad_type: str,
+        entry_ids: list[str],
+    ) -> None:
+        with pytest.raises(ValueError, match="entry_type must be"):
+            store.get_successor_map(bad_type, entry_ids)
+
+    def test_get_successor_map_chunks_entries_and_successors(
+        self,
+        store: MementicStore,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import mementic.store as store_mod
+
+        monkeypatch.setattr(store_mod, "_IN_CHUNK_SIZE", 2)
+        for idx in range(1, 4):
+            _add_decision(store, f"old-{idx}")
+        _add_decision(store, "succ-1")
+        _add_decision(store, "succ-2")
+        _add_constraint(store, "succ-3", description="Rule succ-3")
+
+        store.deprecate("decision", "old-1", replaced_by="succ-1")
+        store.deprecate("decision", "old-2", replaced_by="succ-2")
+        store.deprecate("decision", "old-3", replaced_by="succ-3")
+
+        assert store.get_successor_map("decision", ["old-1", "old-2", "old-3"]) == {
+            "old-1": [("succ-1", "Title succ-1")],
+            "old-2": [("succ-2", "Title succ-2")],
+            "old-3": [("succ-3", "Rule succ-3")],
+        }
+
+    def test_get_successor_map_ignores_empty_string_replaced_by(
+        self,
+        store: MementicStore,
+    ) -> None:
+        _add_decision(store, "old")
+        store.deprecate("decision", "old", replaced_by="")
+        assert store.get_successor_map("decision", ["old"]) == {}
+
+    def test_get_successor_map_deduplicates_repeated_successors_in_tombstone_order(
+        self,
+        store: MementicStore,
+    ) -> None:
+        _add_decision(store, "old", created_at="2024-01-01T00:00:00Z")
+        _add_decision(store, "first", created_at="2024-02-01T00:00:00Z")
+        _add_decision(store, "second", created_at="2024-02-01T00:00:00Z")
+        store.record_succession("decision", "old", replaced_by="first")
+        store.record_succession("decision", "old", replaced_by="second")
+        store.record_succession("decision", "old", replaced_by="first")
+
+        assert store.get_successor_map("decision", ["old"]) == {
+            "old": [("first", "Title first"), ("second", "Title second")]
         }

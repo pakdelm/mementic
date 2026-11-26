@@ -2,16 +2,18 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from collections.abc import Generator
 
 import pytest
 
 from mementic.entries import (
+    MISSING_DECISION_MESSAGE,
     AddOutcome,
     DeprecateOutcome,
-    MISSING_DECISION_MESSAGE,
     EntryWriter,
+    InvalidSuccessorError,
     MissingDecisionError,
     word_overlap,
 )
@@ -212,8 +214,6 @@ def test_deprecate_many_reports_each_outcome(store: MementicStore) -> None:
 
 
 def test_deprecate_many_rejects_missing_successor_before_writing(store: MementicStore) -> None:
-    from mementic.entries import InvalidSuccessorError
-
     _seed_decision(store, "old-rule")
     _seed_decision(store, "other-rule")
     audit_before = store.count_audit_entries()
@@ -232,8 +232,6 @@ def test_deprecate_many_rejects_missing_successor_before_writing(store: Mementic
 
 
 def test_deprecate_many_rejects_self_successor(store: MementicStore) -> None:
-    from mementic.entries import InvalidSuccessorError
-
     _seed_decision(store, "alpha-rule")
     _seed_decision(store, "beta-rule")
     audit_before = store.count_audit_entries()
@@ -283,8 +281,6 @@ def test_deprecate_many_plain_path_unchanged(store: MementicStore) -> None:
 
 
 def test_deprecate_many_records_constraint_successor(store: MementicStore) -> None:
-    import json
-
     store.add_constraint(
         entry_id="services-must-be-stateless",
         description="Services must be stateless",

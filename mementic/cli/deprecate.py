@@ -82,11 +82,11 @@ def deprecate(
 
 def _deprecated_with_successor_line(entry_id: str, successor: str, reason: str) -> str:
     """Render the row for an entry deprecated with a recorded successor."""
-    suffix = f": {escape(reason)}" if reason else ""
+    suffix = f": {escape(reason)}" if reason else "."
     return f"Deprecated {escape(entry_id)} (superseded by {escape(successor)}){suffix}"
 
 
 def _successor_added_line(entry_id: str, successor: str, reason: str) -> str:
     """Render the row for an extra successor recorded on a deprecated entry."""
-    suffix = f": {escape(reason)}" if reason else ""
+    suffix = f": {escape(reason)}" if reason else "."
     return f"Recorded successor {escape(successor)} for {escape(entry_id)}{suffix}"

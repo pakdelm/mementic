@@ -8,6 +8,7 @@ opened directly only to assert resulting state, never to seed it.
 
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 
@@ -907,8 +908,6 @@ def test_deprecated_entry_excluded_from_context_pack(project_dir: Path) -> None:
 
 def test_deprecate_with_replaced_by_records_successor(project_dir: Path) -> None:
     """A single successor lands in deprecations.replaced_by and the audit log."""
-    import json
-
     _ok("add", "decision", "Old Rule", "-r", "Old rationale")
     _ok("add", "decision", "New Rule", "-r", "New rationale")
     result = _ok("deprecate", "old-rule", "--replaced-by", "new-rule", "-r", "moved")
@@ -1054,6 +1053,7 @@ def test_query_search_shows_successor_id_and_title(project_dir: Path) -> None:
     output = _text(_ok("query", "search", "legacy"))
 
     assert "[mementic: 0 constraints, 1 decisions | legacy]" in output
+    assert "Superseded By" in output
     row = next(line for line in output.splitlines() if "old-rule" in line)
     assert "new-rule (New Rule)" in row
 
@@ -1064,6 +1064,7 @@ def test_query_search_plain_entry_has_no_successor_cell(project_dir: Path) -> No
 
     output = _text(_ok("query", "search", "plaintext"))
 
+    assert "Superseded By" not in output
     assert "(missing)" not in output
     row = next(line for line in output.splitlines() if "plain-rule" in line)
     cells = [cell for cell in re.split(r"\s{2,}", row.strip("│ ").strip()) if cell]
@@ -1126,6 +1127,7 @@ def test_query_search_successor_column_is_per_section(project_dir: Path) -> None
 
     output = _text(_ok("query", "search", "authentication"))
 
+    assert "Superseded By" in output
     decision_row = next(line for line in output.splitlines() if "auth-decision" in line)
     decision_cells = [
         cell for cell in re.split(r"\s{2,}", decision_row.strip("│ ").strip()) if cell
@@ -1137,3 +1139,73 @@ def test_query_search_successor_column_is_per_section(project_dir: Path) -> None
     ]
     assert len(constraint_cells) == 3
     assert constraint_cells[2] == "new-rule (New Rule)"
+
+
+def test_query_search_cross_type_constraint_successor(project_dir: Path) -> None:
+    """A deprecated decision superseded by a constraint displays the constraint's description."""
+    _ok("add", "decision", "Old Rule", "-r", "legacy authentication rationale")
+    _ok("add", "constraint", "Tokens must remain stateless", "-e", "src/auth.py")
+    _ok("deprecate", "old-rule", "--replaced-by", "tokens-must-remain-stateless")
+
+    output = _text(_ok("query", "search", "legacy"))
+
+    assert "Superseded By" in output
+    row = next(line for line in output.splitlines() if "old-rule" in line)
+    assert "tokens-must-remain-stateless (Tokens must remain stateless)" in row
+
+
+def test_deprecate_replaced_by_without_reason_ends_with_period(project_dir: Path) -> None:
+    """Deprecating with --replaced-by and no reason punctuates both confirmation lines."""
+    _ok("add", "decision", "Old Rule", "-r", "Old rationale")
+    _ok("add", "decision", "First Rule", "-r", "First rationale")
+    _ok("add", "decision", "Second Rule", "-r", "Second rationale")
+
+    first_result = _ok("deprecate", "old-rule", "--replaced-by", "first-rule")
+    assert "Deprecated old-rule (superseded by first-rule)." in _text(first_result)
+
+    second_result = _ok("deprecate", "old-rule", "--replaced-by", "second-rule")
+    assert "Recorded successor second-rule for old-rule." in _text(second_result)
+
+
+def test_list_decisions_deprecated_renders_split_successors(project_dir: Path) -> None:
+    """list decisions --status deprecated renders all split successors without truncation."""
+    _ok("add", "decision", "Old Rule", "-r", "Old rationale")
+    _ok("add", "decision", "First Rule", "-r", "First rationale")
+    _ok("add", "decision", "Second Rule", "-r", "Second rationale")
+    _ok("deprecate", "old-rule", "--replaced-by", "first-rule")
+    _ok("deprecate", "old-rule", "--replaced-by", "second-rule")
+
+    output = _text(_ok("list", "decisions", "--status", "deprecated"))
+
+    assert "Superseded By" in output
+    row = next(line for line in output.splitlines() if "old-rule" in line)
+    assert "first-rule, second-rule" in row
+    assert "..." not in row
+
+
+def test_history_split_and_transitive_chain_renders_trail_and_rows(
+    project_dir: Path,
+) -> None:
+    """history renders the split-and-transitive trail and every tombstone row."""
+    _ok("add", "decision", "a", "-r", "Rationale for a")
+    _ok("add", "decision", "b", "-r", "Rationale for b")
+    _ok("add", "decision", "c", "-r", "Rationale for c")
+    _ok("add", "decision", "d", "-r", "Rationale for d")
+    _ok("deprecate", "a", "--replaced-by", "b", "-r", "r1")
+    _ok("deprecate", "a", "--replaced-by", "c", "-r", "r2")
+    _ok("deprecate", "b", "--replaced-by", "d", "-r", "r3")
+
+    output = _text(_ok("history", "a"))
+
+    assert "a -> b, c -> d" in output
+    rows = [
+        tuple(cell for cell in re.split(r"\s{2,}", line.strip("│ ").strip()) if cell)
+        for line in output.splitlines()
+        if line.strip().startswith("│")
+    ]
+    entry_rows = [cells[1:] for cells in rows if len(cells) == 4 and cells[0] != "At (UTC)"]
+    assert set(entry_rows) == {
+        ("a", "b", "r1"),
+        ("a", "c", "r2"),
+        ("b", "d", "r3"),
+    }

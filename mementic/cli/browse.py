@@ -133,9 +133,8 @@ def decisions(
         decision_table.add_column(
             SUPERSEDED_HEADER,
             style=COLOR_WARN,
-            no_wrap=True,
-            overflow="ellipsis",
-            width=_SUPERSEDED_WIDTH,
+            overflow="fold",
+            min_width=_SUPERSEDED_WIDTH,
         )
     for decision, superseded_by in pairs:
         date = decision.created_at[:10] if decision.created_at else ""
@@ -197,9 +196,8 @@ def constraints(
         constraint_table.add_column(
             SUPERSEDED_HEADER,
             style=COLOR_WARN,
-            no_wrap=True,
-            overflow="ellipsis",
-            width=_SUPERSEDED_WIDTH,
+            overflow="fold",
+            min_width=_SUPERSEDED_WIDTH,
         )
     for constraint, superseded_by in pairs:
         icon = STATUS_OK if superseded_by is None else STATUS_DEPRECATED

@@ -193,6 +193,7 @@ def search(
     from mementic.console import (
         COLOR_HEADER,
         COLOR_ID,
+        COLOR_WARN,
         console,
         escape,
         panel,
@@ -221,11 +222,15 @@ def search(
 
     panel_lines: list = []
     if matching_decisions:
-        decisions_table = table(show_header=False, show_edge=False, padding=(0, 1))
+        decisions_table = table(
+            show_header=bool(decision_successors),
+            show_edge=False,
+            padding=(0, 1),
+        )
         decisions_table.add_column("ID", style=COLOR_ID)
         decisions_table.add_column("Title")
         if decision_successors:
-            decisions_table.add_column(SUPERSEDED_HEADER)
+            decisions_table.add_column(SUPERSEDED_HEADER, style=COLOR_WARN)
         for decision in matching_decisions:
             row = [escape(decision.id), escape(decision.title)]
             if decision_successors:
@@ -237,11 +242,15 @@ def search(
     if matching_constraints:
         if panel_lines:
             panel_lines.append(text(""))
-        constraints_table = table(show_header=False, show_edge=False, padding=(0, 1))
+        constraints_table = table(
+            show_header=bool(constraint_successors),
+            show_edge=False,
+            padding=(0, 1),
+        )
         constraints_table.add_column("ID", style=COLOR_ID)
         constraints_table.add_column("Description")
         if constraint_successors:
-            constraints_table.add_column(SUPERSEDED_HEADER)
+            constraints_table.add_column(SUPERSEDED_HEADER, style=COLOR_WARN)
         for constraint in matching_constraints:
             row = [escape(constraint.id), escape(constraint.description)]
             if constraint_successors:
