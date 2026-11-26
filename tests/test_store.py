@@ -672,6 +672,104 @@ class TestPathQueries:
         ]
 
 
+class TestConstraintPathSets:
+    def test_get_constraints_for_paths_matches_exact_paths(self, store: MementicStore) -> None:
+        _add_constraint(store, "c-a", paths=["src/a.py"])
+        _add_constraint(store, "c-b", paths=["src/b.py"])
+
+        results = store.get_constraints_for_paths(["src/a.py"])
+
+        assert [(c.id, matched) for c, matched in results] == [("c-a", ["src/a.py"])]
+
+    def test_get_constraints_for_paths_matches_directory_binding(
+        self,
+        store: MementicStore,
+    ) -> None:
+        """``src/auth`` binds files beneath it but not ``src/auth_legacy.py``."""
+        _add_constraint(store, "c-dir", paths=["src/auth"])
+        _add_constraint(store, "c-x", paths=["src/authx.py"])
+
+        results = store.get_constraints_for_paths(["src/auth_legacy.py", "src/auth/login.py"])
+
+        assert {c.id: matched for c, matched in results} == {
+            "c-dir": ["src/auth/login.py"],
+        }
+
+    def test_get_constraints_for_paths_matches_trailing_slash_directory_binding(
+        self,
+        store: MementicStore,
+    ) -> None:
+        """``src/auth/`` binds files beneath it without widening to sibling prefixes."""
+        _add_constraint(store, "c-dir", paths=["src/auth/"])
+
+        results = store.get_constraints_for_paths(["src/auth_legacy.py", "src/auth/login.py"])
+
+        assert {c.id: matched for c, matched in results} == {
+            "c-dir": ["src/auth/login.py"],
+        }
+
+    def test_get_constraints_for_paths_does_not_expand_absolute_paths(
+        self,
+        store: MementicStore,
+    ) -> None:
+        _add_constraint(store, "c-posix", paths=["/repo"])
+        _add_constraint(store, "c-drive", paths=["C:/repo"])
+
+        results = store.get_constraints_for_paths(["/repo/src/a.py", "C:/repo/src/a.py"])
+
+        assert results == []
+
+    def test_get_constraints_for_paths_reports_each_constraint_once(
+        self,
+        store: MementicStore,
+    ) -> None:
+        _add_constraint(store, "c-dir", paths=["src"])
+
+        results = store.get_constraints_for_paths(["src/a.py", "src/b.py"])
+
+        assert len(results) == 1
+        constraint, matched = results[0]
+        assert constraint.id == "c-dir"
+        assert matched == ["src/a.py", "src/b.py"]
+
+    def test_get_constraints_for_paths_excludes_deprecated(
+        self,
+        store: MementicStore,
+    ) -> None:
+        _add_constraint(store, "c-live", paths=["src/a.py"])
+        _add_constraint(store, "c-dead", paths=["src/a.py"])
+        store.deprecate("constraint", "c-dead")
+
+        results = store.get_constraints_for_paths(["src/a.py"])
+
+        assert [c.id for c, _ in results] == ["c-live"]
+
+    def test_get_constraints_for_paths_returns_empty_without_matches(
+        self,
+        store: MementicStore,
+    ) -> None:
+        _add_constraint(store, "c-a", paths=["src/a.py"])
+
+        assert store.get_constraints_for_paths(["docs/readme.md"]) == []
+
+    def test_get_constraints_for_paths_handles_many_paths(self, store: MementicStore) -> None:
+        """More than 500 candidate paths exercise the chunked IN query."""
+        _add_constraint(store, "c-src", paths=["src"])
+        _add_constraint(
+            store,
+            "c-tail",
+            paths=["src/f590.py"],
+            created_at="2024-02-01T00:00:00Z",
+        )
+
+        results = store.get_constraints_for_paths([f"src/f{i}.py" for i in range(600)])
+
+        by_id = {c.id: matched for c, matched in results}
+        assert list(by_id) == ["c-src", "c-tail"]
+        assert len(by_id["c-src"]) == 600
+        assert by_id["c-tail"] == ["src/f590.py"]
+
+
 class TestHistoryQueries:
     def test_single_record_lookup(self, store: MementicStore) -> None:
         _add_decision(store, "d1")

@@ -151,6 +151,7 @@ The commands agents need:
 | Deprecate outdated rules | `mementic deprecate ID1 ID2 ... --reason "reason"` |
 | Search the graph | `mementic query search <term>` |
 | Trace why an entry was deprecated | `mementic history <id>` |
+| List rules bound to changed files | `mementic check [--base REF] [--decisions]` |
 
 `--entity` takes a file path and can be repeated. It is optional for a decision
 and required for a constraint, because a constraint with no file anchor cannot be
@@ -270,6 +271,7 @@ If any of that sounds like fun to fix, contributions are welcome. See
 | `mementic deprecate <id...> [--reason REASON]` | Deprecate rules |
 | `mementic history [id]` | Deprecation records; with an ID, follow the replacement chain |
 | `mementic status` | Health checklist |
+| `mementic check [--base REF] [--decisions]` | Live rules bound to files changed in `git diff` (informational, exits 0 on matches); `--base REF` diffs against the merge-base with REF, so committed branch work is listed too |
 | `mementic list [decisions\|constraints\|entities]` | List everything |
 | `mementic log [-n N]` | Recent changes |
 
