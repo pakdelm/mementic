@@ -73,6 +73,12 @@ def test_load_template_uses_compact_flag_and_batch() -> None:
     assert "at most one" in template
 
 
+def test_load_template_caps_query_terms() -> None:
+    """The query guidance keeps keyword batches short to limit pack size."""
+    template = load_template()
+    assert "<5-8 narrow terms>" in template
+
+
 def test_load_template_keeps_four_steps_within_line_budget() -> None:
     """The four numbered steps survive inside the approved 44-line budget."""
     template = load_template()

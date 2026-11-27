@@ -42,6 +42,70 @@ def _format_paths_summary(paths: Sequence[str]) -> str:
     return label
 
 
+def _collect_path_hits(
+    store: MementicStore,
+    unique_paths: Sequence[str],
+    entry_type: str,
+    *,
+    path_exists: Callable[[str], bool],
+) -> dict[str, list[str]]:
+    """Map matching entry ids to the queried paths that matched them.
+
+    Args:
+        store: Open store for this invocation.
+        unique_paths: Deduplicated canonical paths in argument order.
+        entry_type: ``"constraint"`` or ``"decision"``.
+        path_exists: Filesystem-liveness predicate passed to path matching.
+
+    Returns:
+        Entry id to queried paths, preserving argument order.
+    """
+    hits: dict[str, list[str]] = {}
+    for path in unique_paths:
+        for entry_id in store.get_path_matches(entry_type, path, path_exists=path_exists):
+            hits.setdefault(entry_id, []).append(path)
+    return hits
+
+
+def _live_constraints_matching(
+    store: MementicStore,
+    hits: dict[str, list[str]],
+) -> MatchedConstraints:
+    """Return live constraints in store order with their matched paths."""
+    if not hits:
+        return []
+    return [
+        (constraint, hits[constraint.id])
+        for constraint in store.get_live_constraints()
+        if constraint.id in hits
+    ]
+
+
+def _live_decisions_matching(
+    store: MementicStore,
+    hits: dict[str, list[str]],
+) -> MatchedDecisions:
+    """Return live decisions in store order with their matched paths."""
+    if not hits:
+        return []
+    return [
+        (decision, hits[decision.id])
+        for decision in store.get_live_decisions()
+        if decision.id in hits
+    ]
+
+
+def _unmatched_paths(
+    unique_paths: Sequence[str],
+    constraints: MatchedConstraints,
+    decisions: MatchedDecisions,
+) -> list[str]:
+    """Return queried paths that matched no live constraint and no live decision."""
+    matched = {path for _, paths in constraints for path in paths}
+    matched.update(path for _, paths in decisions for path in paths)
+    return [path for path in unique_paths if path not in matched]
+
+
 def _collect_merged_entries(
     store: MementicStore,
     unique_paths: Sequence[str],
@@ -61,39 +125,11 @@ def _collect_merged_entries(
         queried path that matched zero live constraints and zero live
         decisions.
     """
-    constraint_hits: dict[str, list[str]] = {}
-    decision_hits: dict[str, list[str]] = {}
-    for path in unique_paths:
-        for entry_id in store.get_path_matches("constraint", path, path_exists=path_exists):
-            constraint_hits.setdefault(entry_id, []).append(path)
-        for entry_id in store.get_path_matches("decision", path, path_exists=path_exists):
-            decision_hits.setdefault(entry_id, []).append(path)
-
-    live_constraints = store.get_live_constraints() if constraint_hits else []
-    merged_constraints: MatchedConstraints = [
-        (constraint, constraint_hits[constraint.id])
-        for constraint in live_constraints
-        if constraint.id in constraint_hits
-    ]
-
-    live_decisions = store.get_live_decisions() if decision_hits else []
-    merged_decisions: MatchedDecisions = [
-        (decision, decision_hits[decision.id])
-        for decision in live_decisions
-        if decision.id in decision_hits
-    ]
-
-    live_constraint_ids = {constraint.id for constraint, _ in merged_constraints}
-    live_decision_ids = {decision.id for decision, _ in merged_decisions}
-    matched_paths: set[str] = set()
-    for entry_id, paths in constraint_hits.items():
-        if entry_id in live_constraint_ids:
-            matched_paths.update(paths)
-    for entry_id, paths in decision_hits.items():
-        if entry_id in live_decision_ids:
-            matched_paths.update(paths)
-
-    unmatched_paths = [path for path in unique_paths if path not in matched_paths]
+    constraint_hits = _collect_path_hits(store, unique_paths, "constraint", path_exists=path_exists)
+    decision_hits = _collect_path_hits(store, unique_paths, "decision", path_exists=path_exists)
+    merged_constraints = _live_constraints_matching(store, constraint_hits)
+    merged_decisions = _live_decisions_matching(store, decision_hits)
+    unmatched_paths = _unmatched_paths(unique_paths, merged_constraints, merged_decisions)
     return merged_constraints, merged_decisions, unmatched_paths
 
 
@@ -102,7 +138,7 @@ def files(
     max_tokens: int = typer.Option(
         DEFAULT_EVOLUTION_MAX_TOKENS,
         "--max-tokens",
-        help="Maximum token budget for the merged decision trace",
+        help="Token budget for merged decision lines; constraints are never truncated",
     ),
     compact: bool = typer.Option(
         False,
@@ -111,7 +147,11 @@ def files(
         help="Agent-friendly output: summary line plus undecorated pack text",
     ),
 ) -> None:
-    """Show constraints and decisions affecting one or more files."""
+    """Show constraints and decisions affecting one or more files.
+
+    Decisions that exceed the ``--max-tokens`` budget are dropped and
+    replaced by a trailing count line; constraints are always shown in full.
+    """
     if max_tokens < 1:
         typer.echo(
             f"Error: --max-tokens must be at least 1 (got {max_tokens}).",

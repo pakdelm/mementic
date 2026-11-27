@@ -186,7 +186,7 @@ architectural claims. Messages that trigger none of those (acknowledgements,
 ops commands, meta discussion) need no query.
 
 1. **Query.** Before the first file read, search, or code decision of a task,
-   run `mementic query keywords -c <5-12 narrow terms>`. Query again
+   run `mementic query keywords -c <5-8 narrow terms>`. Query again
    when the task shifts to a new module, domain, or file area, after recording
    an entry, and after context compaction. Echo the `[mementic: ...]` summary
    line verbatim; it is the auditable trace of what mementic contributed.

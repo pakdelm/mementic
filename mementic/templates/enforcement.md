@@ -12,7 +12,7 @@ architectural claims. Messages that trigger none of those (acknowledgements,
 ops commands, meta discussion) need no query.
 
 1. **Query.** Before the first file read, search, or code decision of a task,
-   run `mementic query keywords -c <5-12 narrow terms>` (retry as
+   run `mementic query keywords -c <5-8 narrow terms>` (retry as
    `uv run mementic <command>` if `mementic` is not on PATH). Re-query when
    the task shifts to a new module, domain, or file area; after recording an
    entry; and after context compaction. For multi-topic requests, run one
