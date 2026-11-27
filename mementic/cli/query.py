@@ -11,9 +11,11 @@ import json
 import typer
 
 from mementic.cli import context
+from mementic.cli.query_files import files
 from mementic.context import (
     DEFAULT_EVOLUTION_MAX_TOKENS,
     build_context_pack,
+    format_constraint_line,
     format_context_pack_json,
     format_evolution,
     format_file_history_json,
@@ -167,8 +169,7 @@ def file(
     if constraints:
         evolution_text += "\n\n### Constraints\n"
         for constraint in constraints:
-            entities = ", ".join(constraint.paths) if constraint.paths else "none"
-            evolution_text += f"- {constraint.description} (#{constraint.id}, bound: {entities})\n"
+            evolution_text += format_constraint_line(constraint) + "\n"
     typer.echo(
         f"[mementic: {len(constraints)} constraints, {len(decisions)} decisions | {canonical_path}]"
     )
@@ -291,3 +292,6 @@ def stats() -> None:
     for key, value in graph_stats.items():
         stats_table.add_row(labels.get(key, key.title()), str(value))
     console.print(panel(stats_table, title="Graph statistics"))
+
+
+query_app.command(name="files")(files)

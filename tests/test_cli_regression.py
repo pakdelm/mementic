@@ -122,7 +122,7 @@ def test_add_help_lists_subcommands(subcommand: str) -> None:
     assert subcommand in _text(result)
 
 
-@pytest.mark.parametrize("subcommand", ["keywords", "file", "search", "stats"])
+@pytest.mark.parametrize("subcommand", ["keywords", "file", "files", "search", "stats"])
 def test_query_help_lists_subcommands(subcommand: str) -> None:
     result = _ok("query", "--help")
     assert subcommand in _text(result)

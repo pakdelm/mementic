@@ -146,6 +146,7 @@ The commands agents need:
 |---|---|
 | Load context before a task | `mementic query keywords kw1 kw2 ...` |
 | Check what affects a file | `mementic query file path/to/file.py` |
+| Check what affects several files at once | `mementic query files path/a.py path/b.py ...` |
 | Record a decision | `mementic add decision TITLE --rationale "..."` |
 | Record a constraint | `mementic add constraint DESC --entity PATH` |
 | Deprecate outdated rules | `mementic deprecate ID1 ID2 ... --reason "reason"` |
@@ -160,9 +161,11 @@ justification text the context pack shows later. The short forms are `-e` and
 `-r`, except on `deprecate`, where `-r` means `--reason`.
 
 `query keywords` and `query file` both take `--json` for scripts and `--compact`
-(`-c`) for plain text. Compact output is the `[mementic: ...]` echo line plus the
-pack text with no panel around it, where the echo line carries shown and matched
-counts plus the terms or paths that were queried.
+(`-c`) for plain text. `query files` takes `--compact` (`-c`) and
+`--max-tokens N` for the merged trace budget; it has no `--json` or `--prefix`.
+Compact output is the `[mementic: ...]` echo line plus the pack text with no
+panel around it, where the echo line carries shown and matched counts plus the
+terms or paths that were queried.
 
 ### The enforcement instruction (summary)
 
@@ -183,15 +186,15 @@ architectural claims. Messages that trigger none of those (acknowledgements,
 ops commands, meta discussion) need no query.
 
 1. **Query.** Before the first file read, search, or code decision of a task,
-   run `mementic query keywords --compact <5-12 narrow terms>`. Query again
+   run `mementic query keywords -c <5-8 narrow terms>`. Query again
    when the task shifts to a new module, domain, or file area, after recording
    an entry, and after context compaction. Echo the `[mementic: ...]` summary
    line verbatim; it is the auditable trace of what mementic contributed.
-2. **File gate.** Before opening ANY file, run
-   `mementic query file <path> --compact` for every path. Locating files with
-   grep/glob is fine; reading content without a query is not. No exceptions,
-   even for reads. Pass file paths; `:line` and `:symbol` suffixes are accepted
-   but discarded.
+2. **File gate.** Before editing a file, run `mementic query file <path> -c`
+   for that path. Exploration reads of one task area may use at most one
+   `mementic query files <path...> -c` batch; locating files with grep/glob
+   needs no query. `-c` is `--compact`. Pass file paths; `:line` and `:symbol`
+   suffixes are accepted but discarded.
 3. **Validate.** Do not write code that violates an active constraint; cite
    every entity you apply or reject as `[mementic: <id>]`.
 4. **Record inline.** Run `mementic add decision TITLE -r "..."` or
@@ -264,6 +267,7 @@ If any of that sounds like fun to fix, contributions are welcome. See
 | `mementic init [--graph-only]` | Create `.mementic/graph.db` when missing (idempotent) and create or update the AGENTS.md enforcement section; `--graph-only` skips the AGENTS.md sync |
 | `mementic query keywords <kw...> [--json] [-c/--compact]` | Get ranked context for a task |
 | `mementic query file <path> [--prefix] [--json] [-c/--compact]` | Constraints and decisions for a file (exact match by default) |
+| `mementic query files <path...> [--max-tokens N] [-c/--compact]` | Merged constraints and decisions for several files (no `--json` or `--prefix`) |
 | `mementic query search <term>` | Full text search of the graph |
 | `mementic query stats` | Store statistics |
 | `mementic add decision <title> --rationale TEXT [--entity PATH]` | Record a decision (duplicates resolved automatically) |

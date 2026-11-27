@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -18,8 +19,10 @@ from mementic.context import (
     build_context_pack,
     document_frequencies,
     drop_dead_path_entries,
+    format_constraint_line,
     format_evolution,
     format_file_history_json,
+    format_merged_history,
     idf_weights,
     keyword_idf_score,
     rank_and_truncate,
@@ -442,6 +445,117 @@ class TestFormatFileHistoryJson:
 
         assert [entry["id"] for entry in data["decisions"]] == ["d-old", "d-new"]
         assert data["file"] == "src/foo.py"
+
+
+class TestFormatConstraintLine:
+    @pytest.mark.parametrize(
+        ("paths", "expected"),
+        [
+            (["src/a.py"], "- Hard rule (#c-1, bound: src/a.py)"),
+            (["src/a.py", "src/b.py"], "- Hard rule (#c-1, bound: src/a.py, src/b.py)"),
+            ([], "- Hard rule (#c-1, bound: none)"),
+        ],
+    )
+    def test_formats_bound_and_unbound_constraints(self, paths: list[str], expected: str) -> None:
+        constraint = make_constraint(id="c-1", description="Hard rule", paths=paths)
+        assert format_constraint_line(constraint) == expected
+
+    def test_takes_only_constraint_parameter(self) -> None:
+        parameters = list(inspect.signature(format_constraint_line).parameters)
+        assert parameters == ["constraint"]
+
+
+class TestFormatMergedHistory:
+    def test_renders_header_constraints_decisions_and_matched_annotations(self) -> None:
+        queried = ["a.py", "b.py"]
+        decisions = [
+            (
+                make_decision(
+                    id="d-1",
+                    title="Pick DB",
+                    rationale="Chose PostgreSQL",
+                    ts="2025-01-01T00:00:00Z",
+                ),
+                ["a.py"],
+            )
+        ]
+        constraints = [
+            (
+                make_constraint(id="c-1", description="Use async", paths=["a.py"]),
+                ["a.py", "b.py"],
+            )
+        ]
+
+        output = format_merged_history(queried, decisions, constraints, max_tokens=9999)
+
+        assert "## Files queried (2)" in output
+        assert output.splitlines()[1] == "a.py, b.py"
+        assert output.count("- Use async (#c-1, bound: a.py) (matched: a.py, b.py)") == 1
+        assert (
+            output.count(
+                "- [2025-01-01T00:00:00Z] Pick DB: Chose PostgreSQL (#d-1) (matched: a.py)"
+            )
+            == 1
+        )
+        assert "hash" not in output.lower()
+        assert "stale" not in output.lower()
+
+    def test_ranks_decisions_by_matched_count_then_recency(self) -> None:
+        queried = ["a.py", "b.py"]
+        decisions = [
+            (
+                make_decision(id="d-single", rationale="single", ts="2025-06-01T00:00:00Z"),
+                ["a.py"],
+            ),
+            (
+                make_decision(id="d-double", rationale="double", ts="2024-01-01T00:00:00Z"),
+                ["a.py", "b.py"],
+            ),
+        ]
+        output = format_merged_history(queried, decisions, [], max_tokens=9999)
+        assert output.index("d-double") < output.index("d-single")
+
+        equal_counts = [
+            (make_decision(id="d-old", rationale="old", ts="2023-01-01T00:00:00Z"), ["a.py"]),
+            (make_decision(id="d-new", rationale="new", ts="2025-01-01T00:00:00Z"), ["a.py"]),
+        ]
+        equal_output = format_merged_history(["a.py"], equal_counts, [], max_tokens=9999)
+        assert equal_output.index("d-new") < equal_output.index("d-old")
+
+    def test_truncates_decisions_under_budget_without_truncating_constraints(self) -> None:
+        constraints = [
+            (make_constraint(id="c-1", description="First rule"), ["a.py"]),
+            (make_constraint(id="c-2", description="Second rule"), ["b.py"]),
+        ]
+        decisions = [
+            (make_decision(id="d-1", rationale="First decision"), ["a.py"]),
+            (make_decision(id="d-2", rationale="Second decision"), ["a.py"]),
+        ]
+
+        output = format_merged_history(["a.py", "b.py"], decisions, constraints, max_tokens=1)
+
+        assert "more decisions omitted (token budget)" in output
+        assert "- First rule (#c-1, bound: none) (matched: a.py)" in output
+        assert "- Second rule (#c-2, bound: none) (matched: b.py)" in output
+        assert output.index("c-1") < output.index("c-2")
+        assert "d-1" not in output
+        assert "d-2" not in output
+
+    def test_reports_unmatched_paths_and_all_unmatched_layout(self) -> None:
+        output = format_merged_history(
+            ["ghost/a.py", "ghost/b.py"],
+            [],
+            [],
+            unmatched_paths=["ghost/a.py", "ghost/b.py"],
+            max_tokens=9999,
+        )
+
+        assert "## Files queried (2)" in output
+        assert "### Unmatched paths" in output
+        assert "- ghost/a.py" in output
+        assert "- ghost/b.py" in output
+        assert "### Constraints" not in output
+        assert "### Decisions" not in output
 
 
 class TestCompactConstraintLine:

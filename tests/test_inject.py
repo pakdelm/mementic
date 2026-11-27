@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import subprocess
 from pathlib import Path
 
@@ -54,12 +55,36 @@ def test_load_template_contains_cli_commands() -> None:
     template = load_template()
     for command in (
         "query keywords",
+        "query files",
         "add decision",
         "add constraint",
         "deprecate",
         "query file",
     ):
         assert command in template, f"Template missing reference to {command}"
+
+
+def test_load_template_uses_compact_flag_and_batch() -> None:
+    """Query commands use -c, and one batch covers exploration reads."""
+    template = load_template()
+    assert "mementic query keywords -c" in template
+    assert "mementic query file <path> -c" in template
+    assert "mementic query files <path...> -c" in template
+    assert "at most one" in template
+
+
+def test_load_template_caps_query_terms() -> None:
+    """The query guidance keeps keyword batches short to limit pack size."""
+    template = load_template()
+    assert "<5-8 narrow terms>" in template
+
+
+def test_load_template_keeps_four_steps_within_line_budget() -> None:
+    """The four numbered steps survive inside the approved 44-line budget."""
+    template = load_template()
+
+    assert re.findall(r"(?m)^(\d+)\.", template) == ["1", "2", "3", "4"]
+    assert len(template.splitlines()) <= 44
 
 
 def test_sync_creates_missing_file(tmp_path: Path) -> None:
