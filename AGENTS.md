@@ -16,18 +16,18 @@ architectural claims. Messages that trigger none of those (acknowledgements,
 ops commands, meta discussion) need no query.
 
 1. **Query.** Before the first file read, search, or code decision of a task,
-   run `mementic query keywords --compact <5-12 narrow terms>` (retry as
+   run `mementic query keywords -c <5-12 narrow terms>` (retry as
    `uv run mementic <command>` if `mementic` is not on PATH). Re-query when
    the task shifts to a new module, domain, or file area; after recording an
    entry; and after context compaction. For multi-topic requests, run one
    focused query per sub-task. Echo the `[mementic: ...]` summary line
    verbatim in your response — it is the auditable trace of what mementic
    contributed.
-2. **File gate.** Before opening ANY file, run
-   `mementic query file <path> --compact` for every path. Locating files with
-   grep/glob is fine; reading content without a query is not. This covers
-   exploration reads too. No read-only exceptions. Pass file paths; `:line` and
-   `:symbol` suffixes are accepted but discarded.
+2. **File gate.** Before editing a file, run `mementic query file <path> -c`
+   for that path. Exploration reads of one task area may use at most one
+   `mementic query files <path...> -c` batch; locating files with grep/glob
+   needs no query and reading content without a query is not allowed. `-c` is
+   `--compact`; pass file paths, `:line` and `:symbol` suffixes are discarded.
 3. **Validate.** Do not write code that violates an active constraint. Cite
    every entity you apply or reject as `[mementic: <id>]`. Before you report a
    change done, run `mementic check --base origin/main` (or the branch's base
