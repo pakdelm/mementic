@@ -10,7 +10,8 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner, Result
 
-from mementic.cli import app
+from mementic.cli import app, context
+from mementic.paths import ProjectPaths
 from mementic.store import MementicStore
 
 runner = CliRunner()
@@ -271,6 +272,33 @@ def test_query_file_refuses_sibling_graph(tmp_path: Path, monkeypatch: pytest.Mo
     stderr = _strip_ansi(result.stderr)
     assert "Error: ../repo-b/x.py belongs to the graph at ../repo-b." in stderr
     assert "Run: cd ../repo-b; mementic query file x.py" in stderr
+
+
+def test_query_files_refuses_foreign_path_before_store_opens(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """One foreign path refuses the whole batched query before the store opens."""
+    repo_a = tmp_path / "repo-a"
+    repo_b = tmp_path / "repo-b"
+    _begin_repo(repo_a, monkeypatch)
+    _begin_repo(repo_b, monkeypatch)
+    monkeypatch.chdir(repo_a)
+    calls: list[None] = []
+    original_resolve_store = context.resolve_store
+
+    def tracking_resolve_store(paths: ProjectPaths | None = None) -> MementicStore:
+        calls.append(None)
+        return original_resolve_store(paths)
+
+    monkeypatch.setattr("mementic.cli.context.resolve_store", tracking_resolve_store)
+
+    result = _run("query", "files", "src/a.py", "../repo-b/x.py")
+
+    assert result.exit_code == 1
+    stderr = _strip_ansi(result.stderr)
+    assert "Error: ../repo-b/x.py belongs to the graph at ../repo-b." in stderr
+    assert "Run: cd ../repo-b; mementic query file x.py" in stderr
+    assert calls == []
 
 
 def test_add_decision_refuses_sibling_graph(

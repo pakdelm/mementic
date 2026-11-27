@@ -11,6 +11,7 @@ import json
 import typer
 
 from mementic.cli import context
+from mementic.cli.query_files import files
 from mementic.context import (
     DEFAULT_EVOLUTION_MAX_TOKENS,
     build_context_pack,
@@ -291,3 +292,6 @@ def stats() -> None:
     for key, value in graph_stats.items():
         stats_table.add_row(labels.get(key, key.title()), str(value))
     console.print(panel(stats_table, title="Graph statistics"))
+
+
+query_app.command(name="files")(files)
