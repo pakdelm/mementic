@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from pathlib import Path
 
 from mementic.context.builder import (
@@ -20,6 +20,88 @@ _RATIONALE_MAX_CHARS: int = 200
 def _compact_evolution_line(decision: Decision) -> str:
     """Format a decision with provenance for evolution traces."""
     return f"- [{decision.created_at}] {decision.title}: {decision.rationale} (#{decision.id})"
+
+
+def format_constraint_line(constraint: Constraint) -> str:
+    """Format a constraint with its bound entities on one line.
+
+    Args:
+        constraint: Constraint to render.
+
+    Returns:
+        Line of the form ``- <description> (#<id>, bound: <entities>)`` with
+        ``none`` when the constraint binds no paths.
+    """
+    entities = ", ".join(constraint.paths) if constraint.paths else "none"
+    return f"- {constraint.description} (#{constraint.id}, bound: {entities})"
+
+
+def _merged_decision_line(decision: Decision, matched_paths: Sequence[str]) -> str:
+    """Format a decision with the queried paths it matched."""
+    matched = ", ".join(matched_paths)
+    return f"{_compact_evolution_line(decision)} (matched: {matched})"
+
+
+def format_merged_history(
+    queried_paths: Sequence[str],
+    decisions: Sequence[tuple[Decision, Sequence[str]]],
+    constraints: Sequence[tuple[Constraint, Sequence[str]]],
+    *,
+    unmatched_paths: Sequence[str] = (),
+    max_tokens: int = DEFAULT_EVOLUTION_MAX_TOKENS,
+) -> str:
+    """Format a merged history pack for several queried files.
+
+    Constraints appear in caller (store) order and are never truncated.
+    Decisions are ranked by matched-path count descending, then by recency,
+    and truncated to ``max_tokens``. Empty sections are omitted.
+
+    Args:
+        queried_paths: Paths in argument order.
+        decisions: ``(decision, matched_paths)`` tuples.
+        constraints: ``(constraint, matched_paths)`` tuples in store order.
+        unmatched_paths: Queried paths that matched no entry.
+        max_tokens: Token budget for the decision section.
+
+    Returns:
+        Markdown body with a header, constraints, ranked decisions, and any
+        unmatched paths.
+    """
+    lines = [f"## Files queried ({len(queried_paths)})"]
+    if queried_paths:
+        lines.append(", ".join(queried_paths))
+
+    if constraints:
+        lines.append("")
+        lines.append("### Constraints")
+        for constraint, matched in constraints:
+            lines.append(f"{format_constraint_line(constraint)} (matched: {', '.join(matched)})")
+
+    if decisions:
+        matched_by_id = {decision.id: matched for decision, matched in decisions}
+
+        def line_formatter(decision: Decision) -> str:
+            return _merged_decision_line(decision, matched_by_id[decision.id])
+
+        selected, shown, total = rank_and_truncate(
+            [(decision, len(matched)) for decision, matched in decisions],
+            max_tokens,
+            line_formatter=line_formatter,
+        )
+        lines.append("")
+        lines.append("### Decisions")
+        for decision in selected:
+            lines.append(line_formatter(decision))
+        if shown < total:
+            lines.append(f"... and {total - shown} more decisions omitted (token budget).")
+
+    if unmatched_paths:
+        lines.append("")
+        lines.append("### Unmatched paths")
+        for path in unmatched_paths:
+            lines.append(f"- {path}")
+
+    return "\n".join(lines)
 
 
 def format_evolution(
